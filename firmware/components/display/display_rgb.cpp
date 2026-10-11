@@ -739,4 +739,16 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
     /* No-op: the RGB backend does not use I2C. */
 }
 
+
+const char *display_controller_name(void)
+{
+#if defined(CONFIG_DRAFTLING_RGB_PANEL_ST7701)
+    return "ST7701 (RGB)";
+#elif defined(CONFIG_DRAFTLING_HAS_CH422G) || defined(CONFIG_DRAFTLING_RGB_BOARD_S043)
+    return "ST7262 (RGB)";
+#else
+    return "RGB parallel TFT";
+#endif
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_RGB */

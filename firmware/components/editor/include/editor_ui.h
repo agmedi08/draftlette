@@ -29,6 +29,10 @@ void editor_ui_show_fatal(const char *msg);
  * after the BLE prompt screen has been torn down. */
 void editor_ui_set_ble_prompt_text(const char *text);
 
+/* Board name shown on the F1 -> "Hardware information" page. The
+ * string must stay valid for the life of the program. */
+void editor_ui_set_board_name(const char *name);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1509,4 +1509,10 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
      * bus, so there is nothing to share here. No-op. */
 }
 
+
+const char *display_controller_name(void)
+{
+    return "AXS15231B";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_AXS15231B */

@@ -6,6 +6,16 @@ in the git log.
 
 ## [Unreleased]
 
+### Added
+
+- **Hardware information page**: the new F1 menu item "Hardware
+  information" (letter I) shows the board model and chip, the RAM,
+  PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch
+  controllers, the screen resolution, the SD card type, size and free
+  space, the connected keyboard (with the Bluetooth keyboard's MAC
+  address) and the device's WiFi and Bluetooth MAC addresses. Esc or
+  Enter closes it.
+
 ## [1.0.16] - 2026-10-10
 
 ### Fixed

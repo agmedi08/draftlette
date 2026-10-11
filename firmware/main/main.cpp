@@ -2672,6 +2672,7 @@ extern "C" void app_main(void)
 
     /* Create editor UI */
     ESP_LOGI(TAG, "Creating editor UI...");
+    editor_ui_set_board_name(BOARD_NAME);
     if (draftling_lvgl_port_lock(-1)) {
         editor_ui_init();
         draftling_lvgl_port_unlock();

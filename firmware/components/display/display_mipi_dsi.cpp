@@ -420,4 +420,11 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
      * component (touchscreen_config_t.i2c_bus). */
 }
 
+
+const char *display_controller_name(void)
+{
+    /* The BSP picks ILI9881C (v1) or ST7123 (v2) and does not say which. */
+    return "ILI9881C / ST7123 (MIPI-DSI)";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_MIPI_DSI */

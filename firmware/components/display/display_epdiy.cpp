@@ -694,4 +694,14 @@ extern "C" void display_deep_sleep_prepare(void)
     s_initialized = false;
 }
 
+
+const char *display_controller_name(void)
+{
+#if defined(CONFIG_DRAFTLING_EPDIY_BOARD_PAPERS3)
+    return "ED047TC1 (epdiy)";
+#else
+    return "ED047TC2 (epdiy)";
+#endif
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_EPDIY */

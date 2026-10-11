@@ -528,4 +528,10 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
     /* This backend does not use I2C. */
 }
 
+
+const char *display_controller_name(void)
+{
+    return "ST77922 (QSPI)";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_ST77922 */

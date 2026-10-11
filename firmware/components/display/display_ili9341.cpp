@@ -699,4 +699,16 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
     /* This backend does not use I2C. No-op. */
 }
 
+
+const char *display_controller_name(void)
+{
+#if defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
+    return "ST7796";
+#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
+    return "ST7365";
+#else
+    return "ILI9341";
+#endif
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_ILI9341 || CONFIG_DRAFTLING_DISPLAY_ST7796 || CONFIG_DRAFTLING_DISPLAY_ST7365 */

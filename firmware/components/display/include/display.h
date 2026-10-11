@@ -323,6 +323,15 @@ void display_axs15231b_init(const display_axs15231b_config_t *cfg);
  */
 void display_set_shared_i2c_bus(void *bus_handle);
 
+/*
+ * Human-readable name of the panel controller driven by the active
+ * backend (e.g. "SSD1677", "ILI9341"), for the editor's hardware
+ * information page. Backends that detect the controller at boot
+ * return the detected one, so call it after display_init(). Never
+ * returns NULL.
+ */
+const char *display_controller_name(void);
+
 #ifdef __cplusplus
 }
 #endif

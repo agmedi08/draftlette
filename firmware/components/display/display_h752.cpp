@@ -415,4 +415,10 @@ extern "C" void display_deep_sleep_prepare(void)
     s_initialized = false;
 }
 
+
+const char *display_controller_name(void)
+{
+    return "ED047TC2 (FastEPD)";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_H752_EPD */

@@ -106,6 +106,9 @@ void ble_keyboard_set_status_text_callback(ble_status_text_cb_t cb);
 bool ble_keyboard_is_connected(void);
 void ble_keyboard_start_scan(void);
 const char *ble_keyboard_get_device_name(void);
+/* Copy the 6-byte Bluetooth address of the connected keyboard into
+ * addr. Returns false (addr untouched) when no keyboard is connected. */
+bool ble_keyboard_get_device_addr(uint8_t *addr);
 int ble_keyboard_get_battery_level(void);
 /* esp_timer_get_time() of the most recent pairing event (security
  * request, passkey / numeric comparison shown, authentication success

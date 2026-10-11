@@ -64,6 +64,7 @@ void ble_keyboard_set_status_text_callback(ble_status_text_cb_t /*cb*/)  {}
 bool ble_keyboard_is_connected(void)                                     { return false; }
 void ble_keyboard_start_scan(void)                                       {}
 const char *ble_keyboard_get_device_name(void)                           { return ""; }
+bool ble_keyboard_get_device_addr(uint8_t * /*addr*/)                    { return false; }
 int ble_keyboard_get_battery_level(void)                                 { return -1; }
 int64_t ble_keyboard_last_pairing_activity_us(void)                      { return 0; }
 
@@ -186,6 +187,9 @@ static ble_status_text_cb_t s_status_text_cb = NULL;
 /* Device name -- declared here (before bonded_add) so it is visible
  * throughout the file.  Sized to match BONDED_NAME_LEN. */
 static char s_dev_name[BONDED_NAME_LEN] = "";
+/* Address of the connected keyboard; valid while s_dev_bda_valid. */
+static esp_bd_addr_t s_dev_bda;
+static bool s_dev_bda_valid = false;
 
 /* Set true when ble_keyboard_disable() is called (USB keyboard hot-
  * plug path). Once set, every public entry point and internal task
@@ -999,6 +1003,8 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
             }
             /* Remember this device as bonded / last-used */
             if (addr) {
+                memcpy(s_dev_bda, addr, sizeof(s_dev_bda));
+                s_dev_bda_valid = true;
                 bonded_add(addr, s_target_addr_type);
             }
             ESP_LOGI(TAG, "HID device connected: %s ("
@@ -1090,6 +1096,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
         memset(s_prev_report, 0, sizeof(s_prev_report));
         s_prev_report_len = 0;
         s_dev_name[0] = '\0';
+        s_dev_bda_valid = false;
         ESP_LOGI(TAG, "HID device disconnected, reconnecting...");
         if (s_connect_cb) s_connect_cb(false);
         /* Defer the next scan instead of jumping straight into
@@ -2326,6 +2333,7 @@ extern "C" void ble_keyboard_forget_all(void)
     s_bonded_count = 0;
     s_last_bonded  = -1;
     s_dev_name[0]  = '\0';
+    s_dev_bda_valid = false;
 
     /* Erase the persisted bond list from NVS. */
     nvs_handle_t h;
@@ -2398,6 +2406,13 @@ extern "C" void ble_keyboard_start_scan(void)
 extern "C" const char *ble_keyboard_get_device_name(void)
 {
     return s_dev_name;
+}
+
+extern "C" bool ble_keyboard_get_device_addr(uint8_t *addr)
+{
+    if (!s_connected || !s_dev_bda_valid) return false;
+    memcpy(addr, s_dev_bda, sizeof(s_dev_bda));
+    return true;
 }
 
 extern "C" int ble_keyboard_get_battery_level(void)

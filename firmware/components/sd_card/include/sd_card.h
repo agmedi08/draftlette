@@ -7,6 +7,7 @@ extern "C" {
 #include <esp_err.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <sdmmc_cmd.h>
 
 /* Initialize the SD card on a 1-bit SDMMC slot. */
@@ -38,6 +39,10 @@ const char *sd_card_get_mount_point(void);
  * sd_card_get_mount_point(), so local firmware code must simply stay
  * off the card, rather than unmount it, while USB MSC owns it. */
 sdmmc_card_t *sd_card_get_handle(void);
+
+/* Size and free space of the mounted FAT file system, in bytes.
+ * Returns ESP_ERR_INVALID_STATE when no card is mounted. */
+esp_err_t sd_card_get_fs_space(uint64_t *total_bytes, uint64_t *free_bytes);
 
 /* Erase the mounted card by creating a fresh FAT file system on it
  * (every file and directory is lost), then mount it again at the same

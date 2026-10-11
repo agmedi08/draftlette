@@ -531,4 +531,10 @@ extern "C" void display_deep_sleep_prepare(void)
     s_initialized = false;
 }
 
+
+const char *display_controller_name(void)
+{
+    return "SSD1677";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO */

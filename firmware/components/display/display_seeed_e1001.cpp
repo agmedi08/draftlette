@@ -621,4 +621,10 @@ extern "C" void display_deep_sleep_prepare(void)
     s_initialized = false;
 }
 
+
+const char *display_controller_name(void)
+{
+    return "UC8179";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_SEEED_E1001 */

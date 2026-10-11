@@ -303,7 +303,8 @@ ASCII character, modifier flags, and pressed/released state.
 
 Public API: `ble_keyboard_init()`, `ble_keyboard_start_scan()`,
 `ble_keyboard_is_connected()`, `ble_keyboard_set_callback()`,
-`ble_keyboard_forget_all()`, and several other callback registration
+`ble_keyboard_forget_all()`, `ble_keyboard_get_device_addr()`, and
+several other callback registration
 functions.
 
 (Re)connection is scan-driven: the host scans continuously and connects
@@ -554,7 +555,7 @@ non-e-paper builds do not link epdiy into the final image.
 Public API: `display_init()`, `display_clear()`, `display_set_pixel()`,
 `display_flush()`, `display_full_refresh()`, `display_push_rgb565()`,
 `display_set_partial_clip()`, `display_set_backlight()`,
-`display_get_buffer()`,
+`display_controller_name()`, `display_get_buffer()`,
 `display_get_buffer_size()`, `lvgl_port_init()`,
 `lvgl_port_lock()`, `lvgl_port_unlock()`.
 
@@ -681,6 +682,22 @@ documents back, shows the busy message pop-up and runs `fmt_task()`:
 `wifi_manager_forget()` (erase), then `esp_restart()` so nothing keeps
 pointing at the deleted files (open documents, Git repository,
 `git.cfg`).
+
+**Hardware information.** The F1 row `MENU_IDX_HWINFO` (letter `I`)
+shows `build_hwinfo_text()` on the help screen (`show_hwinfo()`, which
+shares `show_help_page()` and the key / touch handling with the help
+page): the board name main.cpp passes in through
+`editor_ui_set_board_name(BOARD_NAME)`, the chip (`esp_chip_info()`),
+internal RAM and PSRAM heap totals / free space (`heap_caps_*`), the
+PSRAM size (`esp_psram_get_size()`), the flash size
+(`esp_flash_get_physical_size()`), `display_controller_name()`
+(every display backend implements it; the Xteink and reTerminal Sticky
+backends return the controller detected at boot), the touch controller
+from the `DRAFTLING_TOUCH_*` flags, the panel resolution and text
+area, the SD card from `sd_card_get_handle()` and
+`sd_card_get_fs_space()`, the connected keyboards (with the BLE
+keyboard's address from `ble_keyboard_get_device_addr()`) and the WiFi /
+Bluetooth MAC addresses (`esp_read_mac()`).
 
 **F1 menu letter keys.** `s_menu_hotkeys[]` in `editor_ui.cpp` maps
 a letter (resolved with `kb_layout_shortcut_char()`, no Ctrl / Alt /
@@ -1137,7 +1154,7 @@ cleared.
 
 Public API: `sd_card_init()`, `sd_card_read_file()`,
 `sd_card_write_file()`, `sd_card_list_dir()`, `sd_card_file_exists()`,
-`sd_card_format()`, and others.
+`sd_card_format()`, `sd_card_get_fs_space()`, and others.
 
 ### components/standby/
 

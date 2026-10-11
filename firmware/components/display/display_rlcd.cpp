@@ -293,4 +293,10 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
      * shared-bus path used by the EPDIY backend). */
 }
 
+
+const char *display_controller_name(void)
+{
+    return "ST7305";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_RLCD */

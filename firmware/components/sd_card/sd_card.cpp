@@ -405,6 +405,12 @@ extern "C" sdmmc_card_t *sd_card_get_handle(void)
     return s_card;
 }
 
+extern "C" esp_err_t sd_card_get_fs_space(uint64_t *total_bytes, uint64_t *free_bytes)
+{
+    if (!s_card) return ESP_ERR_INVALID_STATE;
+    return esp_vfs_fat_info(s_mount, total_bytes, free_bytes);
+}
+
 extern "C" const char *sd_card_get_mount_point(void)
 {
     return s_mount;

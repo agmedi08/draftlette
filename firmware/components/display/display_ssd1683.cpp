@@ -900,4 +900,10 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
     /* This backend does not use I2C. No-op. */
 }
 
+
+const char *display_controller_name(void)
+{
+    return "SSD1683 x2";
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_SSD1683 */

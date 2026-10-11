@@ -6,6 +6,13 @@
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_app_desc.h>
+#include <esp_mac.h>
+#include <esp_chip_info.h>
+#include <esp_flash.h>
+#include <esp_heap_caps.h>
+#include <esp_psram.h>
+#include "soc/soc_caps.h"
+#include <sd_protocol_defs.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include "sdkconfig.h"
@@ -825,8 +832,8 @@ static bool      s_menu_open    = false;
 
 /* F1 menu item indices. Fixed 0-8 for every board; "SD card via USB"
  * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC, so
- * "Format SD card" / "Help" / "Sleep now" / "Close menu" shift down by
- * one on every other board.
+ * "Format SD card" / "Hardware information" / "Help" / "Sleep now" /
+ * "Close menu" shift down by one on every other board.
  * Use the MENU_IDX_* constants instead of bare integers everywhere
  * downstream so the two layouts stay in lock-step (mirrors the
  * SETTINGS_IDX_* convention used by the Settings submenu below). */
@@ -846,12 +853,13 @@ static bool      s_menu_open    = false;
 #define _MENU_NEXT_AFTER_USB_MSC 9
 #endif
 #define MENU_IDX_FORMAT_SD    _MENU_NEXT_AFTER_USB_MSC
-#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_USB_MSC + 1)
-#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_USB_MSC + 2)
-#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_USB_MSC + 3)
+#define MENU_IDX_HWINFO       (_MENU_NEXT_AFTER_USB_MSC + 1)
+#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_USB_MSC + 2)
+#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_USB_MSC + 3)
+#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_USB_MSC + 4)
 
 /* Number of menu items */
-#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_USB_MSC + 4)
+#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_USB_MSC + 5)
 
 /* Header line of the F1 menu screen (s_lbl_menu_hdr); the "Format SD
  * card" picker replaces it with its question while it is open. */
@@ -1154,7 +1162,8 @@ static char      s_del_next_name[256] = "";
  * current mode -- the editor or the file browser -- and, in the editor,
  * the formatting cheat sheet of the focused document's format (see
  * editor_format_t::help). Up/Down/PgUp/PgDn/Home/End scroll; Esc or
- * Enter return to where the help was opened from. */
+ * Enter return to where the help was opened from. F1 -> "Hardware
+ * information" shows its page (show_hwinfo()) on the same screen. */
 typedef enum {
     HELP_FROM_EDITOR,
     HELP_FROM_BROWSER,   /* full-screen file browser */
@@ -1167,6 +1176,10 @@ static lv_obj_t *s_help_cont     = NULL;   /* scrollable body */
 static lv_obj_t *s_help_lbl      = NULL;
 static bool      s_help_open     = false;
 static help_origin_t s_help_origin = HELP_FROM_EDITOR;
+
+/* BOARD_NAME from the board header, handed over by main.cpp
+ * (editor_ui_set_board_name()) for the hardware information page. */
+static const char *s_board_name  = NULL;
 
 /* ---- Device battery display ----
  *
@@ -3356,6 +3369,7 @@ static void settings_activate_item(int idx);
  * "Sleep now" item (menu_activate_item) needs it before that point. */
 static void show_sleep_prompt(void);
 static void show_help(help_origin_t origin);
+static void show_hwinfo(help_origin_t origin);
 
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
 /* Defined with the split-layout code further down (editor_ui_apply_split_mode);
@@ -4132,6 +4146,11 @@ extern "C" void editor_ui_show_fatal(const char *msg)
     lv_scr_load(scr);
 }
 
+extern "C" void editor_ui_set_board_name(const char *name)
+{
+    s_board_name = name;
+}
+
 extern "C" void editor_ui_set_ble_prompt_text(const char *text)
 {
     /* Update the bottom-half label on the boot "BLE prompt" screen.
@@ -4222,6 +4241,7 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_USB_MSC,         'u', 12 },  /* "SD card via USB: ..." */
 #endif
     { MENU_IDX_FORMAT_SD,       'f', 0  },  /* "Format SD card..." */
+    { MENU_IDX_HWINFO,          'i', 9  },  /* "Hardware information" */
     { MENU_IDX_HELP,            'h', 0  },  /* "Help (F10)" */
 };
 
@@ -4369,6 +4389,9 @@ static void refresh_menu_items(void)
     lv_list_add_btn(s_menu_list, NULL,
                     sd_card_get_handle() ? "Format SD card..."
                                          : "Format SD card... (no SD card)");
+
+    /* Hardware information */
+    lv_list_add_btn(s_menu_list, NULL, "Hardware information");
 
     /* Help */
     lv_list_add_btn(s_menu_list, NULL, "Help (F10)");
@@ -6017,6 +6040,10 @@ static void menu_activate_item(int idx)
     case MENU_IDX_FORMAT_SD:
         open_fmt_picker();
         break;
+    case MENU_IDX_HWINFO:
+        s_menu_open = false;
+        show_hwinfo(s_editor_screen_active ? HELP_FROM_EDITOR : HELP_FROM_BROWSER);
+        break;
     case MENU_IDX_HELP:
         /* The help describes the screen the menu was opened from. */
         s_menu_open = false;
@@ -6276,20 +6303,210 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
     }
 }
 
-static void show_help(help_origin_t origin)
+/* Text width of the help page in characters: the body width minus its
+ * 4 px side padding and room for the scrollbar, over the monospace
+ * cell. */
+static int help_cols(void)
 {
-    if (!s_scr_help) return;
+    int cols = (SCR_W - 16) / char_width_for_font(FONT_14);
+    return cols < 20 ? 20 : cols;
+}
+
+/* Decimal size ("31.9 GB", "512 MB"), as SD cards are labelled. */
+static void format_size(char *buf, size_t len, uint64_t bytes)
+{
+    uint64_t mb = bytes / 1000000ULL;
+    if (mb >= 1000) {
+        uint64_t tenths = (bytes + 50000000ULL) / 100000000ULL;
+        snprintf(buf, len, "%u.%u GB", (unsigned)(tenths / 10),
+                 (unsigned)(tenths % 10));
+    } else {
+        snprintf(buf, len, "%u MB", (unsigned)mb);
+    }
+}
+
+/* Binary size ("512 KB", "8 MB", "1.5 MB"), as memory is measured. */
+static void format_mem(char *buf, size_t len, uint64_t bytes)
+{
+    if (bytes >= (1ULL << 20)) {
+        unsigned tenths = (unsigned)((bytes * 10 + (1ULL << 19)) >> 20);
+        if (tenths % 10) snprintf(buf, len, "%u.%u MB", tenths / 10, tenths % 10);
+        else             snprintf(buf, len, "%u MB", tenths / 10);
+    } else {
+        snprintf(buf, len, "%u KB", (unsigned)(bytes >> 10));
+    }
+}
+
+/* "<free> free of <total>" row for a heap with the given caps. */
+static void hwinfo_heap_row(std::string &out, int cols, int kc,
+                            const char *label, uint32_t caps)
+{
+    char tot[16], fr[16], buf[48];
+    format_mem(tot, sizeof(tot), heap_caps_get_total_size(caps));
+    format_mem(fr, sizeof(fr), heap_caps_get_free_size(caps));
+    snprintf(buf, sizeof(buf), "%s free of %s", fr, tot);
+    help_row(out, cols, kc, label, buf);
+}
+
+static void format_mac(char *buf, size_t len, const uint8_t *m)
+{
+    snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X",
+             m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+static void hwinfo_mac_row(std::string &out, int cols, int kc,
+                           const char *label, esp_mac_type_t type)
+{
+    uint8_t m[6];
+    if (esp_read_mac(m, type) != ESP_OK) return;
+    char buf[24];
+    format_mac(buf, sizeof(buf), m);
+    help_row(out, cols, kc, label, buf);
+}
+
+static void build_hwinfo_text(std::string &out, int cols)
+{
+    const int kc = 15;
+    char buf[96];
+
+    help_heading(out, "Board");
+    help_row(out, cols, kc, "Model", s_board_name ? s_board_name : "unknown");
+    esp_chip_info_t chip;
+    esp_chip_info(&chip);
+    snprintf(buf, sizeof(buf), "%s rev %d.%d, %d core%s", CONFIG_IDF_TARGET,
+             chip.revision / 100, chip.revision % 100, chip.cores,
+             chip.cores == 1 ? "" : "s");
+    help_row(out, cols, kc, "Chip", buf);
+
+    help_heading(out, "Memory");
+    hwinfo_heap_row(out, cols, kc, "RAM", MALLOC_CAP_INTERNAL);
+    size_t psram = esp_psram_is_initialized() ? esp_psram_get_size() : 0;
+    if (psram) {
+        format_mem(buf, sizeof(buf), psram);
+        help_row(out, cols, kc, "PSRAM", buf);
+        hwinfo_heap_row(out, cols, kc, "PSRAM heap", MALLOC_CAP_SPIRAM);
+    } else {
+        help_row(out, cols, kc, "PSRAM", "none");
+    }
+    uint32_t flash = 0;
+    if (esp_flash_get_physical_size(esp_flash_default_chip, &flash) == ESP_OK ||
+        esp_flash_get_size(esp_flash_default_chip, &flash) == ESP_OK) {
+        format_mem(buf, sizeof(buf), flash);
+        help_row(out, cols, kc, "Flash", buf);
+    }
+
+    help_heading(out, "Screen");
+    help_row(out, cols, kc, "Controller", display_controller_name());
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+#if defined(CONFIG_DRAFTLING_DISPLAY_MIPI_DSI)
+    const char *touch = "GT911 / ST7123";
+#elif defined(CONFIG_DRAFTLING_TOUCH_GT911)
+    const char *touch = "GT911";
+#elif defined(CONFIG_DRAFTLING_TOUCH_FT6336U)
+    const char *touch = "FT6336-compatible";
+#elif defined(CONFIG_DRAFTLING_TOUCH_AXS5106L)
+    const char *touch = "AXS5106L";
+#elif defined(CONFIG_DRAFTLING_TOUCH_ST77922)
+    const char *touch = "ST77922 (built-in)";
+#else
+    const char *touch = "yes";
+#endif
+    help_row(out, cols, kc, "Touch", touch);
+#else
+    help_row(out, cols, kc, "Touch", "none");
+#endif
+    snprintf(buf, sizeof(buf), "%d x %d", CONFIG_DRAFTLING_DISPLAY_WIDTH,
+             CONFIG_DRAFTLING_DISPLAY_HEIGHT);
+    help_row(out, cols, kc, "Resolution", buf);
+    snprintf(buf, sizeof(buf), "%d x %d", (int)SCR_W, (int)SCR_H);
+    help_row(out, cols, kc, "Text area", buf);
+
+    help_heading(out, "SD card");
+    sdmmc_card_t *card = sd_card_get_handle();
+    if (!card) {
+        help_row(out, cols, kc, "Status", "not inserted");
+    } else {
+        uint64_t cap = (uint64_t)card->csd.capacity * card->csd.sector_size;
+        const char *type;
+        if (card->is_mmc)                        type = "MMC";
+        else if (card->is_sdio)                  type = "SDIO";
+        else if (!(card->ocr & SD_OCR_SDHC_CAP)) type = "SDSC";
+        else if (cap > (32ULL << 30))            type = "SDXC";
+        else                                     type = "SDHC";
+        char name[sizeof(card->cid.name) + 1];
+        memcpy(name, card->cid.name, sizeof(card->cid.name));
+        name[sizeof(card->cid.name)] = '\0';
+        if (name[0]) snprintf(buf, sizeof(buf), "%s (%s)", type, name);
+        else         snprintf(buf, sizeof(buf), "%s", type);
+        help_row(out, cols, kc, "Type", buf);
+        format_size(buf, sizeof(buf), cap);
+        help_row(out, cols, kc, "Size", buf);
+        uint64_t fs_total = 0, fs_free = 0;
+        if (sd_card_get_fs_space(&fs_total, &fs_free) == ESP_OK) {
+            char tot[24], fr[24];
+            format_size(tot, sizeof(tot), fs_total);
+            format_size(fr, sizeof(fr), fs_free);
+            snprintf(buf, sizeof(buf), "%s of %s", fr, tot);
+            help_row(out, cols, kc, "Free", buf);
+        }
+#if defined(CONFIG_DRAFTLING_SD_SDMMC)
+        const char *bus = "SDMMC 1-bit";
+#else
+        const char *bus = "SPI";
+#endif
+        snprintf(buf, sizeof(buf), "%s, %d MHz", bus, card->real_freq_khz / 1000);
+        help_row(out, cols, kc, "Interface", buf);
+    }
+
+    help_heading(out, "Keyboard");
+    bool any_kbd = false;
+    if (ble_keyboard_is_connected()) {
+        const char *n = ble_keyboard_get_device_name();
+        snprintf(buf, sizeof(buf), "%s", (n && n[0]) ? n : "connected");
+        help_row(out, cols, kc, "Bluetooth", buf);
+        uint8_t kb_mac[6];
+        if (ble_keyboard_get_device_addr(kb_mac)) {
+            format_mac(buf, sizeof(buf), kb_mac);
+            help_row(out, cols, kc, "Keyboard MAC", buf);
+        }
+        any_kbd = true;
+    }
+#if defined(CONFIG_DRAFTLING_HAS_USB_HOST)
+    if (usb_kbd_is_connected()) {
+        help_row(out, cols, kc, "USB", "HID keyboard");
+        any_kbd = true;
+    }
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_TAB5_KBD)
+    if (tab5_kbd_is_present()) {
+        help_row(out, cols, kc, "Built-in", "Tab5 keyboard");
+        any_kbd = true;
+    }
+#endif
+    if (!any_kbd) help_row(out, cols, kc, "Status", "none connected");
+
+    help_heading(out, "MAC address");
+#if SOC_WIFI_SUPPORTED || SOC_BT_SUPPORTED
+#if SOC_WIFI_SUPPORTED
+    hwinfo_mac_row(out, cols, kc, "WiFi", ESP_MAC_WIFI_STA);
+#endif
+#if SOC_BT_SUPPORTED
+    hwinfo_mac_row(out, cols, kc, "Bluetooth", ESP_MAC_BT);
+#endif
+#else
+    hwinfo_mac_row(out, cols, kc, "Base", ESP_MAC_BASE);
+#endif
+}
+
+/* Show s_scr_help with the given header and body text. */
+static void show_help_page(help_origin_t origin, const char *hdr,
+                           const std::string &text)
+{
     if (origin == HELP_FROM_INPANE) close_inpane_browser();
     s_help_origin = origin;
     s_help_open = true;
 
-    /* Text width in characters: the body width minus its 4 px side
-     * padding and room for the scrollbar, over the monospace cell. */
-    int cols = (SCR_W - 16) / char_width_for_font(FONT_14);
-    if (cols < 20) cols = 20;
-
-    std::string text;
-    build_help_text(text, origin, cols);
+    lv_label_set_text(s_lbl_help_hdr, hdr);
     lv_label_set_text(s_help_lbl, text.c_str());
     lv_obj_scroll_to_y(s_help_cont, 0, LV_ANIM_OFF);
 
@@ -6299,6 +6516,25 @@ static void show_help(help_origin_t origin)
     lv_obj_invalidate(s_scr_help);
 #endif
     lv_scr_load(s_scr_help);
+}
+
+static void show_help(help_origin_t origin)
+{
+    if (!s_scr_help) return;
+    std::string text;
+    build_help_text(text, origin, help_cols());
+    show_help_page(origin,
+                   "Help - Up/Down/PgUp/PgDn to scroll, Esc or Enter to close",
+                   text);
+}
+
+static void show_hwinfo(help_origin_t origin)
+{
+    if (!s_scr_help) return;
+    std::string text;
+    build_hwinfo_text(text, help_cols());
+    show_help_page(origin,
+                   "Hardware information - Esc or Enter to close", text);
 }
 
 static void close_help(void)

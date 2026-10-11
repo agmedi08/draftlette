@@ -1092,4 +1092,14 @@ extern "C" void display_deep_sleep_prepare(void)
     s_initialized = false;
 }
 
+
+const char *display_controller_name(void)
+{
+    switch (s_ctrl) {
+    case XTEINK_CTRL_UC8179: return "UC8179";
+    case XTEINK_CTRL_UC8279: return "UC8279";
+    default:                 return "SSD1677";
+    }
+}
+
 #endif /* CONFIG_DRAFTLING_DISPLAY_XTEINK_EPD */
