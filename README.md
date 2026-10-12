@@ -10,8 +10,8 @@ A few [demo
 videos](https://youtube.com/playlist?list=PLbRMZQ9npKJRDrk0BhtI4gXMBIHM0c_v_)
 and [images](images/) demonstrate the firmware use.
 
-Xteink X4 Pro running Draftling firmware:
-![Xteink X4 Pro with a JOMAA Bluetooth keybboard](images/Xteink_X4_Pro_01.jpg)
+Seeed reterminal Sticky running Draftling firmware:
+![Sticky on a magsafe stand](images/Seeed_reTerminal_Sticky_01.jpg)
 
 
 ## Supported hardware

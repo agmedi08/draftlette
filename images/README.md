@@ -1,5 +1,10 @@
 # Draftling photos
 
+## Seeed Studio reTerminal Sticky
+
+![Sticky on a Magsafe phone stand](Seeed_reTerminal_Sticky_01.jpg)
+
+![Sticky](Seeed_reTerminal_Sticky_02.jpg)
 
 ## Waveshare ESP32-S3-ePaper-3.97
 
@@ -12,7 +17,7 @@ The board in a [3D-printed enclosure](../3D_Prints/Waveshare_ESP32-S3-ePaper-3.9
 
 ## Xteink X4 Pro
 
-![Xteink X4 Pro with a JOMAA Bluetooth keybboard](Xteink_X4_Pro_01.jpg)
+![Xteink X4 Pro with a JOMAA Bluetooth keyboard](Xteink_X4_Pro_01.jpg)
 
 ## Waveshare ESP32-S3-RLCD-4.2
 
