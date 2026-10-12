@@ -6,6 +6,10 @@ in the git log.
 
 ## [Unreleased]
 
+### Fixed
+
+**Rotated the MicroJournal Rev 5 display by 180 degrees.** The screen now starts in the correct orientation.
+
 ### Added
 
 - **MicroJournal Rev 5 firmware target**: adds a dedicated build preset
