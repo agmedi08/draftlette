@@ -1654,7 +1654,8 @@ static void papermono_btn_init(void)
  * is polled here.  Boards with no button at all (FNK0104A/B/S) skip
  * this poller entirely.
  */
-#if !defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752) && \
+#if CONFIG_DRAFTLING_WAKEUP_GPIO >= 0 && \
+    !defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752) && \
     !defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_579) && \
     !defined(CONFIG_DRAFTLING_MODEL_XTEINK_X4_CLASSIC)
 
@@ -2443,12 +2444,15 @@ extern "C" void app_main(void)
 #endif
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ILI9341) || defined(CONFIG_DRAFTLING_DISPLAY_ST7796) || \
       defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-    /* Freenove FNK0104A/B (ILI9341) / FNK0104S (ST7796) / Viewe
-     * UEDX24320028E-WB-A + UEED035HV (ST7365). 4-wire SPI color LCD; all panel
-     * GPIOs (MOSI/SCK/DC/CS/BL, plus RST and the IM straps on the
-     * Viewe panel) are hard-coded inside display_ili9341.cpp per
-     * controller. Pin parameters are ignored. */
+    /* Shared 4-wire SPI TFT backend. Freenove and Viewe use its
+     * built-in pin maps; custom-pin variants pass their board tuple
+     * through display_init(). */
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
+    display_init(LCD_MOSI_PIN, LCD_SCK_PIN, LCD_DC_PIN, LCD_CS_PIN,
+                 LCD_RST_PIN, LCD_MISO_PIN, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+#else
     display_init(-1, -1, -1, -1, -1, -1, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+#endif
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST77922)
     /* Freenove FNK0104N. ST77922 QSPI color LCD; all panel GPIOs are
      * hard-coded in display_st77922.cpp. Works in the panel's native
@@ -3054,7 +3058,8 @@ extern "C" void app_main(void)
     }
 #endif
 
-    /* Bring up USB Host + HID keyboard driver (Tab5: USB-A port).
+    /* Bring up USB Host + HID keyboard driver (Tab5 USB-A /
+     * MicroJournal native USB port).
      * If a USB keyboard is enumerated within the probe window we
      * disable BLE so the wired keyboard is the sole input source;
      * if the user later unplugs the USB keyboard, the disconnect
@@ -3065,8 +3070,12 @@ extern "C" void app_main(void)
     bool usb_kbd_present = false;
 #if defined(CONFIG_DRAFTLING_HAS_USB_HOST)
     ESP_LOGI(TAG, "Starting USB host...");
+#if defined(CONFIG_DRAFTLING_USB_HOST_BSP_MANAGED)
     esp_err_t usb_err = bsp_usb_host_start(BSP_USB_HOST_POWER_MODE_USB_DEV,
                                             true /* limit to 500 mA */);
+#else
+    esp_err_t usb_err = ESP_OK;
+#endif
     if (usb_err != ESP_OK) {
         ESP_LOGW(TAG, "bsp_usb_host_start failed: %s",
                  esp_err_to_name(usb_err));
@@ -3112,9 +3121,12 @@ extern "C" void app_main(void)
             editor_ui_show_file_browser();
             draftling_lvgl_port_unlock();
         }
+    #if defined(CONFIG_BT_ENABLED)
         ble_keyboard_init();
         ble_keyboard_disable();
+    #endif
     } else {
+    #if defined(CONFIG_BT_ENABLED)
         ESP_LOGI(TAG, "Initializing Bluetooth keyboard...");
         /* Now that we know we are going down the BLE path, replace
          * the neutral "Initializing..." caption editor_ui_init()
@@ -3128,6 +3140,13 @@ extern "C" void app_main(void)
             draftling_lvgl_port_unlock();
         }
         ble_keyboard_init();
+#else
+        ESP_LOGI(TAG, "Bluetooth disabled; waiting for USB keyboard");
+        if (draftling_lvgl_port_lock(-1)) {
+            editor_ui_set_ble_prompt_text("Connect a USB keyboard...");
+            draftling_lvgl_port_unlock();
+        }
+#endif
     }
 
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
@@ -3279,7 +3298,9 @@ extern "C" void app_main(void)
      * all stored BLE keyboard pairings and start a fresh scan (and,
      * on the Xteink X4 Pro, a short press to power off -- see
      * wakeup_btn_poll_cb()). */
+#if CONFIG_DRAFTLING_WAKEUP_GPIO >= 0
     wakeup_btn_init();
+#endif
 #if defined(CONFIG_DRAFTLING_MODEL_XTEINK_X4_PRO)
     /* Left/Right buttons scroll the editor (Page Up / Page Down),
      * alongside (not instead of) the generic Power/wakeup handler

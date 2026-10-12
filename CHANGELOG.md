@@ -8,6 +8,11 @@ in the git log.
 
 ### Added
 
+- **MicroJournal Rev 5 firmware target**: adds a dedicated build preset
+  for the ESP32-S3 writerdeck with its ILI9341 display, shared-SPI
+  MicroSD reader and wired USB keyboard host; Bluetooth is disabled
+  in this build. GPIO0 is reserved for hardware power control; after
+  deep sleep, wake by hardware reset or power cycling.
 - **Hardware information page**: the new F1 menu item "Hardware
   information" (letter I) shows the board model and chip, the RAM,
   PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch

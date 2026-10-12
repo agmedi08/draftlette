@@ -1,11 +1,9 @@
 ## Pulls in the USB HID Host driver (boot keyboard / mouse / generic
-## reports). Gated to ESP32-P4: this component is currently only
-## wired in for the M5Stack Tab5 build path, whose USB-A connector
-## is the only USB host port across the supported devices.
+## reports) for boards with native USB host support.
 dependencies:
   idf:
     version: ">=5.5"
   espressif/usb_host_hid:
     version: "^1.0.1"
     rules:
-      - if: "target == esp32p4"
+      - if: 'target in ["esp32p4", "esp32s3"]'

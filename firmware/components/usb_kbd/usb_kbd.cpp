@@ -29,9 +29,9 @@
  *    ID (if any), and the interface callback strips a leading Report
  *    ID byte before treating the rest as a boot-format report.
  *
- * The USB Host PHY + VBUS power gate must already be enabled before
- * calling usb_kbd_init(). On M5Stack Tab5 main.cpp does this via
- * bsp_usb_host_start() from the espressif/m5stack_tab5 BSP.
+ * On ESP32-S3, usb_kbd_init() installs the USB Host stack and its
+ * daemon task; the board must provide 5 V on host VBUS. On M5Stack
+ * Tab5, the BSP owns PHY, VBUS and daemon startup instead.
  *
  * Reference: ESP-IDF examples/peripherals/usb/host/hid (boot-mode
  * keyboard branch). We deliberately do NOT handle generic HID
@@ -49,6 +49,7 @@
 #include <freertos/queue.h>
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_intr_alloc.h>
 
 #include "usb/usb_host.h"
 #include "usb/hid_host.h"
@@ -232,9 +233,41 @@ typedef struct {
 } hid_event_t;
 
 /* ---- USB Host library task ---- */
-/* Owned by the BSP on Tab5 (bsp_usb_host_start spawns usb_lib_task).
- * No-op in this component to avoid a duplicate usb_host_install
- * call. */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+static void usb_host_lib_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t event_flags = 0;
+        esp_err_t err = usb_host_lib_handle_events(portMAX_DELAY, &event_flags);
+        (void)event_flags;
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "USB host event handling failed: %s",
+                     esp_err_to_name(err));
+        }
+    }
+}
+
+static esp_err_t usb_host_stack_init(void)
+{
+    usb_host_config_t host_cfg = {};
+    host_cfg.skip_phy_setup = false;
+    host_cfg.intr_flags = ESP_INTR_FLAG_LEVEL1;
+    esp_err_t err = usb_host_install(&host_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (xTaskCreate(usb_host_lib_task, "usb_host_lib", 4096, NULL, 5,
+                    NULL) != pdTRUE) {
+        ESP_LOGE(TAG, "USB host library task create failed");
+        (void)usb_host_uninstall();
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+#endif
 
 /* ---- HID host event helpers ---- */
 
@@ -512,13 +545,13 @@ static void hid_event_task(void *arg)
 
 extern "C" int usb_kbd_init(void)
 {
-    /* NOTE: We deliberately do NOT call usb_host_install() or spawn a
-     * usb_lib_task here. On Tab5 bsp_usb_host_start() already does
-     * both (see espressif/esp-bsp bsp/m5stack_tab5/src/bsp_usb.c).
-     * Calling usb_host_install a second time returns
-     * ESP_ERR_INVALID_STATE. Callers on boards without that BSP
-     * helper must install the host library themselves before
-     * invoking usb_kbd_init(). */
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    /* S3 boards use the internal USB-OTG PHY and need their own daemon
+     * task. The Tab5 BSP manages both resources on ESP32-P4. */
+    if (usb_host_stack_init() != ESP_OK) {
+        return -1;
+    }
+#endif
 
     /* Spin up the queue + task that will service hid_drv_cb events. */
     s_hid_event_queue = xQueueCreate(8, sizeof(hid_event_t));

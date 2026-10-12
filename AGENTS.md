@@ -76,6 +76,7 @@ card).
 | Freenove FNK0104B | 2.8-inch ILI9341 color LCD, 320x240, FT6336U touch |
 | Freenove FNK0104N | 3.5-inch ST77922 QSPI color LCD, 480x320, ST77922 built-in touch |
 | Freenove FNK0104S | 4.0-inch ST7796 color LCD, 480x320, FT6336U touch |
+| MicroJournal Rev 5 | ILI9341 color LCD, 320x240, shared-SPI MicroSD, USB host |
 | Viewe UEDX24320028E-WB-A + UEED035HV-RX40-L001 | 3.5-inch ST7365 transflective color LCD (separately sold display on the board's connector), 480x320, CHSC6540-compatible touch |
 | Xteink X4 Pro | 4.26-inch e-paper (SSD1677/UC8179/UC8279, auto-detected), 800x480, GT911 touch |
 | Xteink X4 Classic (X4 v2) | 4.26-inch e-paper (SSD1677/UC8179/UC8279, auto-detected), 800x480, no touch, no front-light |
@@ -1678,6 +1679,11 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   unused on-board WS2812 LED (GPIO40,
   `BOARD_WS2812_PIN`) is switched off at boot by `ws2812_off()` in
   main.cpp. Tested on physical hardware. *Requires ESP32-S3.*
+- **DRAFTLING_MODEL_MICROJOURNAL_REV5** -- MicroJournal Rev 5
+  writerdeck: ESP32-S3 N16R8, ILI9341 color LCD (320x240 landscape),
+  shared-SPI MicroSD reader and native USB host keyboard; Bluetooth is
+  disabled in this build. GPIO0 is reserved for hardware power control,
+  not a wake button. Backlight control is disabled. *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_XTEINK_X4_PRO** -- Xteink X4 Pro: 4.26" 800x480
   e-paper panel over SPI, one of three controllers (SSD1677, UC8179,
   UC8279) auto-detected at boot by
@@ -1961,6 +1967,9 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_M5_PAPERMONO    | Selects `display_m5_papermono.cpp` (plain SPI, single SSD1677 controller; panel supply/reset on the M5IOE1, front-light on the M5PM1) | M5Stack PaperMono |
 | DRAFTLING_DISPLAY_AXS15231B       | Selects `display_axs15231b.cpp`   | Touch-LCD-3.49, JC3248W535 |
 | DRAFTLING_DISPLAY_ILI9341         | Selects `display_ili9341.cpp` (shared ILI9341/ST7796 SPI backend) with the ILI9341 init sequence | Freenove FNK0104A / FNK0104B |
+| DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS | Routes a board-provided SPI TFT pin tuple, including MISO and hardware reset, through `display_init()` | MicroJournal Rev 5 |
+| DRAFTLING_HAS_USB_HOST             | Enables the USB HID keyboard host component | M5Stack Tab5, MicroJournal Rev 5 |
+| DRAFTLING_USB_HOST_BSP_MANAGED     | Selects BSP-owned USB PHY, VBUS and host daemon startup | M5Stack Tab5 |
 | DRAFTLING_DISPLAY_ST7796          | Selects `display_ili9341.cpp` with the ST7796 init sequence | Freenove FNK0104S |
 | DRAFTLING_DISPLAY_ST77922         | Selects `display_st77922.cpp` (ST77922 QSPI panel, native portrait, LVGL port rotates) | Freenove FNK0104N |
 | DRAFTLING_DISPLAY_ST7365          | Selects `display_ili9341.cpp` with the Viewe UEED035HV-RX40-L001 pins (incl. RST and the IM0/IM1 interface-mode straps) and Viewe's ST7365 init table | Viewe UEDX24320028E-WB-A + UEED035HV |
@@ -2081,7 +2090,7 @@ board (`waveshare_rlcd42`, `m5stack_papers3`, `lilygo_t5_epd_s3_pro`,
 `lilygo_t5_epd_s3_pro_h752`, `waveshare_touch_lcd_349`, `m5stack_tab5`,
 `jc3248w535`, `sunton_8048s070`, `sunton_8048s043`,
 `waveshare_touch_lcd_7`, `waveshare_lcd_316`, `freenove_fnk0104a`, `freenove_fnk0104b`,
-`freenove_fnk0104s`, `freenove_fnk0104n`, `viewe_uedx24320028_ueed035hv`, `xteink_x4_pro`, `xteink_x4_classic`,
+`freenove_fnk0104s`, `freenove_fnk0104n`, `microjournal_rev5`, `viewe_uedx24320028_ueed035hv`, `xteink_x4_pro`, `xteink_x4_classic`,
 `elecrow_crowpanel_579`, `waveshare_epaper_397`,
 `seeed_reterminal_e1001`, `seeed_reterminal_sticky`,
 `m5stack_papermono`). Each

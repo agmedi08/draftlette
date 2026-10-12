@@ -68,13 +68,32 @@ static const char *TAG = "DisplayILI9341";
 #define FNK_LCD_RST_PIN    39
 #define FNK_LCD_IM0_PIN    47
 #define FNK_LCD_IM1_PIN    48
+#elif defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
+static int s_custom_mosi_pin = -1;
+static int s_custom_miso_pin = -1;
+static int s_custom_sck_pin = -1;
+static int s_custom_dc_pin = -1;
+static int s_custom_cs_pin = -1;
+static int s_custom_rst_pin = -1;
+#define FNK_LCD_MOSI_PIN   s_custom_mosi_pin
+#define FNK_LCD_MISO_PIN   s_custom_miso_pin
+#define FNK_LCD_SCK_PIN    s_custom_sck_pin
+#define FNK_LCD_DC_PIN     s_custom_dc_pin
+#define FNK_LCD_CS_PIN     s_custom_cs_pin
+#define FNK_LCD_RST_PIN    s_custom_rst_pin
+#define FNK_LCD_BL_PIN     (-1)
 #else
 /* Pins shared by every FNK0104 SPI-TFT SKU (A/B/S). */
 #define FNK_LCD_MOSI_PIN   11
+#define FNK_LCD_MISO_PIN   -1
 #define FNK_LCD_SCK_PIN    12
 #define FNK_LCD_DC_PIN     46
 #define FNK_LCD_CS_PIN     10
 #define FNK_LCD_BL_PIN     45
+#endif
+
+#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
+#define FNK_LCD_MISO_PIN   -1
 #endif
 
 #define FNK_SPI_HOST       SPI2_HOST
@@ -187,6 +206,8 @@ static void send_cmd_data(uint8_t cmd, const uint8_t *data, size_t n)
 
 static void backlight_pwm_init(void)
 {
+#if FNK_LCD_BL_PIN >= 0
+
     /* display_deep_sleep_prepare() below latches this pin LOW with
      * gpio_hold_en() + gpio_deep_sleep_hold_en() so the backlight
      * stays off through deep sleep. That hold survives the wake
@@ -225,10 +246,14 @@ static void backlight_pwm_init(void)
     c.duty       = BL_LEDC_DUTY_MAX;
     c.hpoint     = 0;
     ESP_ERROR_CHECK(ledc_channel_config(&c));
+#endif
 }
 
 extern "C" void display_set_backlight(int percent)
 {
+    if (FNK_LCD_BL_PIN < 0) {
+        return;
+    }
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     s_bl_last_pct = percent;
@@ -254,6 +279,12 @@ extern "C" void display_set_backlight(int percent)
 #if defined(CONFIG_DRAFTLING_DISPLAY_ILI9341)
 static void ili9341_init_sequence(void)
 {
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
+    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(120));
+#endif
     send_command(0x01); /* SWRESET */
     vTaskDelay(pdMS_TO_TICKS(150));
 
@@ -441,12 +472,28 @@ static void set_addr_window(int x, int y, int w, int h)
     send_cmd_data(0x2B, raset, sizeof(raset));
 }
 
-extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
-                             int /*pin_d*/, int /*pin_e*/, int /*pin_f*/,
+extern "C" void display_init(int pin_a, int pin_b, int pin_c,
+                             int pin_d, int pin_e, int pin_f,
                              int width, int height)
 {
     s_width  = width;
     s_height = height;
+
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
+    s_custom_mosi_pin = pin_a;
+    s_custom_sck_pin  = pin_b;
+    s_custom_dc_pin   = pin_c;
+    s_custom_cs_pin   = pin_d;
+    s_custom_rst_pin  = pin_e;
+    s_custom_miso_pin = pin_f;
+
+    gpio_config_t rst_cfg = {};
+    rst_cfg.intr_type    = GPIO_INTR_DISABLE;
+    rst_cfg.mode         = GPIO_MODE_OUTPUT;
+    rst_cfg.pin_bit_mask = (1ULL << FNK_LCD_RST_PIN);
+    ESP_ERROR_CHECK(gpio_config(&rst_cfg));
+    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
+#endif
 
 #if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
     /* Interface-mode straps (IM2 is tied HIGH on the board):
@@ -468,7 +515,7 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
 #endif
 
     spi_bus_config_t bus_cfg = {};
-    bus_cfg.miso_io_num   = -1;
+    bus_cfg.miso_io_num   = FNK_LCD_MISO_PIN;
     bus_cfg.mosi_io_num   = FNK_LCD_MOSI_PIN;
     bus_cfg.sclk_io_num   = FNK_LCD_SCK_PIN;
     bus_cfg.quadwp_io_num = -1;
@@ -690,8 +737,10 @@ extern "C" void display_wake(void)
 extern "C" void display_deep_sleep_prepare(void)
 {
     display_set_backlight(0);
-    gpio_hold_en((gpio_num_t)FNK_LCD_BL_PIN);
-    gpio_deep_sleep_hold_en();
+    if (FNK_LCD_BL_PIN >= 0) {
+        gpio_hold_en((gpio_num_t)FNK_LCD_BL_PIN);
+        gpio_deep_sleep_hold_en();
+    }
 }
 
 extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)

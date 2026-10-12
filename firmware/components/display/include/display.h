@@ -23,6 +23,9 @@ extern "C" {
  *  LilyGO T5 E-Paper S3 Pro / Pro Lite (display_epdiy.cpp):
  *      all pin parameters are ignored - epdiy's built-in
  *      epd_board_v7 owns the GPIOs. Width/height must match.
+ *
+ *  SPI TFTs with DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS:
+ *      mosi, sck, dc, cs, rst, miso, width, height
  */
 void display_init(int pin_a, int pin_b, int pin_c, int pin_d,
                   int pin_e, int pin_f, int width, int height);

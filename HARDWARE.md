@@ -269,6 +269,24 @@ FT6336U capacitive touch controller, and the FNK0104N has touch built
 into its display controller, so touch works alongside the BLE
 keyboard.
 
+## MicroJournal Rev 5
+
+ESP32-S3 N16R8 writerdeck with an ILI9341 SPI color LCD, configured
+for 320x240 landscape. LCD signals are MOSI=GPIO11, MISO=GPIO13,
+SCLK=GPIO12, CS=GPIO10, DC=GPIO46 and RST=GPIO3. The built-in
+MicroSD reader shares this SPI2 bus on CS=GPIO9. Native USB host uses
+GPIO19 (D-) and GPIO20 (D+). Backlight control, touchscreen and battery
+monitor were not specified; backlight control is disabled. No user
+wake button is present; GPIO0 is reserved for hardware power control
+and is not configured by firmware. Deep sleep therefore wakes only
+through hardware reset or power cycling.
+Bluetooth is disabled in this preset; keyboard input is through USB.
+The USB host connector must also receive 5 V VBUS; no VBUS enable pin
+was provided. The preset routes the console over UART because USB-OTG
+host and USB-Serial/JTAG share the ESP32-S3 internal PHY.
+
+Build with the `microjournal_rev5` preset.
+
 
 ## Viewe UEDX24320028E-WB-A with UEED035HV-RX40-L001 display
 
