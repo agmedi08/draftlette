@@ -150,6 +150,8 @@ components/                 Reusable IDF components
   io_expander/              CH422G (Waveshare Touch-LCD-7) and M5IOE1
                             (M5Stack PaperMono) I2C IO-expander drivers
   kb_layout/                Keyboard layout translation (US/UA/DE/FR)
+  kermit/                   Kermit file server on the serial console
+                            ("Sync via browser")
   power/                    TCA9554-latched battery rail + PWR-button driver
   sd_card/                  SD card (SDMMC 1-bit) file operations
   standby/                  Deep-sleep / standby inactivity timer
@@ -683,6 +685,24 @@ documents back, shows the busy message pop-up and runs `fmt_task()`:
 pointing at the deleted files (open documents, Git repository,
 `git.cfg`).
 
+**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `V`, on
+every board) opens a Start / Stop picker rendered into `s_menu_list`
+(`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
+`kermit_picker_activate()`); the choice applies at once. `kermit_start()`
+refuses while the card is handed off (`sd_handed_off_msg()`), no card is
+mounted, a Git sync runs, or an untitled document has unsaved changes;
+otherwise it saves every modified document, collapses a split, closes
+every titled document (`editor_close_file()` on each, so stale buffers
+cannot be written back over files the client replaces), forces the file
+browser and calls `kermit_server_start()` (see `components/kermit/`).
+`kermit_stop()` calls `kermit_server_stop()`. `kermit_status_cb()` runs
+on the server task: it takes the LVGL lock with a 200 ms timeout (Stop
+waits for that task while holding the lock), shows the message, refreshes
+the file list when files changed and resets the standby timer.
+`sd_handed_off_msg()` is the single guard for "the SD card belongs to
+someone else" (SD via USB or the Kermit server) used by the editor, both
+file browsers, Git sync, Draftbox and Format SD card.
+
 **Hardware information.** The F1 row `MENU_IDX_HWINFO` (letter `I`)
 shows `build_hwinfo_text()` on the help screen (`show_hwinfo()`, which
 shares `show_help_page()` and the key / touch handling with the help
@@ -1139,6 +1159,48 @@ Public API: `kb_layout_translate()`, `kb_layout_shortcut_char()`,
 `kb_layout_next()`, `kb_layout_is_rtl()`, `kb_layout_is_active()`,
 `kb_layout_set_active()`, `kb_layout_active_count()`,
 `kb_layout_get_active_mask()`, `kb_layout_set_active_mask()`.
+
+### components/kermit/
+
+Kermit file-transfer server on the serial console, behind F1 -> "Sync
+via browser". User docs: `docs/sync-via-browser.md`.
+
+- `kermit_port.c` -- transport. `kport_open()` silences every console
+  output path (`esp_log_set_vprintf()` to a no-op, ROM printf channels
+  1 and 2 to a no-op putc) and installs the UART driver on the console
+  UART (`CONFIG_ESP_CONSOLE_UART_NUM`) and, when a primary or secondary
+  console is on USB-Serial/JTAG, the USB-Serial/JTAG driver. Reads poll
+  both; writes go to the port the last input arrived on, so the server
+  works through a board's USB-UART bridge and through the S3's native
+  USB port alike. `kport_close()` removes the drivers and restores the
+  ROM printf set-up the way esp_system's start-up code does.
+- `kermit.c` -- stop-and-wait server (no sliding windows / streaming /
+  recovery): long packets (we advertise 9000; the receive check only
+  enforces the 9128-byte buffer because C-Kermit's longest packets run a
+  few characters past the advertised maximum), block checks 1/2/3 (the
+  check length is not in the packet, so a received packet is validated
+  with the current type first and then 3, 2, 1), control / 8th-bit /
+  repeat prefixing, attribute packets (incoming type "A" = text: CR LF
+  is stored as LF; outgoing files carry type B8, size and date). Packet
+  bodies may contain unprefixed control characters (C-Kermit's
+  "cautious" prefixing leaves TAB etc. bare); only SOH resynchronises.
+  Server commands: I, S (upload, written to `<name>.kpart` and renamed
+  over the target on Z), R (GET, wildcards), G subcommands C/A/D/E/R/m/
+  d/U/T/H/F/L. Short G replies ride in the ACK, long ones go out as an
+  S / X / D / Z / B text transfer. Paths are resolved against the root
+  and the current directory and may not leave the root. A received name
+  without lower-case letters is lower-cased (C-Kermit's "common form").
+  Buffers (3 x ~9 KB) and the 12 KB task stack are in PSRAM.
+
+The engine was tested on the host against C-Kermit 10 over a pty
+(kermit.c compiled with small FreeRTOS / ESP-IDF stubs and a pty-backed
+`kport_*`): uploads / downloads of binary files with every byte value,
+block checks 1-3, long and short packets, repeat counts on and off,
+8th-bit prefixing (`set parity space`), every REMOTE command, and a stop
+in the middle of an upload.
+
+Public API: `kermit_server_start()`, `kermit_server_stop()`,
+`kermit_server_is_running()`.
 
 ### components/sd_card/
 

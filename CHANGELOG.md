@@ -8,6 +8,14 @@ in the git log.
 
 ### Added
 
+- **Sync via browser**: the new F1 menu item "Sync via browser"
+  (letter V) starts a Kermit file server on the serial console. A
+  computer connected to the device's USB port can then list,
+  download, upload, rename and delete the files on the SD card with
+  any Kermit client, without WiFi. Starting it saves and closes the
+  open documents and switches the console's log output off; Stop
+  restores both. See docs/sync-via-browser.md.
+
 - **Hardware information page**: the new F1 menu item "Hardware
   information" (letter I) shows the board model and chip, the RAM,
   PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch

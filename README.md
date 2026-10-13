@@ -110,6 +110,14 @@ load the firmware quickly without having to compile it.
   light green on black (default), dark green on black, amber/orange on
   black, white on black, or black on beige.
 
+- **Sync via browser** F1 -> "Sync via browser" -> Start turns the
+  serial console into a Kermit file server: a computer on the
+  device's USB port can list, download, upload, rename and delete the
+  files on the SD card with any Kermit client (C-Kermit, or a web page
+  using Web Serial), no WiFi needed. The editor is closed while it
+  runs; Stop brings everything back. See
+  [docs/sync-via-browser.md](docs/sync-via-browser.md).
+
 - **SD card via USB** On boards whose USB port wires the ESP32-S3's
   native USB controller straight to the connector (Xteink X4 Pro /
   Classic, LilyGO T5 E-Paper S3 Pro / Pro Lite / H752, M5Stack
@@ -134,7 +142,7 @@ load the firmware quickly without having to compile it.
 
 | Shortcut | Action |
 |----------|--------|
-| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: S Settings, B BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, F Format SD card, I Hardware information, H Help |
+| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: S Settings, B BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, V Sync via browser, F Format SD card, I Hardware information, H Help |
 | F10 | Help: the shortcuts of the current screen and, in the editor, the formatting syntax of the document (Markdown or Fountain). Up/Down, PgUp/PgDn (or Ctrl+Up/Down), Home/End scroll; Esc or Enter closes it |
 | Arrow keys | Move cursor |
 | Home / End | Start / end of line |
