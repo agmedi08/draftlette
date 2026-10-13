@@ -1,13 +1,23 @@
-## USB HID host is used on ESP32-P4 (Tab5 BSP) and ESP32-S3 (native
-## USB-OTG). Register an empty component on other targets so optional
-## requirements stay a no-op where usb/hid_host.h is unavailable.
-idf_build_get_property(target IDF_TARGET)
-if(target STREQUAL "esp32p4" OR target STREQUAL "esp32s3")
+## usb_kbd is only built on boards with a USB host keyboard port
+## (CONFIG_DRAFTLING_HAS_USB_HOST: M5Stack Tab5, MicroJournal Rev 5).
+## Everywhere else it registers as an empty component, so the
+## `idf_component_optional_requires(usb_kbd)` calls in main / editor
+## (themselves gated on the same symbol) stay a no-op and neither this
+## code nor espressif/usb_host_hid (whose manifest rule uses the same
+## symbol) is compiled.
+##
+## CONFIG_* reads empty during ESP-IDF's early, Kconfig-blind
+## requirements-expansion pass (see components/ble_keyboard/CMakeLists.txt),
+## so the requirements are added with idf_component_optional_requires()
+## after registration; the SRCS list is only consumed by the later,
+## Kconfig-aware pass.
+if(CONFIG_DRAFTLING_HAS_USB_HOST)
     idf_component_register(
         SRCS "usb_kbd.cpp"
         INCLUDE_DIRS "include"
-        PRIV_REQUIRES ble_keyboard usb driver
     )
+    idf_component_optional_requires(PRIVATE ble_keyboard usb driver
+                                    espressif__usb_host_hid)
 else()
     idf_component_register()
 endif()

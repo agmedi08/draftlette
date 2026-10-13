@@ -1008,6 +1008,16 @@ config DRAFTLING_USB_HOST_BSP_MANAGED
     default y if DRAFTLING_MODEL_M5STACK_TAB5
     default n
 
+# DRAFTLING_HAS_USB_HOST as 0/1, for the component manager rule in
+# components/usb_kbd/idf_component.yml that pulls in
+# espressif/usb_host_hid. That rule reads sdkconfig.json, which omits a
+# hidden bool symbol whose value is n (and the manager then fails with
+# "Missing required kconfig option"); a hidden int is always written.
+config DRAFTLING_USB_HOST_DEP
+    int
+    default 1 if DRAFTLING_HAS_USB_HOST
+    default 0
+
 config DRAFTLING_USB_KBD_PROBE_MS
     int
     depends on DRAFTLING_HAS_USB_HOST
