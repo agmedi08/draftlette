@@ -1165,6 +1165,17 @@ Public API: `kb_layout_translate()`, `kb_layout_shortcut_char()`,
 Kermit file-transfer server on the serial console, behind F1 -> "Sync
 via browser". User docs: `docs/sync-via-browser.md`.
 
+Only usable on boards whose USB port is wired to the ESP32-S3's native
+USB (USB-Serial/JTAG) -- the `DRAFTLING_HAS_USB_MSC` board list. On
+boards with a USB-to-UART bridge (Seeed reTerminal E1001 / Sticky,
+Elecrow CrowPanel 5.79") the bridge's DTR / RTS lines drive the
+auto-reset circuit on EN / GPIO0: on the Sticky, connecting with a Web
+Serial client (Draftbridge) left the device unresponsive with no
+answer to the I packet, and esptool afterwards found the chip not in
+download mode -- consistent with the open port resetting / holding the
+chip in reset. The server still listens on the console UART on every
+board, but the docs mark these boards as unsupported.
+
 - `kermit_port.c` -- transport. `kport_open()` silences every console
   output path (`esp_log_set_vprintf()` to a no-op, ROM printf channels
   1 and 2 to a no-op putc) and installs the UART driver on the console

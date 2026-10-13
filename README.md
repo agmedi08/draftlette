@@ -115,8 +115,11 @@ load the firmware quickly without having to compile it.
   device's USB port can list, download, upload, rename and delete the
   files on the SD card with any Kermit client (C-Kermit, or a web page
   using Web Serial), no WiFi needed. The editor is closed while it
-  runs; Stop brings everything back. See
-  [docs/sync-via-browser.md](docs/sync-via-browser.md).
+  runs; Stop brings everything back. Works only on boards whose USB
+  port is wired to the ESP32-S3's native USB (the same boards as "SD
+  card via USB" below), not on boards with a USB-to-UART bridge such
+  as the Seeed reTerminal E1001 / Sticky and the Elecrow CrowPanel.
+  See [docs/sync-via-browser.md](docs/sync-via-browser.md).
 
 - **SD card via USB** On boards whose USB port wires the ESP32-S3's
   native USB controller straight to the connector (Xteink X4 Pro /

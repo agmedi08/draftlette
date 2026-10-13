@@ -5,6 +5,10 @@ its serial console, so a computer connected to the device's USB port
 can list, download, upload, rename and delete the files on the SD
 card. No WiFi is needed.
 
+It works only on boards whose USB port is wired straight to the
+ESP32-S3's built-in USB -- the same boards that offer "SD card via
+USB" (see "Supported boards" below).
+
 Kermit is a long-established file-transfer protocol for serial lines
 (<https://www.kermitproject.org>). Any Kermit client that can talk to a
 Kermit server works: C-Kermit (`kermit`), Kermit 95, or a web page
@@ -30,20 +34,27 @@ While the server runs, the console carries Kermit packets instead of
 the firmware's log messages: all console output is switched off, and
 it comes back when the server is stopped.
 
+## Supported boards
+
+Supported: Xteink X4 Pro and X4 Classic, LilyGO T5 E-Paper S3 Pro /
+Pro Lite / H752, M5Stack PaperS3 and PaperMono, Waveshare
+ESP32-S3-ePaper-3.97, ESP32-S3-RLCD-4.2, ESP32-S3-Touch-LCD-7,
+ESP32-S3-Touch-LCD-3.49 and ESP32-S3-LCD-3.16, the four Freenove
+FNK0104 boards, and the Viewe UEDX24320028E-WB-A.
+
+Not supported: boards whose USB port goes through a USB-to-UART bridge
+chip, such as the Seeed reTerminal E1001, the Seeed reTerminal Sticky
+and the Elecrow CrowPanel 5.79". On these boards the bridge's control
+lines are wired to the chip's reset and boot-mode pins, and a computer
+opening the port can reset the device or hold it in reset, which ends
+the session and leaves the device unresponsive. The menu item is still
+there, but do not use it on these boards. Other boards are untested.
+
 ## Connecting
 
-The server listens on the console UART and, on ESP32-S3 boards, also
-on the chip's built-in USB-Serial/JTAG port, and answers on whichever
-one the client talks to:
-
-- Boards whose USB-C socket goes straight to the ESP32-S3 (most
-  supported boards) appear on the computer as a USB serial port
-  (`/dev/ttyACM0` on Linux, `/dev/cu.usbmodem*` on macOS, a COM port
-  on Windows). The speed setting does not matter.
-- Boards with a USB-to-UART bridge chip (for example the Seeed
-  reTerminal E1001 and reTerminal Sticky) appear as the bridge's
-  serial port; use 115200 bits per second, 8 data bits, no parity, no
-  flow control.
+On a supported board the device appears on the computer as a USB
+serial port (`/dev/ttyACM0` on Linux, `/dev/cu.usbmodem*` on macOS, a
+COM port on Windows). The speed setting does not matter.
 
 Example with C-Kermit on Linux:
 
