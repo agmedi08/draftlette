@@ -13,14 +13,14 @@
  * file serves both, selecting the vendor init table with #if
  * CONFIG_DRAFTLING_DISPLAY_ST7796.
  *
- * All three FNK0104 SPI-TFT SKUs (A/B/S) wire the panel to the same
- * GPIOs (MOSI=11, SCLK=12, DC=46, CS=10, BL=45, no discrete RST --
- * TFT_eSPI's setup headers define TFT_RST as -1 for this family, so
- * this backend uses the SWRESET command instead of a GPIO pulse),
- * so the pins are hard-coded here rather than threaded through
- * display_init()'s 6 generic pin slots, matching the existing
- * convention of components/display/display_rgb.cpp hard-coding its
- * per-board Sunton pins internally.
+ * The panel wiring (SPI pins, optional hardware RST, backlight,
+ * interface-mode straps, SPI clock and backlight PWM frequency) is
+ * board-specific and comes from main/boards/<board>.h through
+ * display_spi_tft_config(), which main.cpp calls before
+ * display_init(). The FNK0104 boards have no discrete RST line
+ * (TFT_eSPI's setup headers define TFT_RST as -1 for this family),
+ * so this backend sends SWRESET; boards that wire RST get a hardware
+ * reset pulse first.
  *
  * See https://github.com/Freenove/Freenove_ESP32_S3_Display for the
  * reference TFT_eSPI setup headers and Arduino sketches this backend
@@ -30,16 +30,14 @@
  * 320x480 transflective display (ST7365 controller, ST7796-compatible
  * command set) attached to a Viewe UEDX24320028E-WB-A board
  * (CONFIG_DRAFTLING_DISPLAY_ST7365): same MIPI-DCS command set
- * (CASET/RASET/RAMWR/MADCTL) and RGB565 pipeline, but its own pins, a
- * real RST line (GPIO39), two interface-mode straps (IM0=GPIO47,
- * IM1=GPIO48; IM2 is tied HIGH on the board) and Viewe's own init
- * table. The board's stock 2.8" GC9307 panel uses IM2..0 = 110; this
+ * (CASET/RASET/RAMWR/MADCTL) and RGB565 pipeline, but a real RST
+ * line, two interface-mode straps (IM2 is tied HIGH on the board) and
+ * Viewe's own init table. The board's stock 2.8" GC9307 panel uses IM2..0 = 110; this
  * display only answers with IM2..0 = 111 and needs display inversion
  * ON -- the same configuration as Viewe's UEDX32480035E-WB-A
  * (ESP32_Display_Panel board file BOARD_VIEWE_UEDX32480035E_WB_A.h in
  * https://github.com/VIEWESMART/UEDX24320028ESP32-2.8inch-Touch-Display),
- * which the pins, straps and init table here follow. The RST pin
- * comes from the board's V1.1 schematic. Tested on hardware.
+ * which the straps and init table here follow. Tested on hardware.
  */
 
 #include <cstdio>
@@ -58,56 +56,12 @@
 
 static const char *TAG = "DisplayILI9341";
 
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-/* Viewe UEDX24320028E-WB-A board + UEED035HV-RX40-L001 display. */
-#define FNK_LCD_MOSI_PIN   45
-#define FNK_LCD_SCK_PIN    40
-#define FNK_LCD_DC_PIN     41
-#define FNK_LCD_CS_PIN     42
-#define FNK_LCD_BL_PIN     13
-#define FNK_LCD_RST_PIN    39
-#define FNK_LCD_IM0_PIN    47
-#define FNK_LCD_IM1_PIN    48
-#elif defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
-static int s_custom_mosi_pin = -1;
-static int s_custom_miso_pin = -1;
-static int s_custom_sck_pin = -1;
-static int s_custom_dc_pin = -1;
-static int s_custom_cs_pin = -1;
-static int s_custom_rst_pin = -1;
-#define FNK_LCD_MOSI_PIN   s_custom_mosi_pin
-#define FNK_LCD_MISO_PIN   s_custom_miso_pin
-#define FNK_LCD_SCK_PIN    s_custom_sck_pin
-#define FNK_LCD_DC_PIN     s_custom_dc_pin
-#define FNK_LCD_CS_PIN     s_custom_cs_pin
-#define FNK_LCD_RST_PIN    s_custom_rst_pin
-#define FNK_LCD_BL_PIN     (-1)
-#else
-/* Pins shared by every FNK0104 SPI-TFT SKU (A/B/S). */
-#define FNK_LCD_MOSI_PIN   11
-#define FNK_LCD_MISO_PIN   -1
-#define FNK_LCD_SCK_PIN    12
-#define FNK_LCD_DC_PIN     46
-#define FNK_LCD_CS_PIN     10
-#define FNK_LCD_BL_PIN     45
-#endif
-
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-#define FNK_LCD_MISO_PIN   -1
-#endif
+/* Board wiring, set by display_spi_tft_config() before display_init(). */
+static display_spi_tft_config_t s_cfg = {
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, 40 * 1000 * 1000, 50000
+};
 
 #define FNK_SPI_HOST       SPI2_HOST
-
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
-#define FNK_SPI_CLOCK_HZ   (80 * 1000 * 1000)
-#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-/* The vendor runs this panel at 80 MHz, but these pins are not the
- * SPI2 IOMUX pins and go through the GPIO matrix; 40 MHz leaves
- * timing margin and still pushes a full 480x320 frame in ~60 ms. */
-#define FNK_SPI_CLOCK_HZ   (40 * 1000 * 1000)
-#else
-#define FNK_SPI_CLOCK_HZ   (40 * 1000 * 1000)
-#endif
 
 /* LEDC PWM backlight, mirroring the AXS15231B backend's active-HIGH
  * default configuration (Guition JC3248W535 convention: duty MAX =
@@ -117,16 +71,6 @@ static int s_custom_rst_pin = -1;
 #define BL_LEDC_CHANNEL     LEDC_CHANNEL_1
 #define BL_LEDC_DUTY_RES    LEDC_TIMER_8_BIT
 #define BL_LEDC_DUTY_MAX    ((1 << 8) - 1)
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-/* The Viewe board's backlight is an LP3310 boost LED driver with the
- * PWM on its dimming input rather than on the LED string itself; stay
- * at a conventional LED-driver dimming frequency (above the audible
- * range, well below what an internal soft-start filter could
- * smooth into a DC level). */
-#define BL_LEDC_FREQ_HZ     20000
-#else
-#define BL_LEDC_FREQ_HZ     50000
-#endif
 
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
 
@@ -204,9 +148,24 @@ static void send_cmd_data(uint8_t cmd, const uint8_t *data, size_t n)
     if (n > 0) send_data(data, n);
 }
 
+extern "C" void display_spi_tft_config(const display_spi_tft_config_t *cfg)
+{
+    s_cfg = *cfg;
+}
+
+/* Hardware reset pulse on boards that wire the RST line. */
+static void panel_hw_reset(void)
+{
+    if (s_cfg.rst < 0) return;
+    gpio_set_level((gpio_num_t)s_cfg.rst, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level((gpio_num_t)s_cfg.rst, 1);
+    vTaskDelay(pdMS_TO_TICKS(120));
+}
+
 static void backlight_pwm_init(void)
 {
-#if FNK_LCD_BL_PIN >= 0
+    if (s_cfg.bl < 0) return;
 
     /* display_deep_sleep_prepare() below latches this pin LOW with
      * gpio_hold_en() + gpio_deep_sleep_hold_en() so the backlight
@@ -221,39 +180,36 @@ static void backlight_pwm_init(void)
      * and display_axs15231b.cpp's backlight init. Safe to call
      * unconditionally on a cold boot too: releasing a pad that was
      * never held is a no-op. */
-    gpio_hold_dis((gpio_num_t)FNK_LCD_BL_PIN);
+    gpio_hold_dis((gpio_num_t)s_cfg.bl);
 
     gpio_config_t g = {};
     g.intr_type    = GPIO_INTR_DISABLE;
     g.mode         = GPIO_MODE_OUTPUT;
-    g.pin_bit_mask = (1ULL << FNK_LCD_BL_PIN);
+    g.pin_bit_mask = (1ULL << s_cfg.bl);
     ESP_ERROR_CHECK(gpio_config(&g));
-    gpio_set_level((gpio_num_t)FNK_LCD_BL_PIN, 1);
+    gpio_set_level((gpio_num_t)s_cfg.bl, 1);
 
     ledc_timer_config_t t = {};
     t.speed_mode      = BL_LEDC_MODE;
     t.duty_resolution = BL_LEDC_DUTY_RES;
     t.timer_num       = BL_LEDC_TIMER;
-    t.freq_hz         = BL_LEDC_FREQ_HZ;
+    t.freq_hz         = s_cfg.bl_pwm_hz;
     t.clk_cfg         = LEDC_USE_RC_FAST_CLK;
     ESP_ERROR_CHECK(ledc_timer_config(&t));
 
     ledc_channel_config_t c = {};
-    c.gpio_num   = FNK_LCD_BL_PIN;
+    c.gpio_num   = s_cfg.bl;
     c.speed_mode = BL_LEDC_MODE;
     c.channel    = BL_LEDC_CHANNEL;
     c.timer_sel  = BL_LEDC_TIMER;
     c.duty       = BL_LEDC_DUTY_MAX;
     c.hpoint     = 0;
     ESP_ERROR_CHECK(ledc_channel_config(&c));
-#endif
 }
 
 extern "C" void display_set_backlight(int percent)
 {
-    if (FNK_LCD_BL_PIN < 0) {
-        return;
-    }
+    if (s_cfg.bl < 0) return;
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     s_bl_last_pct = percent;
@@ -279,12 +235,7 @@ extern "C" void display_set_backlight(int percent)
 #if defined(CONFIG_DRAFTLING_DISPLAY_ILI9341)
 static void ili9341_init_sequence(void)
 {
-#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
-    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(120));
-#endif
+    panel_hw_reset();
     send_command(0x01); /* SWRESET */
     vTaskDelay(pdMS_TO_TICKS(150));
 
@@ -344,6 +295,7 @@ static void ili9341_init_sequence(void)
 #if defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
 static void st7796_init_sequence(void)
 {
+    panel_hw_reset();
     send_command(0x01); /* SWRESET */
     vTaskDelay(pdMS_TO_TICKS(150));
     send_command(0x11); /* SLPOUT */
@@ -398,10 +350,7 @@ static void st7365_init_sequence(void)
 {
     /* Hardware reset. The IM0/IM1 straps were set in display_init()
      * before this runs, so the panel samples 4-wire SPI mode here. */
-    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(120));
+    panel_hw_reset();
 
     send_command(0x11); /* SLPOUT */
     vTaskDelay(pdMS_TO_TICKS(120));
@@ -472,61 +421,49 @@ static void set_addr_window(int x, int y, int w, int h)
     send_cmd_data(0x2B, raset, sizeof(raset));
 }
 
-extern "C" void display_init(int pin_a, int pin_b, int pin_c,
-                             int pin_d, int pin_e, int pin_f,
+extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
+                             int /*pin_d*/, int /*pin_e*/, int /*pin_f*/,
                              int width, int height)
 {
     s_width  = width;
     s_height = height;
 
-#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
-    s_custom_mosi_pin = pin_a;
-    s_custom_sck_pin  = pin_b;
-    s_custom_dc_pin   = pin_c;
-    s_custom_cs_pin   = pin_d;
-    s_custom_rst_pin  = pin_e;
-    s_custom_miso_pin = pin_f;
-
-    gpio_config_t rst_cfg = {};
-    rst_cfg.intr_type    = GPIO_INTR_DISABLE;
-    rst_cfg.mode         = GPIO_MODE_OUTPUT;
-    rst_cfg.pin_bit_mask = (1ULL << FNK_LCD_RST_PIN);
-    ESP_ERROR_CHECK(gpio_config(&rst_cfg));
-    gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
-#endif
-
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-    /* Interface-mode straps (IM2 is tied HIGH on the board):
-     * IM2..0 = 111 selects 4-wire 8-bit SPI on the ST7365 (it does
-     * not respond at all with the stock GC9307 panel's setting 110). They must be settled before the RST pulse in
-     * st7365_init_sequence(). RST is held high (inactive) until
-     * then. */
+    /* Interface-mode straps (if the board routes them to GPIOs) and
+     * RST. On the Viewe ST7365 panel IM2..0 = 111 selects 4-wire
+     * 8-bit SPI (it does not respond at all with the stock GC9307
+     * panel's setting 110); the straps must be settled before the
+     * reset pulse in the init sequence. RST is held high (inactive)
+     * until then. */
     {
-        gpio_config_t g = {};
-        g.intr_type    = GPIO_INTR_DISABLE;
-        g.mode         = GPIO_MODE_OUTPUT;
-        g.pin_bit_mask = (1ULL << FNK_LCD_IM0_PIN) | (1ULL << FNK_LCD_IM1_PIN) |
-                         (1ULL << FNK_LCD_RST_PIN);
-        ESP_ERROR_CHECK(gpio_config(&g));
-        gpio_set_level((gpio_num_t)FNK_LCD_IM0_PIN, 1);
-        gpio_set_level((gpio_num_t)FNK_LCD_IM1_PIN, 1);
-        gpio_set_level((gpio_num_t)FNK_LCD_RST_PIN, 1);
+        uint64_t mask = 0;
+        if (s_cfg.im0 >= 0) mask |= 1ULL << s_cfg.im0;
+        if (s_cfg.im1 >= 0) mask |= 1ULL << s_cfg.im1;
+        if (s_cfg.rst >= 0) mask |= 1ULL << s_cfg.rst;
+        if (mask) {
+            gpio_config_t g = {};
+            g.intr_type    = GPIO_INTR_DISABLE;
+            g.mode         = GPIO_MODE_OUTPUT;
+            g.pin_bit_mask = mask;
+            ESP_ERROR_CHECK(gpio_config(&g));
+            if (s_cfg.im0 >= 0) gpio_set_level((gpio_num_t)s_cfg.im0, 1);
+            if (s_cfg.im1 >= 0) gpio_set_level((gpio_num_t)s_cfg.im1, 1);
+            if (s_cfg.rst >= 0) gpio_set_level((gpio_num_t)s_cfg.rst, 1);
+        }
     }
-#endif
 
     spi_bus_config_t bus_cfg = {};
-    bus_cfg.miso_io_num   = FNK_LCD_MISO_PIN;
-    bus_cfg.mosi_io_num   = FNK_LCD_MOSI_PIN;
-    bus_cfg.sclk_io_num   = FNK_LCD_SCK_PIN;
+    bus_cfg.miso_io_num   = s_cfg.miso;
+    bus_cfg.mosi_io_num   = s_cfg.mosi;
+    bus_cfg.sclk_io_num   = s_cfg.sck;
     bus_cfg.quadwp_io_num = -1;
     bus_cfg.quadhd_io_num = -1;
     bus_cfg.max_transfer_sz = width * height * 2;
     ESP_ERROR_CHECK(spi_bus_initialize(FNK_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
 
     esp_lcd_panel_io_spi_config_t io_cfg = {};
-    io_cfg.dc_gpio_num      = (gpio_num_t)FNK_LCD_DC_PIN;
-    io_cfg.cs_gpio_num      = (gpio_num_t)FNK_LCD_CS_PIN;
-    io_cfg.pclk_hz          = FNK_SPI_CLOCK_HZ;
+    io_cfg.dc_gpio_num      = (gpio_num_t)s_cfg.dc;
+    io_cfg.cs_gpio_num      = (gpio_num_t)s_cfg.cs;
+    io_cfg.pclk_hz          = s_cfg.spi_clock_hz;
     io_cfg.lcd_cmd_bits     = 8;
     io_cfg.lcd_param_bits   = 8;
     io_cfg.spi_mode         = 0;
@@ -737,8 +674,8 @@ extern "C" void display_wake(void)
 extern "C" void display_deep_sleep_prepare(void)
 {
     display_set_backlight(0);
-    if (FNK_LCD_BL_PIN >= 0) {
-        gpio_hold_en((gpio_num_t)FNK_LCD_BL_PIN);
+    if (s_cfg.bl >= 0) {
+        gpio_hold_en((gpio_num_t)s_cfg.bl);
         gpio_deep_sleep_hold_en();
     }
 }

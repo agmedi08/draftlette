@@ -391,17 +391,19 @@ Per-board display backends behind a single C API:
   framebuffer in PSRAM with the same dirty-bbox
   `display_push_rgb565()` / `display_flush()` pattern as the epdiy
   backend.
-- **display_ili9341.cpp** -- shared SPI backend for the Freenove
-  FNK0104A/B (ILI9341) and FNK0104S (ST7796) color LCDs, selected by
-  `CONFIG_DRAFTLING_DISPLAY_ILI9341` / `CONFIG_DRAFTLING_DISPLAY_ST7796`
-  respectively. The MicroJournal Rev 5 also uses the ILI9341 path but
-  with `CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS`: its pins
-  (including MISO, since the MicroSD card shares the bus, and a
-  hardware RST) come from `display_init()`, and it has no backlight
-  control. Both panels are wired identically (MOSI/SCK/CS/DC,
-  no hardware RST, GPIO45 active-high backlight) so one file holds
-  both controllers' init command sequences and a shared
-  `display_flush()` path that byte-swaps the whole dirty rectangle
+- **display_ili9341.cpp** -- shared 4-wire SPI backend for the
+  ILI9341 (Freenove FNK0104A/B, MicroJournal Rev 5), ST7796 (Freenove
+  FNK0104S) and ST7365 (Viewe UEED035HV) color LCDs, selected by
+  `CONFIG_DRAFTLING_DISPLAY_ILI9341` / `_ST7796` / `_ST7365`, which
+  pick the controller's init sequence. The file holds no board pins:
+  main.cpp fills a `display_spi_tft_config_t` from the board header's
+  `LCD_*` macros (MOSI, MISO, SCK, CS, DC, RST, BL, IM0, IM1, SPI
+  clock, backlight PWM frequency; -1 for an unwired pin) and passes it
+  to `display_spi_tft_config()` before `display_init()`. A wired RST
+  gets a hardware reset pulse before the init sequence, wired IM
+  straps are driven HIGH before it, and `bl = -1` disables backlight
+  control. One shared
+  `display_flush()` path byte-swaps the whole dirty rectangle
   into a PSRAM scratch buffer and sends it with a single
   `esp_lcd_panel_io_tx_color()` call -- refilling the scratch buffer
   row-by-row across multiple queued `tx_color()` calls previously
@@ -560,7 +562,7 @@ non-e-paper builds do not link epdiy into the final image.
 Public API: `display_init()`, `display_clear()`, `display_set_pixel()`,
 `display_flush()`, `display_full_refresh()`, `display_push_rgb565()`,
 `display_set_partial_clip()`, `display_set_backlight()`,
-`display_controller_name()`, `display_get_buffer()`,
+`display_controller_name()`, `display_spi_tft_config()`, `display_get_buffer()`,
 `display_get_buffer_size()`, `lvgl_port_init()`,
 `lvgl_port_lock()`, `lvgl_port_unlock()`.
 
@@ -1976,10 +1978,9 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_M5_PAPERMONO    | Selects `display_m5_papermono.cpp` (plain SPI, single SSD1677 controller; panel supply/reset on the M5IOE1, front-light on the M5PM1) | M5Stack PaperMono |
 | DRAFTLING_DISPLAY_AXS15231B       | Selects `display_axs15231b.cpp`   | Touch-LCD-3.49, JC3248W535 |
 | DRAFTLING_DISPLAY_ILI9341         | Selects `display_ili9341.cpp` (shared ILI9341/ST7796 SPI backend) with the ILI9341 init sequence | Freenove FNK0104A / FNK0104B, MicroJournal Rev 5 |
-| DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS | Makes `display_ili9341.cpp` take its pins (MOSI, SCK, DC, CS, RST, MISO) from `display_init()` instead of the built-in Freenove map, pulses the hardware RST line before SWRESET, and compiles out the backlight | MicroJournal Rev 5 |
 | DRAFTLING_DISPLAY_ST7796          | Selects `display_ili9341.cpp` with the ST7796 init sequence | Freenove FNK0104S |
 | DRAFTLING_DISPLAY_ST77922         | Selects `display_st77922.cpp` (ST77922 QSPI panel, native portrait, LVGL port rotates) | Freenove FNK0104N |
-| DRAFTLING_DISPLAY_ST7365          | Selects `display_ili9341.cpp` with the Viewe UEED035HV-RX40-L001 pins (incl. RST and the IM0/IM1 interface-mode straps) and Viewe's ST7365 init table | Viewe UEDX24320028E-WB-A + UEED035HV |
+| DRAFTLING_DISPLAY_ST7365          | Selects `display_ili9341.cpp` with Viewe's ST7365 init table (pins, incl. RST and the IM0/IM1 interface-mode straps, come from the board header) | Viewe UEDX24320028E-WB-A + UEED035HV |
 | DRAFTLING_DISPLAY_MIPI_DSI        | Selects `display_mipi_dsi.cpp` (delegates to `espressif/m5stack_tab5` BSP) | M5Stack Tab5 |
 | DRAFTLING_DISPLAY_RGB             | Selects `display_rgb.cpp` (parallel RGB565 via `esp_lcd_new_rgb_panel`) | Sunton 8048S070 / 8048S043, Waveshare Touch-LCD-7, Waveshare LCD-3.16 |
 | DRAFTLING_RGB_PANEL_ST7701        | Switches `display_rgb.cpp` to the ST7701 branch: own pins / timings, direct-GPIO reset, active-low PWM backlight, and the vendor init sequence over a bit-banged 3-wire SPI bus (CS=0/BOOT, SCK=2, SDA=1) that is released afterwards for the BOOT button and the SDMMC slot | Waveshare LCD-3.16 |

@@ -502,13 +502,6 @@ config DRAFTLING_DISPLAY_ILI9341
     default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default n
 
-# This ILI9341 variant receives its GPIO map and hardware reset through
-# display_init(), unlike the Freenove panels' fixed pin map.
-config DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS
-    bool
-    default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
-    default n
-
 # DRAFTLING_DISPLAY_ST7796 is set automatically when the selected
 # board uses an ST7796 SPI color LCD (Freenove FNK0104S, 4.0"
 # 320x480 panel). Shares the same SPI wiring convention and pixel
@@ -719,7 +712,8 @@ config DRAFTLING_DISPLAY_HAS_BACKLIGHT
     default y if DRAFTLING_DISPLAY_AXS15231B
     default y if DRAFTLING_DISPLAY_MIPI_DSI
     default y if DRAFTLING_DISPLAY_RGB
-    default y if DRAFTLING_DISPLAY_ILI9341 && !DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS
+    # MicroJournal Rev 5 (also ILI9341) has no backlight control.
+    default y if DRAFTLING_DISPLAY_ILI9341 && !DRAFTLING_MODEL_MICROJOURNAL_REV5
     default y if DRAFTLING_DISPLAY_ST7796
     default y if DRAFTLING_DISPLAY_ST7365
     default y if DRAFTLING_DISPLAY_ST77922

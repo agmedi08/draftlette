@@ -2444,15 +2444,27 @@ extern "C" void app_main(void)
 #endif
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ILI9341) || defined(CONFIG_DRAFTLING_DISPLAY_ST7796) || \
       defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
-    /* Shared 4-wire SPI TFT backend. Freenove and Viewe use its
-     * built-in pin maps; custom-pin variants pass their board tuple
-     * through display_init(). */
-#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS)
-    display_init(LCD_MOSI_PIN, LCD_SCK_PIN, LCD_DC_PIN, LCD_CS_PIN,
-                 LCD_RST_PIN, LCD_MISO_PIN, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-#else
+    /* Freenove FNK0104A/B (ILI9341) / FNK0104S (ST7796) / Viewe
+     * UEDX24320028E-WB-A + UEED035HV (ST7365) / MicroJournal Rev 5
+     * (ILI9341). Shared 4-wire SPI TFT backend; the panel wiring comes
+     * from the board header. display_init()'s pin parameters are
+     * ignored. */
+    {
+        display_spi_tft_config_t tft = {};
+        tft.mosi         = LCD_MOSI_PIN;
+        tft.miso         = LCD_MISO_PIN;
+        tft.sck          = LCD_SCK_PIN;
+        tft.cs           = LCD_CS_PIN;
+        tft.dc           = LCD_DC_PIN;
+        tft.rst          = LCD_RST_PIN;
+        tft.bl           = LCD_BL_PIN;
+        tft.im0          = LCD_IM0_PIN;
+        tft.im1          = LCD_IM1_PIN;
+        tft.spi_clock_hz = LCD_SPI_CLOCK_HZ;
+        tft.bl_pwm_hz    = LCD_BL_PWM_HZ;
+        display_spi_tft_config(&tft);
+    }
     display_init(-1, -1, -1, -1, -1, -1, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-#endif
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST77922)
     /* Freenove FNK0104N. ST77922 QSPI color LCD; all panel GPIOs are
      * hard-coded in display_st77922.cpp. Works in the panel's native

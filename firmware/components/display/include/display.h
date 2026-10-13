@@ -24,11 +24,34 @@ extern "C" {
  *      all pin parameters are ignored - epdiy's built-in
  *      epd_board_v7 owns the GPIOs. Width/height must match.
  *
- *  SPI TFTs with DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS:
- *      mosi, sck, dc, cs, rst, miso, width, height
+ *  4-wire SPI TFTs (display_ili9341.cpp: ILI9341 / ST7796 / ST7365):
+ *      all pin parameters are ignored - call display_spi_tft_config()
+ *      first with the board's pins. Width/height must match.
  */
 void display_init(int pin_a, int pin_b, int pin_c, int pin_d,
                   int pin_e, int pin_f, int width, int height);
+
+/*
+ * Board wiring for the shared 4-wire SPI TFT backend
+ * (display_ili9341.cpp). Pins that a board does not wire are -1.
+ */
+typedef struct {
+    int mosi;
+    int miso;          /* -1 unless another device (SD card) shares the bus */
+    int sck;
+    int cs;
+    int dc;
+    int rst;           /* -1: SWRESET only, no hardware reset pulse */
+    int bl;            /* -1: no software backlight control */
+    int im0;           /* interface-mode straps, driven HIGH before */
+    int im1;           /* the reset pulse; -1 if strapped on the board */
+    int spi_clock_hz;
+    int bl_pwm_hz;
+} display_spi_tft_config_t;
+
+/* Only implemented by display_ili9341.cpp. Must be called before
+ * display_init(); the structure is copied. */
+void display_spi_tft_config(const display_spi_tft_config_t *cfg);
 
 void display_clear(uint8_t color);
 void display_set_pixel(uint16_t x, uint16_t y, uint8_t color);

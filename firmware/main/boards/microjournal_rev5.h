@@ -9,8 +9,9 @@
 
 #define BOARD_NAME          "MicroJournal Rev 5"
 
-/* ILI9341 SPI panel. The display backend receives these pins through
- * display_init() for this model. */
+/* ILI9341 SPI panel (passed to display_ili9341.cpp through
+ * display_spi_tft_config()). MISO is wired because the MicroSD card
+ * shares this bus. No software backlight control. */
 #define LCD_MOSI_PIN        11
 #define LCD_MISO_PIN        13
 #define LCD_SCK_PIN         12
@@ -18,6 +19,10 @@
 #define LCD_DC_PIN          46
 #define LCD_RST_PIN         3
 #define LCD_BL_PIN          -1
+#define LCD_IM0_PIN         -1
+#define LCD_IM1_PIN         -1
+#define LCD_SPI_CLOCK_HZ    (40 * 1000 * 1000)
+#define LCD_BL_PWM_HZ       50000
 
 /* On-board MicroSD shares the display's SPI2 bus, with its own CS. */
 #define SD_SPI_MISO_PIN     13
