@@ -394,7 +394,11 @@ Per-board display backends behind a single C API:
 - **display_ili9341.cpp** -- shared SPI backend for the Freenove
   FNK0104A/B (ILI9341) and FNK0104S (ST7796) color LCDs, selected by
   `CONFIG_DRAFTLING_DISPLAY_ILI9341` / `CONFIG_DRAFTLING_DISPLAY_ST7796`
-  respectively. Both panels are wired identically (MOSI/SCK/CS/DC,
+  respectively. The MicroJournal Rev 5 also uses the ILI9341 path but
+  with `CONFIG_DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS`: its pins
+  (including MISO, since the MicroSD card shares the bus, and a
+  hardware RST) come from `display_init()`, and it has no backlight
+  control. Both panels are wired identically (MOSI/SCK/CS/DC,
   no hardware RST, GPIO45 active-high backlight) so one file holds
   both controllers' init command sequences and a shared
   `display_flush()` path that byte-swaps the whole dirty rectangle
@@ -1683,7 +1687,12 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   writerdeck: ESP32-S3 N16R8, ILI9341 color LCD (320x240 landscape),
   shared-SPI MicroSD reader and native USB host keyboard; Bluetooth is
   disabled in this build. GPIO0 is reserved for hardware power control,
-  not a wake button. Backlight control is disabled. *Requires ESP32-S3.*
+  not a wake button (`DRAFTLING_WAKEUP_GPIO` is -1, so standby arms no
+  EXT0 wake and main.cpp skips the wakeup-button poller; after deep
+  sleep the device wakes only by reset or power cycle). The console
+  is on UART because USB-OTG host and USB-Serial/JTAG share the
+  internal PHY; `usb_kbd_init()` installs the USB Host library itself
+  (no BSP). Backlight control is disabled. *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_XTEINK_X4_PRO** -- Xteink X4 Pro: 4.26" 800x480
   e-paper panel over SPI, one of three controllers (SSD1677, UC8179,
   UC8279) auto-detected at boot by
@@ -1966,10 +1975,8 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_RETERMINAL_STICKY | Selects `display_reterminal_sticky.cpp` (plain SPI, SSD1677 or SSD2677 auto-detected by BUSY polarity, MISO wired since the MicroSD card shares this panel's bus) | Seeed reTerminal Sticky |
 | DRAFTLING_DISPLAY_M5_PAPERMONO    | Selects `display_m5_papermono.cpp` (plain SPI, single SSD1677 controller; panel supply/reset on the M5IOE1, front-light on the M5PM1) | M5Stack PaperMono |
 | DRAFTLING_DISPLAY_AXS15231B       | Selects `display_axs15231b.cpp`   | Touch-LCD-3.49, JC3248W535 |
-| DRAFTLING_DISPLAY_ILI9341         | Selects `display_ili9341.cpp` (shared ILI9341/ST7796 SPI backend) with the ILI9341 init sequence | Freenove FNK0104A / FNK0104B |
-| DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS | Routes a board-provided SPI TFT pin tuple, including MISO and hardware reset, through `display_init()` | MicroJournal Rev 5 |
-| DRAFTLING_HAS_USB_HOST             | Enables the USB HID keyboard host component | M5Stack Tab5, MicroJournal Rev 5 |
-| DRAFTLING_USB_HOST_BSP_MANAGED     | Selects BSP-owned USB PHY, VBUS and host daemon startup | M5Stack Tab5 |
+| DRAFTLING_DISPLAY_ILI9341         | Selects `display_ili9341.cpp` (shared ILI9341/ST7796 SPI backend) with the ILI9341 init sequence | Freenove FNK0104A / FNK0104B, MicroJournal Rev 5 |
+| DRAFTLING_DISPLAY_SPI_TFT_CUSTOM_PINS | Makes `display_ili9341.cpp` take its pins (MOSI, SCK, DC, CS, RST, MISO) from `display_init()` instead of the built-in Freenove map, pulses the hardware RST line before SWRESET, and compiles out the backlight | MicroJournal Rev 5 |
 | DRAFTLING_DISPLAY_ST7796          | Selects `display_ili9341.cpp` with the ST7796 init sequence | Freenove FNK0104S |
 | DRAFTLING_DISPLAY_ST77922         | Selects `display_st77922.cpp` (ST77922 QSPI panel, native portrait, LVGL port rotates) | Freenove FNK0104N |
 | DRAFTLING_DISPLAY_ST7365          | Selects `display_ili9341.cpp` with the Viewe UEED035HV-RX40-L001 pins (incl. RST and the IM0/IM1 interface-mode straps) and Viewe's ST7365 init table | Viewe UEDX24320028E-WB-A + UEED035HV |
@@ -1978,7 +1985,7 @@ in C / C++ code:
 | DRAFTLING_RGB_PANEL_ST7701        | Switches `display_rgb.cpp` to the ST7701 branch: own pins / timings, direct-GPIO reset, active-low PWM backlight, and the vendor init sequence over a bit-banged 3-wire SPI bus (CS=0/BOOT, SCK=2, SDA=1) that is released afterwards for the BOOT button and the SDMMC slot | Waveshare LCD-3.16 |
 | DRAFTLING_HAS_CH422G              | Enables the `io_expander` component (CH422G I2C IO-expander) and switches `display_rgb.cpp` to the CH422G-based backlight / LCD-reset path instead of a direct GPIO | Waveshare Touch-LCD-7 |
 | DRAFTLING_HAS_M5IOE1              | Compiles in the M5IOE1 IO-expander driver in the `io_expander` component (stubs otherwise) | M5Stack PaperMono |
-| DRAFTLING_DISPLAY_COLOR           | Enables the color-theme picker; PARTIAL render mode in `lvgl_port.cpp` | AXS15231B boards, Tab5, RGB boards, Freenove FNK0104 family |
+| DRAFTLING_DISPLAY_COLOR           | Enables the color-theme picker; PARTIAL render mode in `lvgl_port.cpp` | AXS15231B boards, Tab5, RGB boards, Freenove FNK0104 family, MicroJournal Rev 5 |
 | DRAFTLING_DISPLAY_TRANSFLECTIVE   | Selects the separate transflective-panel copy of `COLOR_THEMES` in `editor_ui.cpp` (these panels render colors differently) | Viewe UEDX24320028E-WB-A + UEED035HV |
 | DRAFTLING_DISPLAY_HAS_BACKLIGHT   | Adds the "Backlight: NN%" entry to F1 -> Settings, enables the Ctrl+B cycle shortcut, and calls `display_set_backlight()` at boot from NVS -- unless DRAFTLING_DISPLAY_BACKLIGHT_BINARY is also set (see below) | AXS15231B boards, Tab5, LilyGO T5 E-Paper S3 Pro / Pro Lite, RGB boards, Freenove FNK0104 family, Xteink X4 Pro, M5Stack PaperMono |
 | DRAFTLING_DISPLAY_BACKLIGHT_BINARY | Suppresses the entire backlight Settings entry / Ctrl+B feature (no PWM dimming is physically possible, so a brightness control would be misleading); the backlight is left at the display backend's own default (on) | Waveshare Touch-LCD-7 (any CH422G board) |
@@ -1989,6 +1996,8 @@ in C / C++ code:
 | DRAFTLING_BATTERY_CW2017          | Selects the CW2017 fuel-gauge backend (`battery_init_cw2017(shared_i2c_bus)`); no charger IC on the bus, so charging state always reads unknown | Xteink X4 Pro / X4 Classic |
 | DRAFTLING_BATTERY_AXP2101         | Selects the AXP2101 PMIC backend (`battery_init_axp2101(shared_i2c_bus)`); real integrated charger, so charging state is reported directly. Same chip's ALDO3 output also powers the e-paper panel -- see `battery_axp2101_enable_display_rail()`, called from the display backend's `display_set_shared_i2c_bus()` before `display_init()` | Waveshare ESP32-S3-ePaper-3.97 |
 | DRAFTLING_BATTERY_M5PM1           | Selects the M5PM1 backend (`battery_init_m5pm1(shared_i2c_bus)`, called early in boot since the chip gates the board's rails); voltage-only, "charging" = on USB. Its PWM0 drives the front-light (`battery_m5pm1_set_frontlight()`) | M5Stack PaperMono |
+| DRAFTLING_HAS_USB_HOST            | Enables the `usb_kbd` USB HID keyboard host (boot-time probe; BLE stays idle while a USB keyboard is present) | M5Stack Tab5, MicroJournal Rev 5 |
+| DRAFTLING_USB_HOST_BSP_MANAGED    | USB PHY, VBUS and the USB Host library task are owned by the board BSP (`bsp_usb_host_start()`); otherwise `usb_kbd_init()` installs the host library and its task itself (ESP32-S3 native USB-OTG) | M5Stack Tab5 |
 | DRAFTLING_HAS_POWER_LATCH         | Enables the `power` component: TCA9554-latched battery rail + PWR-button long-press = power off; standby cuts the latch before falling back to deep sleep | Touch-LCD-3.49 |
 | DRAFTLING_SD_SDMMC                | Routes SD init through the on-chip SDMMC peripheral (1-bit) instead of generic SPI | RLCD-4.2, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, M5Stack PaperMono |
 | DRAFTLING_WAKEUP_GPIO             | RTC-capable EXT0 wake-up GPIO; consumed by `components/standby/standby.cpp` | per-model defaults |

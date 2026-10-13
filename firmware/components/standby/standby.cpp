@@ -572,7 +572,7 @@ extern "C" void standby_enter_sleep(void)
      * button or touch INT lands on an LP_IO pin, so the only viable
      * wake path is the hardware RESET button -- the chip cold-boots
      * and the editor restores state from autosave on the next run.
-    * We therefore skip GPIO-wake arming entirely here;
+     * We therefore skip GPIO-wake arming entirely here;
      * any timer / touch wake source can still be enabled by the
      * caller via the standard esp_sleep_* APIs before invoking
      * standby_enter_sleep(). */

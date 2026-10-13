@@ -3121,12 +3121,12 @@ extern "C" void app_main(void)
             editor_ui_show_file_browser();
             draftling_lvgl_port_unlock();
         }
-    #if defined(CONFIG_BT_ENABLED)
+#if defined(CONFIG_BT_ENABLED)
         ble_keyboard_init();
         ble_keyboard_disable();
-    #endif
+#endif
     } else {
-    #if defined(CONFIG_BT_ENABLED)
+#if defined(CONFIG_BT_ENABLED)
         ESP_LOGI(TAG, "Initializing Bluetooth keyboard...");
         /* Now that we know we are going down the BLE path, replace
          * the neutral "Initializing..." caption editor_ui_init()

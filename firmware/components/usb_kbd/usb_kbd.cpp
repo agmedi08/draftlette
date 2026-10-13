@@ -233,7 +233,7 @@ typedef struct {
 } hid_event_t;
 
 /* ---- USB Host library task ---- */
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#if !defined(CONFIG_DRAFTLING_USB_HOST_BSP_MANAGED)
 static void usb_host_lib_task(void *arg)
 {
     (void)arg;
@@ -545,9 +545,10 @@ static void hid_event_task(void *arg)
 
 extern "C" int usb_kbd_init(void)
 {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-    /* S3 boards use the internal USB-OTG PHY and need their own daemon
-     * task. The Tab5 BSP manages both resources on ESP32-P4. */
+#if !defined(CONFIG_DRAFTLING_USB_HOST_BSP_MANAGED)
+    /* Boards without a BSP-managed USB host (ESP32-S3 native USB-OTG)
+     * install the host library and run its daemon task here. The Tab5
+     * BSP's bsp_usb_host_start() already did both on ESP32-P4. */
     if (usb_host_stack_init() != ESP_OK) {
         return -1;
     }

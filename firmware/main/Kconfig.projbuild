@@ -153,15 +153,6 @@ config DRAFTLING_MODEL_FREENOVE_FNK0104A
         The BOOT button (GPIO0) is the deep-sleep wakeup source.
         See https://github.com/Freenove/Freenove_ESP32_S3_Display
 
-config DRAFTLING_MODEL_MICROJOURNAL_REV5
-    bool "MicroJournal Rev 5 (ESP32-S3, ILI9341, 320x240, USB host)"
-    depends on IDF_TARGET_ESP32S3
-    help
-        MicroJournal Rev 5 writerdeck with an ILI9341 SPI color LCD and
-        an on-board SPI MicroSD reader sharing the display bus. Uses an
-        ESP32-S3 N16R8 module. Display and peripheral pins are defined
-        in main/boards/microjournal_rev5.h.
-
 config DRAFTLING_MODEL_FREENOVE_FNK0104B
     bool "Freenove FNK0104B (ESP32-S3, ILI9341, 2.8\" color LCD, 320x240, touch)"
     depends on IDF_TARGET_ESP32S3
@@ -194,6 +185,15 @@ config DRAFTLING_MODEL_FREENOVE_FNK0104N
         battery ADC input, PWM backlight. The BOOT button (GPIO0) is
         the deep-sleep wakeup source. Tested on physical hardware.
         See https://github.com/Freenove/Freenove_ESP32_S3_Display
+
+config DRAFTLING_MODEL_MICROJOURNAL_REV5
+    bool "MicroJournal Rev 5 (ESP32-S3, ILI9341, 320x240, USB host)"
+    depends on IDF_TARGET_ESP32S3
+    help
+        MicroJournal Rev 5 writerdeck with an ILI9341 SPI color LCD and
+        an on-board SPI MicroSD reader sharing the display bus. Uses an
+        ESP32-S3 N16R8 module. Display and peripheral pins are defined
+        in main/boards/microjournal_rev5.h.
 
 config DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
     bool "Viewe UEDX24320028E-WB-A board + UEED035HV-RX40-L001 3.5\" transflective display (ESP32-S3, ST7365, 480x320, touch)"
