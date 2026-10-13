@@ -6716,6 +6716,19 @@ static void build_hwinfo_text(std::string &out, int cols)
 #endif
     if (!any_kbd) help_row(out, cols, kc, "Status", "none connected");
 
+    help_heading(out, "USB device");
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+    help_row(out, cols, kc, "SD via USB", usb_msc_mode_name(usb_msc_get_mode()));
+#else
+    help_row(out, cols, kc, "SD via USB", "not available");
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    help_row(out, cols, kc, "Browser sync",
+             kermit_server_is_running() ? "Running" : "Stopped");
+#else
+    help_row(out, cols, kc, "Browser sync", "not available");
+#endif
+
     help_heading(out, "MAC address");
 #if SOC_WIFI_SUPPORTED || SOC_BT_SUPPORTED
 #if SOC_WIFI_SUPPORTED

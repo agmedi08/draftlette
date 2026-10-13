@@ -718,7 +718,10 @@ backends return the controller detected at boot), the touch controller
 from the `DRAFTLING_TOUCH_*` flags, the panel resolution and text
 area, the SD card from `sd_card_get_handle()` and
 `sd_card_get_fs_space()`, the connected keyboards (with the BLE
-keyboard's address from `ble_keyboard_get_device_addr()`) and the WiFi /
+keyboard's address from `ble_keyboard_get_device_addr()`), the USB
+device functions (`usb_msc_get_mode()` / `kermit_server_is_running()`,
+"not available" without `CONFIG_DRAFTLING_HAS_USB_MSC` /
+`CONFIG_DRAFTLING_HAS_KERMIT`) and the WiFi /
 Bluetooth MAC addresses (`esp_read_mac()`).
 
 **F1 menu letter keys.** `s_menu_hotkeys[]` in `editor_ui.cpp` maps

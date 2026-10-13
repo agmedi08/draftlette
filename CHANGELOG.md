@@ -26,8 +26,10 @@ in the git log.
   PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch
   controllers, the screen resolution, the SD card type, size and free
   space, the connected keyboard (with the Bluetooth keyboard's MAC
-  address) and the device's WiFi and Bluetooth MAC addresses. Esc or
-  Enter closes it.
+  address), the state of the USB device functions ("SD card via USB"
+  and "Sync via browser", or "not available" on boards without them)
+  and the device's WiFi and Bluetooth MAC addresses. Esc or Enter
+  closes it.
 
 ## [1.0.16] - 2026-10-10
 
