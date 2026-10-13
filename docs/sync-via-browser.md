@@ -5,8 +5,8 @@ its serial console, so a computer connected to the device's USB port
 can list, download, upload, rename and delete the files on the SD
 card. No WiFi is needed.
 
-It works only on boards whose USB port is wired straight to the
-ESP32-S3's built-in USB -- the same boards that offer "SD card via
+It is available only on boards whose USB port is wired straight to
+the ESP32-S3's built-in USB -- the same boards that offer "SD card via
 USB" (see "Supported boards" below).
 
 Kermit is a long-established file-transfer protocol for serial lines
@@ -42,13 +42,12 @@ ESP32-S3-ePaper-3.97, ESP32-S3-RLCD-4.2, ESP32-S3-Touch-LCD-7,
 ESP32-S3-Touch-LCD-3.49 and ESP32-S3-LCD-3.16, the four Freenove
 FNK0104 boards, and the Viewe UEDX24320028E-WB-A.
 
-Not supported: boards whose USB port goes through a USB-to-UART bridge
-chip, such as the Seeed reTerminal E1001, the Seeed reTerminal Sticky
-and the Elecrow CrowPanel 5.79". On these boards the bridge's control
-lines are wired to the chip's reset and boot-mode pins, and a computer
-opening the port can reset the device or hold it in reset, which ends
-the session and leaves the device unresponsive. The menu item is still
-there, but do not use it on these boards. Other boards are untested.
+Every other board has no "Sync via browser" menu item. That includes
+the boards whose USB port goes through a USB-to-UART bridge chip, such
+as the Seeed reTerminal E1001, the Seeed reTerminal Sticky and the
+Elecrow CrowPanel 5.79": the bridge's control lines are wired to the
+chip's reset and boot-mode pins, and a computer opening the port can
+reset the device or hold it in reset.
 
 ## Connecting
 

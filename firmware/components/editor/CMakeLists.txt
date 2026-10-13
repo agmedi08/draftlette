@@ -2,7 +2,7 @@ idf_component_register(
     SRCS "editor.cpp" "md_parser.cpp" "fountain_parser.cpp" "md_editor.cpp" "fountain_editor.cpp" "text_editor.cpp" "editor_ui.cpp" "wifi_icon.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "private_include"
-    PRIV_REQUIRES display sd_card ble_keyboard kb_layout wifi_manager git_sync standby battery kermit lvgl__lvgl fonts nvs_flash esp_app_format spi_flash esp_psram
+    PRIV_REQUIRES display sd_card ble_keyboard kb_layout wifi_manager git_sync standby battery lvgl__lvgl fonts nvs_flash esp_app_format spi_flash esp_psram
 )
 
 # Kconfig-conditional REQUIRES must use idf_component_optional_requires()
@@ -18,4 +18,8 @@ endif()
 
 if(CONFIG_DRAFTLING_HAS_USB_MSC)
     idf_component_optional_requires(PRIVATE usb_msc)
+endif()
+
+if(CONFIG_DRAFTLING_HAS_KERMIT)
+    idf_component_optional_requires(PRIVATE kermit)
 endif()

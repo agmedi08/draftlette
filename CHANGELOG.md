@@ -14,8 +14,9 @@ in the git log.
   download, upload, rename and delete the files on the SD card with
   any Kermit client, without WiFi. Starting it saves and closes the
   open documents and switches the console's log output off; Stop
-  restores both. It works only on boards whose USB port is wired to
-  the ESP32-S3's native USB (the boards that offer "SD card via USB"),
+  restores both. It is available only on boards whose USB port is
+  wired to the ESP32-S3's native USB (the boards that offer "SD card
+  via USB"),
   not on boards with a USB-to-UART bridge such as the Seeed reTerminal
   E1001 / Sticky and the Elecrow CrowPanel 5.79". See
   docs/sync-via-browser.md.

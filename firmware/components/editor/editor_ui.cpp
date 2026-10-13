@@ -38,7 +38,9 @@
 #include "kb_layout.h"
 #include "wifi_manager.h"
 #include "git_sync.h"
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 #include "kermit.h"
+#endif
 #include "sd_card.h"
 #include "lvgl_port.h"
 #include "display.h"
@@ -832,10 +834,11 @@ static int       s_menu_sel_prev = -1;
 static bool      s_menu_open    = false;
 
 /* F1 menu item indices. Fixed 0-8 for every board; "SD card via USB"
- * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC, so
- * "Sync via browser" / "Format SD card" / "Hardware information" /
- * "Help" / "Sleep now" / "Close menu" shift down by one on every other
- * board.
+ * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC and
+ * "Sync via browser" (next) only on boards with
+ * CONFIG_DRAFTLING_HAS_KERMIT, so "Format SD card" / "Hardware
+ * information" / "Help" / "Sleep now" / "Close menu" shift down on
+ * boards without them.
  * Use the MENU_IDX_* constants instead of bare integers everywhere
  * downstream so the two layouts stay in lock-step (mirrors the
  * SETTINGS_IDX_* convention used by the Settings submenu below). */
@@ -854,15 +857,20 @@ static bool      s_menu_open    = false;
 #else
 #define _MENU_NEXT_AFTER_USB_MSC 9
 #endif
-#define MENU_IDX_KERMIT       _MENU_NEXT_AFTER_USB_MSC
-#define MENU_IDX_FORMAT_SD    (_MENU_NEXT_AFTER_USB_MSC + 1)
-#define MENU_IDX_HWINFO       (_MENU_NEXT_AFTER_USB_MSC + 2)
-#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_USB_MSC + 3)
-#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_USB_MSC + 4)
-#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_USB_MSC + 5)
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+#define MENU_IDX_KERMIT          _MENU_NEXT_AFTER_USB_MSC
+#define _MENU_NEXT_AFTER_KERMIT  (_MENU_NEXT_AFTER_USB_MSC + 1)
+#else
+#define _MENU_NEXT_AFTER_KERMIT  _MENU_NEXT_AFTER_USB_MSC
+#endif
+#define MENU_IDX_FORMAT_SD    _MENU_NEXT_AFTER_KERMIT
+#define MENU_IDX_HWINFO       (_MENU_NEXT_AFTER_KERMIT + 1)
+#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_KERMIT + 2)
+#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_KERMIT + 3)
+#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_KERMIT + 4)
 
 /* Number of menu items */
-#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_USB_MSC + 6)
+#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_KERMIT + 5)
 
 /* Header line of the F1 menu screen (s_lbl_menu_hdr); the "Format SD
  * card" picker replaces it with its question while it is open. */
@@ -921,6 +929,7 @@ static bool usbmsc_item_disabled(void)
 }
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 /* "Sync via browser" picker (Start / Stop), rendered into s_menu_list
  * like the "SD card via USB" one. The choice applies at once -- see
  * kermit_picker_activate(). While running, the Kermit server
@@ -928,6 +937,7 @@ static bool usbmsc_item_disabled(void)
 static bool s_kermit_picker_open     = false;
 static int  s_kermit_picker_sel      = 0;
 static int  s_kermit_picker_sel_prev = -1;
+#endif
 
 /* Why the firmware must keep off the SD card right now -- it is handed
  * to a USB host or to the Kermit server -- or NULL if it may use it. */
@@ -937,8 +947,10 @@ static const char *sd_handed_off_msg(void)
     if (usb_msc_get_mode() != USB_MSC_MODE_OFF)
         return "SD card via USB active -- disable it in F1 menu first";
 #endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (kermit_server_is_running())
         return "Sync via browser active -- stop it in F1 menu first";
+#endif
     return NULL;
 }
 
@@ -3395,11 +3407,13 @@ static void show_sleep_prompt(void);
 static void show_help(help_origin_t origin);
 static void show_hwinfo(help_origin_t origin);
 
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC) || defined(CONFIG_DRAFTLING_HAS_KERMIT)
 /* Defined with the split-layout code further down (editor_ui_apply_split_mode);
  * commit_usb_msc_pending_mode() and kermit_start() collapse any split
  * before handing the SD card to USB / the Kermit server so no pane can
  * be left silently editing a file it can no longer safely save. */
 static void editor_ui_apply_split_mode(split_mode_t mode);
+#endif
 
 /* ---- Touch input ----
  *
@@ -3837,10 +3851,12 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (kermit_server_is_running()) {
         snprintf(buf, buf_size, "Sync via browser active -- F1 to stop");
         return;
     }
+#endif
     snprintf(buf, buf_size, "F1:Menu  N:New  F2:Rename");
 }
 
@@ -4265,7 +4281,9 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     { MENU_IDX_USB_MSC,         'u', 12 },  /* "SD card via USB: ..." */
 #endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     { MENU_IDX_KERMIT,          'v', 5  },  /* "Sync via browser: ..." */
+#endif
     { MENU_IDX_FORMAT_SD,       'f', 0  },  /* "Format SD card..." */
     { MENU_IDX_HWINFO,          'i', 9  },  /* "Hardware information" */
     { MENU_IDX_HELP,            'h', 0  },  /* "Help (F10)" */
@@ -4411,10 +4429,12 @@ static void refresh_menu_items(void)
     lv_list_add_btn(s_menu_list, NULL, buf);
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     /* Sync via browser: Kermit server on the serial console */
     snprintf(buf, sizeof(buf), "Sync via browser: %s  (Enter to change)",
              kermit_server_is_running() ? "Running" : "Stopped");
     lv_list_add_btn(s_menu_list, NULL, buf);
+#endif
 
     /* Format SD card */
     lv_list_add_btn(s_menu_list, NULL,
@@ -4473,7 +4493,9 @@ static void show_menu(void)
     s_dbx_open = false;
     if (s_dbx_panel) lv_obj_add_flag(s_dbx_panel, LV_OBJ_FLAG_HIDDEN);
     s_fmt_step = FMT_STEP_NONE;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     s_kermit_picker_open = false;
+#endif
     if (s_lbl_menu_hdr) lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     /* Sync the staged choice to whatever usb_msc is actually doing
@@ -4526,11 +4548,13 @@ static void commit_usb_msc_pending_mode(void)
         /* does not return */
     }
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (cur == USB_MSC_MODE_OFF && kermit_server_is_running()) {
         s_usbmsc_pending_mode = cur;
         editor_ui_set_status("Sync via browser active -- stop it first");
         return;
     }
+#endif
 
     if (cur == USB_MSC_MODE_OFF) {
         /* Taking the card away from local editing for the first time:
@@ -5756,6 +5780,7 @@ static void close_usbmsc_picker(void)
 }
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 /* ---- "Sync via browser": Kermit server on the serial console ----
  * Start hands the SD card and the console to components/kermit: every
  * open document is saved and closed and the editor is left for the
@@ -5897,6 +5922,7 @@ static void kermit_picker_activate(int idx)
     else kermit_stop();
     refresh_menu_items();
 }
+#endif /* CONFIG_DRAFTLING_HAS_KERMIT */
 
 /* ---- "Format SD card" picker (see fmt_step_t) ---- */
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
@@ -6211,11 +6237,13 @@ static void menu_activate_item(int idx)
         refresh_usbmsc_picker_items();
         break;
 #endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     case MENU_IDX_KERMIT:
         s_kermit_picker_open = true;
         s_kermit_picker_sel = kermit_server_is_running() ? 1 : 0;
         refresh_kermit_picker_items();
         break;
+#endif
     case MENU_IDX_FORMAT_SD:
         open_fmt_picker();
         break;
@@ -6329,6 +6357,7 @@ static void handle_menu_key(const kb_event_t *ev)
     }
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (s_kermit_picker_open) {
         switch (ev->keycode) {
         case KB_KEY_UP:
@@ -6350,6 +6379,7 @@ static void handle_menu_key(const kb_event_t *ev)
         }
         return;
     }
+#endif
 
     switch (ev->keycode) {
     case KB_KEY_UP:

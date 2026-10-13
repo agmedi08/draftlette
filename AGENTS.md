@@ -685,8 +685,9 @@ documents back, shows the busy message pop-up and runs `fmt_task()`:
 pointing at the deleted files (open documents, Git repository,
 `git.cfg`).
 
-**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `V`, on
-every board) opens a Start / Stop picker rendered into `s_menu_list`
+**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `V`, only
+on boards with `CONFIG_DRAFTLING_HAS_KERMIT`; the rows after it shift up
+elsewhere, like after "SD card via USB") opens a Start / Stop picker rendered into `s_menu_list`
 (`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
 `kermit_picker_activate()`); the choice applies at once. `kermit_start()`
 refuses while the card is handed off (`sd_handed_off_msg()`), no card is
@@ -699,6 +700,7 @@ browser and calls `kermit_server_start()` (see `components/kermit/`).
 on the server task: it takes the LVGL lock with a 200 ms timeout (Stop
 waits for that task while holding the lock), shows the message, refreshes
 the file list when files changed and resets the standby timer.
+All of it is compiled out without `CONFIG_DRAFTLING_HAS_KERMIT`.
 `sd_handed_off_msg()` is the single guard for "the SD card belongs to
 someone else" (SD via USB or the Kermit server) used by the editor, both
 file browsers, Git sync, Draftbox and Format SD card.
@@ -1173,8 +1175,11 @@ auto-reset circuit on EN / GPIO0: on the Sticky, connecting with a Web
 Serial client (Draftbridge) left the device unresponsive with no
 answer to the I packet, and esptool afterwards found the chip not in
 download mode -- consistent with the open port resetting / holding the
-chip in reset. The server still listens on the console UART on every
-board, but the docs mark these boards as unsupported.
+chip in reset. So the component is built only with the derived flag
+`CONFIG_DRAFTLING_HAS_KERMIT` (default y if `DRAFTLING_HAS_USB_MSC`);
+elsewhere it registers as an empty component, and the editor requires
+it via `idf_component_optional_requires()` under the same flag. The
+server still listens on the console UART as well as USB-Serial/JTAG.
 
 - `kermit_port.c` -- transport. `kport_open()` silences every console
   output path (`esp_log_set_vprintf()` to a no-op, ROM printf channels
@@ -2053,6 +2058,7 @@ in C / C++ code:
 | DRAFTLING_BATTERY_CW2017          | Selects the CW2017 fuel-gauge backend (`battery_init_cw2017(shared_i2c_bus)`); no charger IC on the bus, so charging state always reads unknown | Xteink X4 Pro / X4 Classic |
 | DRAFTLING_BATTERY_AXP2101         | Selects the AXP2101 PMIC backend (`battery_init_axp2101(shared_i2c_bus)`); real integrated charger, so charging state is reported directly. Same chip's ALDO3 output also powers the e-paper panel -- see `battery_axp2101_enable_display_rail()`, called from the display backend's `display_set_shared_i2c_bus()` before `display_init()` | Waveshare ESP32-S3-ePaper-3.97 |
 | DRAFTLING_BATTERY_M5PM1           | Selects the M5PM1 backend (`battery_init_m5pm1(shared_i2c_bus)`, called early in boot since the chip gates the board's rails); voltage-only, "charging" = on USB. Its PWM0 drives the front-light (`battery_m5pm1_set_frontlight()`) | M5Stack PaperMono |
+| DRAFTLING_HAS_KERMIT              | Builds `components/kermit/` and shows F1 -> "Sync via browser" (Kermit file server on the serial console); only boards whose USB port is the ESP32-S3's native USB -- not boards with a USB-to-UART bridge, whose DTR / RTS auto-reset lines reset the chip when a computer opens the port | Every `DRAFTLING_HAS_USB_MSC` board |
 | DRAFTLING_HAS_POWER_LATCH         | Enables the `power` component: TCA9554-latched battery rail + PWR-button long-press = power off; standby cuts the latch before falling back to deep sleep | Touch-LCD-3.49 |
 | DRAFTLING_SD_SDMMC                | Routes SD init through the on-chip SDMMC peripheral (1-bit) instead of generic SPI | RLCD-4.2, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, M5Stack PaperMono |
 | DRAFTLING_WAKEUP_GPIO             | RTC-capable EXT0 wake-up GPIO; consumed by `components/standby/standby.cpp` | per-model defaults |
