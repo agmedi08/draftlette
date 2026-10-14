@@ -162,6 +162,7 @@ load the firmware quickly without having to compile it.
 | Ctrl+2 | Split into two equal panes (left/right in landscape, top/bottom in portrait) |
 | Ctrl+3 | Split with the first pane at 2/3; press again to toggle the first pane to 1/3 |
 | Ctrl+Tab | Move keyboard focus to the other pane (when split) |
+| Alt+I | File information for the document: words, paragraphs, lines, characters, size in bytes and Git sync status (with the number of lines added and deleted since the last sync). Counts include unsaved changes. Esc or Enter closes it |
 | Escape | Switch to file browser. With unsaved changes, a dialog offers Save and exit / Exit without saving / Cancel (Up/Down + Enter to choose) |
 
 `Ctrl+P` and `Ctrl+1` / `Ctrl+2` / `Ctrl+3` also work in the file
@@ -175,6 +176,7 @@ In the file browser:
 | N or Ctrl+N | New file: pick Markdown (`.md`), Fountain screenplay (`.fountain`) or plain text (`.txt`) with Up/Down + Enter, or press M / F / T |
 | F2 or Alt+R | Rename the selected file. The name must end in `.md`, `.fountain` or `.txt`; the saved cursor position (the `.meta` file) moves with it, and changing the extension changes the format |
 | Del or Alt+D | Delete the selected file, after a confirmation. Only allowed when the file is safely on the Git server: its current content must already be committed and pushed (see [Git sync](docs/git-sync.md)), so a deleted file can always be recovered from the repository history. The next sync commits the deletion |
+| Alt+I | File information for the selected file (same page as in the editor) |
 | F1 / Ctrl+M | Menu |
 | F10 | Help (file browser shortcuts) |
 

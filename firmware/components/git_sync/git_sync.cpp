@@ -89,6 +89,31 @@ static void notify(git_sync_state_t st, const char *msg)
     if (s_callback) s_callback(st, msg);
 }
 
+/* Status messages name the server by its host name ("Pushing to
+ * github.com..."): copy the host part of repo_url (no scheme, user
+ * info, port or path) into out, or "server" if there is none. */
+static void remote_host(char *out, size_t osz)
+{
+    const char *p = s_cfg.repo_url;
+    const char *sch = strstr(p, "://");
+    if (sch) p = sch + 3;
+    size_t n = strcspn(p, "/?#");
+    const char *at = (const char *)memchr(p, '@', n);
+    if (at) { n -= (size_t)(at + 1 - p); p = at + 1; }
+    if (n && p[0] == '[') {
+        /* IPv6 literal: keep the brackets, drop a port after them */
+        const char *rb = (const char *)memchr(p, ']', n);
+        if (rb) n = (size_t)(rb + 1 - p);
+    } else {
+        const char *colon = (const char *)memchr(p, ':', n);
+        if (colon) n = (size_t)(colon - p);
+    }
+    if (n == 0) { strlcpy(out, "server", osz); return; }
+    if (n >= osz) n = osz - 1;
+    memcpy(out, p, n);
+    out[n] = '\0';
+}
+
 /* See the doc comment in include/git_sync.h. The native client streams
  * blobs through the SD card, so the transient PSRAM peak during a sync
  * is dominated by a single file plus the LCS merge matrix (~2 MB cap).
@@ -382,13 +407,26 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
     }
     git_head_set_symbolic(localref);
 
+    char host[96];
+    remote_host(host, sizeof(host));
+    char msg[160];
+
     /* 1. advertise remote refs */
-    notify(GIT_SYNC_IN_PROGRESS, "Contacting remote...");
+    snprintf(msg, sizeof(msg), "Contacting %s...", host);
+    notify(GIT_SYNC_IN_PROGRESS, msg);
     git_ref_adv adv[32];
     int nadv = 0;
     esp_err_t ret = git_http_list_refs(&remote, "git-upload-pack", adv, 32, &nadv);
-    if (ret == ESP_ERR_INVALID_STATE) { set_error("Auth rejected (check token)"); return ret; }
-    if (ret != ESP_OK) { set_error("Cannot reach remote repository"); return ret; }
+    if (ret == ESP_ERR_INVALID_STATE) {
+        snprintf(msg, sizeof(msg), "%s rejected the login (check token)", host);
+        set_error(msg);
+        return ret;
+    }
+    if (ret != ESP_OK) {
+        snprintf(msg, sizeof(msg), "Cannot reach %s", host);
+        set_error(msg);
+        return ret;
+    }
 
     git_oid remote_sha;
     bool remote_has_branch = false;
@@ -413,7 +451,8 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
 
     /* 2. initial clone */
     if (!have_head && remote_has_branch) {
-        notify(GIT_SYNC_IN_PROGRESS, "Cloning history...");
+        snprintf(msg, sizeof(msg), "Cloning history from %s...", host);
+        notify(GIT_SYNC_IN_PROGRESS, msg);
         char pack[160];
         snprintf(pack, sizeof(pack), "%s/tmp/fetch.pack", git_repo_gitdir());
         ret = git_http_fetch_pack(&remote, &remote_sha, 1, NULL, 0, pack);
@@ -482,7 +521,8 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
 
     if (need_integrate) {
         if (!git_odb_exists(&remote_sha)) {
-            notify(GIT_SYNC_IN_PROGRESS, "Fetching remote commits...");
+            snprintf(msg, sizeof(msg), "Fetching commits from %s...", host);
+            notify(GIT_SYNC_IN_PROGRESS, msg);
             git_oid haves[16];
             int nh = 0;
             git_oid *chain = NULL;
@@ -499,7 +539,11 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
             ret = fp ? git_pack_unpack_file(fp) : ESP_FAIL;
             if (fp) fclose(fp);
             remove(pack);
-            if (ret != ESP_OK) { set_error("Cannot unpack remote commits"); return ret; }
+            if (ret != ESP_OK) {
+                snprintf(msg, sizeof(msg), "Cannot unpack commits from %s", host);
+                set_error(msg);
+                return ret;
+            }
         }
 
         git_oid mb;
@@ -609,11 +653,13 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
     if (want_push && have_remote_target && !git_oid_eq(&local_head, &remote_baseline)) {
 
         if (remote_has_branch && !git_is_ancestor(&remote_sha, &local_head)) {
-            set_error("Push blocked: remote advanced during sync -- retry");
+            snprintf(msg, sizeof(msg), "Push blocked: %s changed during sync -- retry", host);
+            set_error(msg);
             return ESP_FAIL;
         }
 
-        notify(GIT_SYNC_IN_PROGRESS, "Pushing to remote...");
+        snprintf(msg, sizeof(msg), "Pushing to %s...", host);
+        notify(GIT_SYNC_IN_PROGRESS, msg);
         git_oidset set = {};
         git_oid haves[1];
         int nh = 0;
@@ -634,7 +680,8 @@ static esp_err_t do_sync(git_sync_direction_t dir, sync_stats *st)
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "push report: %.*s", (int)report.len, (char *)report.data);
             git_buf_free(&report);
-            set_error("Remote rejected the push");
+            snprintf(msg, sizeof(msg), "%s rejected the push", host);
+            set_error(msg);
             return ret;
         }
         git_buf_free(&report);
@@ -953,8 +1000,12 @@ extern "C" esp_err_t git_sync_start(git_sync_direction_t direction)
     return ESP_OK;
 }
 
-extern "C" git_sync_file_status_t git_sync_file_status(const char *name)
+extern "C" git_sync_file_status_t git_sync_file_diff(const char *name,
+                                                    const char *data, size_t len,
+                                                    int *added, int *deleted)
 {
+    if (added) *added = -1;
+    if (deleted) *deleted = -1;
     if (!s_cfg.configured) return GIT_SYNC_FILE_NOT_CONFIGURED;
     /* The sync task owns the repository while it runs, and it can
      * rewrite both the file and the refs. Both this check and
@@ -971,17 +1022,18 @@ extern "C" git_sync_file_status_t git_sync_file_status(const char *name)
     snprintf(refpath, sizeof(refpath), "%s/.git/%s", s_cfg.local_path, remoteref);
     if (!sd_card_file_exists(refpath)) return GIT_SYNC_FILE_NOT_PUSHED;
 
-    char path[400];
-    joinp(path, sizeof(path), s_cfg.local_path, name);
-    char *data = NULL;
-    size_t len = 0;
-    if (sd_card_read_file(path, &data, &len) != ESP_OK) return GIT_SYNC_FILE_ERROR;
+    char *file_data = NULL;
+    if (!data) {
+        char path[400];
+        joinp(path, sizeof(path), s_cfg.local_path, name);
+        if (sd_card_read_file(path, &file_data, &len) != ESP_OK) return GIT_SYNC_FILE_ERROR;
+        data = file_data;
+    }
     git_oid work_blob;
     git_odb_hash(GIT_OBJ_BLOB, data, len, &work_blob);
-    free(data);
 
-    if (git_repo_open(s_cfg.local_path) != ESP_OK) return GIT_SYNC_FILE_ERROR;
     git_sync_file_status_t result = GIT_SYNC_FILE_ERROR;
+    if (git_repo_open(s_cfg.local_path) != ESP_OK) { free(file_data); return result; }
     git_oid pushed, sub;
     if (git_ref_read(remoteref, &pushed) != ESP_OK) {
         result = GIT_SYNC_FILE_NOT_PUSHED;
@@ -995,13 +1047,32 @@ extern "C" git_sync_file_status_t git_sync_file_status(const char *name)
                 if (!e)                              result = GIT_SYNC_FILE_NOT_PUSHED;
                 else if (git_oid_eq(&e->oid, &work_blob)) result = GIT_SYNC_FILE_PUSHED;
                 else                                 result = GIT_SYNC_FILE_MODIFIED;
+                if (result == GIT_SYNC_FILE_MODIFIED && added && deleted) {
+                    git_buf old = GIT_BUF_INIT;
+                    git_obj_type type;
+                    int a, d;
+                    if (git_odb_read(&e->oid, &type, &old) == ESP_OK &&
+                        type == GIT_OBJ_BLOB &&
+                        git_diff_line_counts((const char *)old.data, old.len,
+                                             data, len, &a, &d) == ESP_OK) {
+                        *added = a;
+                        *deleted = d;
+                    }
+                    git_buf_free(&old);
+                }
                 git_tree_free(&t);
             }
         }
     }
     git_repo_close();
+    free(file_data);
     ESP_LOGI(TAG, "file status %s: %d", name, (int)result);
     return result;
+}
+
+extern "C" git_sync_file_status_t git_sync_file_status(const char *name)
+{
+    return git_sync_file_diff(name, NULL, 0, NULL, NULL);
 }
 
 extern "C" git_sync_state_t git_sync_get_state(void) { return s_state; }

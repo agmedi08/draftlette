@@ -65,6 +65,15 @@ typedef enum {
 /* name is a bare file name in the sync directory (the SD card root). */
 git_sync_file_status_t git_sync_file_status(const char *name);
 
+/* Like git_sync_file_status(), but checks the given content (e.g. an
+ * editor buffer with unsaved changes) instead of the file on the SD
+ * card when data is non-NULL. On GIT_SYNC_FILE_MODIFIED, *added and
+ * *deleted receive the number of lines added and deleted relative to
+ * the server's copy; otherwise (or if the diff fails) they are -1. */
+git_sync_file_status_t git_sync_file_diff(const char *name,
+                                          const char *data, size_t len,
+                                          int *added, int *deleted);
+
 /* Connect to a Draftbox repository (github.com/clackups/draftbox):
  * exchange the 8-digit one-time password for an access token via
  * https://<site>/api/v1/token-exchange, then write the returned clone
