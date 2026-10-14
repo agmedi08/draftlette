@@ -15,6 +15,19 @@ in the git log.
   space, the connected keyboard (with the Bluetooth keyboard's MAC
   address) and the device's WiFi and Bluetooth MAC addresses. Esc or
   Enter closes it.
+- **File information page (Alt+I)**: in the editor, Alt+I shows the
+  word, paragraph, line and character counts and the size in bytes of
+  the document you are editing (unsaved changes included), and its Git
+  sync status: whether it is the same as on the server, not there yet,
+  or changed since the last sync, with the number of lines added and
+  deleted. In the file browser, Alt+I shows the same page for the
+  selected file. Esc or Enter closes it.
+
+### Changed
+
+- **Git sync messages name the server**: sync progress and error
+  messages show the server's host name instead of the word "remote",
+  e.g. "Contacting github.com..." or "Pushing to github.com...".
 
 ## [1.0.16] - 2026-10-10
 

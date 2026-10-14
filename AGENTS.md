@@ -699,6 +699,15 @@ area, the SD card from `sd_card_get_handle()` and
 keyboard's address from `ble_keyboard_get_device_addr()`) and the WiFi /
 Bluetooth MAC addresses (`esp_read_mac()`).
 
+**File information.** `Alt+I` in the editor (`show_editor_fileinfo()`,
+the focused pane's buffer, unsaved changes included) or in either file
+browser (`show_browser_fileinfo()`, the selected file read from the SD
+card) shows `build_fileinfo_text()` on the help screen, like the
+hardware information page: name, format, size in bytes, word /
+paragraph / line / character counts (`count_text()`: a word needs a
+letter or digit, a paragraph is a blank-line-separated block with a
+word) and the Git status from `git_sync_file_diff()`.
+
 **F1 menu letter keys.** `s_menu_hotkeys[]` in `editor_ui.cpp` maps
 a letter (resolved with `kb_layout_shortcut_char()`, no Ctrl / Alt /
 Win) to a menu row and the character index of that letter in the
@@ -1009,7 +1018,15 @@ Public API: `git_sync_init()`, `git_sync_start()`,
 `git_sync_get_last_error()`, `git_sync_max_file_size()`,
 `git_sync_file_status()` (local-only check whether a file's current
 content is in the last commit known to be on the server; used by the
-file browser's delete command), `git_sync_draftbox_connect()`.
+file browser's delete command), `git_sync_file_diff()` (the same
+check on given content -- an editor buffer -- plus the lines added /
+deleted against the server's copy via `git_diff_line_counts()` in
+`git_merge.c`; used by the Alt+I file information page),
+`git_sync_draftbox_connect()`.
+
+Status and error messages name the server by the host part of
+`repo_url` (`remote_host()`: "Contacting github.com...", "Pushing to
+github.com..."), never the word "remote".
 
 **Draftbox.** `draftbox.c` is a client for the token-exchange API of
 Draftbox (github.com/clackups/draftbox): `POST
