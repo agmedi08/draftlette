@@ -137,6 +137,15 @@
             }
         },
         {
+            "name": "microjournal_rev5",
+            "displayName": "MicroJournal Rev 5 (ESP32-S3 N16R8, ILI9341, USB host)",
+            "binaryDir": "build/microjournal_rev5",
+            "cacheVariables": {
+                "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.defaults.microjournal_rev5",
+                "SDKCONFIG": "build/microjournal_rev5/sdkconfig"
+            }
+        },
+        {
             "name": "viewe_uedx24320028_ueed035hv",
             "displayName": "Viewe UEDX24320028E-WB-A + UEED035HV (3.5in ST7365 transflective, touch)",
             "binaryDir": "build/viewe_uedx24320028_ueed035hv",

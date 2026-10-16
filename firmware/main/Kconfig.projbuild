@@ -186,6 +186,15 @@ config DRAFTLING_MODEL_FREENOVE_FNK0104N
         the deep-sleep wakeup source. Tested on physical hardware.
         See https://github.com/Freenove/Freenove_ESP32_S3_Display
 
+config DRAFTLING_MODEL_MICROJOURNAL_REV5
+    bool "MicroJournal Rev 5 (ESP32-S3, ILI9341, 320x240, USB host)"
+    depends on IDF_TARGET_ESP32S3
+    help
+        MicroJournal Rev 5 writerdeck with an ILI9341 SPI color LCD and
+        an on-board SPI MicroSD reader sharing the display bus. Uses an
+        ESP32-S3 N16R8 module. Display and peripheral pins are defined
+        in main/boards/microjournal_rev5.h.
+
 config DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
     bool "Viewe UEDX24320028E-WB-A board + UEED035HV-RX40-L001 3.5\" transflective display (ESP32-S3, ST7365, 480x320, touch)"
     depends on IDF_TARGET_ESP32S3
@@ -382,6 +391,7 @@ config DRAFTLING_DISPLAY_COLOR
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104B
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104S
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104N
+    default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default y if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
     default n
 
@@ -489,6 +499,7 @@ config DRAFTLING_DISPLAY_ILI9341
     bool
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104A
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104B
+    default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default n
 
 # DRAFTLING_DISPLAY_ST7796 is set automatically when the selected
@@ -701,7 +712,8 @@ config DRAFTLING_DISPLAY_HAS_BACKLIGHT
     default y if DRAFTLING_DISPLAY_AXS15231B
     default y if DRAFTLING_DISPLAY_MIPI_DSI
     default y if DRAFTLING_DISPLAY_RGB
-    default y if DRAFTLING_DISPLAY_ILI9341
+    # MicroJournal Rev 5 (also ILI9341) has no backlight control.
+    default y if DRAFTLING_DISPLAY_ILI9341 && !DRAFTLING_MODEL_MICROJOURNAL_REV5
     default y if DRAFTLING_DISPLAY_ST7796
     default y if DRAFTLING_DISPLAY_ST7365
     default y if DRAFTLING_DISPLAY_ST77922
@@ -986,7 +998,25 @@ config DRAFTLING_CHARGER_WATCHDOG_REASSERT
 config DRAFTLING_HAS_USB_HOST
     bool
     default y if DRAFTLING_MODEL_M5STACK_TAB5
+    default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default n
+
+# Some USB host ports are initialized by a board support package rather
+# than usb_kbd. The Tab5 BSP owns its PHY, port power and host daemon.
+config DRAFTLING_USB_HOST_BSP_MANAGED
+    bool
+    default y if DRAFTLING_MODEL_M5STACK_TAB5
+    default n
+
+# DRAFTLING_HAS_USB_HOST as 0/1, for the component manager rule in
+# components/usb_kbd/idf_component.yml that pulls in
+# espressif/usb_host_hid. That rule reads sdkconfig.json, which omits a
+# hidden bool symbol whose value is n (and the manager then fails with
+# "Missing required kconfig option"); a hidden int is always written.
+config DRAFTLING_USB_HOST_DEP
+    int
+    default 1 if DRAFTLING_HAS_USB_HOST
+    default 0
 
 config DRAFTLING_USB_KBD_PROBE_MS
     int
@@ -1167,6 +1197,7 @@ config DRAFTLING_WAKEUP_GPIO
     default 0  if DRAFTLING_MODEL_FREENOVE_FNK0104B
     default 0  if DRAFTLING_MODEL_FREENOVE_FNK0104S
     default 0  if DRAFTLING_MODEL_FREENOVE_FNK0104N
+    default -1 if DRAFTLING_MODEL_MICROJOURNAL_REV5
     # Viewe UEDX24320028E-WB-A: BOOT button on GPIO0 (shared with
     # the WS2812B RGB LED data line, which Draftling leaves unused).
     default 0  if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
@@ -1525,6 +1556,7 @@ config DRAFTLING_DISPLAY_WIDTH
     # 90-degree base rotation (DRAFTLING_DISPLAY_ROTATE) renders the
     # editor landscape at 480x320.
     default 320 if DRAFTLING_MODEL_FREENOVE_FNK0104N
+    default 320 if DRAFTLING_MODEL_MICROJOURNAL_REV5
     # Viewe UEDX24320028E-WB-A + UEED035HV: 320x480 portrait panel,
     # rendered landscape by the display backend (MADCTL MV).
     default 480 if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
@@ -1554,6 +1586,7 @@ config DRAFTLING_DISPLAY_HEIGHT
     default 820 if DRAFTLING_MODEL_WAVESHARE_LCD_316
     default 240 if DRAFTLING_MODEL_FREENOVE_FNK0104A
     default 240 if DRAFTLING_MODEL_FREENOVE_FNK0104B
+    default 240 if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default 320 if DRAFTLING_MODEL_FREENOVE_FNK0104S
     default 480 if DRAFTLING_MODEL_FREENOVE_FNK0104N
     default 320 if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
@@ -1572,6 +1605,7 @@ choice DRAFTLING_DISPLAY_ROTATE
     default DRAFTLING_DISPLAY_ROTATE_270 if DRAFTLING_MODEL_M5STACK_TAB5
     default DRAFTLING_DISPLAY_ROTATE_270 if DRAFTLING_MODEL_WAVESHARE_LCD_316
     default DRAFTLING_DISPLAY_ROTATE_90 if DRAFTLING_MODEL_FREENOVE_FNK0104N
+    default DRAFTLING_DISPLAY_ROTATE_180 if DRAFTLING_MODEL_MICROJOURNAL_REV5
     default DRAFTLING_DISPLAY_ROTATE_0
     help
         Rotation angle for the display in degrees.

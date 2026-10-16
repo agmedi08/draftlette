@@ -431,7 +431,7 @@ extern "C" void standby_enter_sleep(void)
     }
 #endif /* CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752 */
 
-#if SOC_PM_SUPPORT_EXT0_WAKEUP
+#if SOC_PM_SUPPORT_EXT0_WAKEUP && CONFIG_DRAFTLING_WAKEUP_GPIO >= 0
     /* EXT0's level comparator and the RTC IO pull-up we are about to
      * enable both live in the RTC_PERIPH power domain. A pre-sleep
      * callback may have called esp_sleep_pd_config(RTC_PERIPH, OFF)
@@ -564,14 +564,15 @@ extern "C" void standby_enter_sleep(void)
                       "or RESET)...");
     }
 #else
-    /* Target has no EXT0 wake source (ESP32-P4, ESP32-C2/C3/C6/H2/...).
+    /* Target or board has no configured GPIO wake source (including
+     * ESP32-P4 and boards without a user wake button).
      * Some of these support EXT1 / LP_IO GPIO wakeup but only for a
      * restricted set of pins (LP_IO range, e.g. GPIO0-15 on P4). On
      * the only P4 board currently supported (M5Stack Tab5) no user
      * button or touch INT lands on an LP_IO pin, so the only viable
      * wake path is the hardware RESET button -- the chip cold-boots
      * and the editor restores state from autosave on the next run.
-     * We therefore skip GPIO-wake arming entirely on these targets;
+     * We therefore skip GPIO-wake arming entirely here;
      * any timer / touch wake source can still be enabled by the
      * caller via the standard esp_sleep_* APIs before invoking
      * standby_enter_sleep(). */

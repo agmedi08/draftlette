@@ -13,16 +13,25 @@
  *
  * Included by main/app_config.h when
  * CONFIG_DRAFTLING_MODEL_FREENOVE_FNK0104B is selected.
- *
- * The SPI pins, backlight pin/polarity and MADCTL orientation are
- * hard-coded inside components/display/display_ili9341.cpp (shared
- * by every FNK0104 SPI-TFT board, matching the convention already
- * used by display_rgb.cpp for the Sunton boards), so this header
- * carries only the pins that vary per SKU: SD card, touch, battery
- * ADC and the wakeup button.
  */
 
 #define BOARD_NAME          "Freenove FNK0104B"
+
+/* SPI TFT panel (passed to display_ili9341.cpp through
+ * display_spi_tft_config()). Same wiring on every FNK0104 SPI-TFT
+ * SKU (A/B/S): no MISO, no discrete RST line (the backend sends
+ * SWRESET), active-HIGH PWM backlight on GPIO45. */
+#define LCD_MOSI_PIN        11
+#define LCD_MISO_PIN        -1
+#define LCD_SCK_PIN         12
+#define LCD_CS_PIN          10
+#define LCD_DC_PIN          46
+#define LCD_RST_PIN         -1
+#define LCD_BL_PIN          45
+#define LCD_IM0_PIN         -1
+#define LCD_IM1_PIN         -1
+#define LCD_SPI_CLOCK_HZ    (40 * 1000 * 1000)
+#define LCD_BL_PWM_HZ       50000
 
 /* SD card on the on-chip SDMMC peripheral (1-bit mode: CLK/CMD/D0
  * only -- D1-D3 are left unconfigured, matching the existing
