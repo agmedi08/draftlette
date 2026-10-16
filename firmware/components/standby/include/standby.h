@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Default standby timeout in seconds (10 minutes). 0 = disabled. */
@@ -38,7 +39,15 @@ typedef void (*standby_pre_sleep_cb_t)(void);
 void standby_set_pre_sleep_cb(standby_pre_sleep_cb_t cb);
 
 /*
- * Enter deep sleep immediately.
+ * Keep the device awake while inhibited: the inactivity and
+ * no-keyboard timers do nothing and standby_enter_sleep() returns at
+ * once, so every sleep request (Ctrl+P, power buttons) is ignored.
+ * Clearing the inhibit restarts the inactivity timer.
+ */
+void standby_set_inhibit(bool inhibit);
+
+/*
+ * Enter deep sleep immediately (unless inhibited, see above).
  * On Waveshare RLCD: wakes on GPIO18 low.
  * If a pre-sleep callback is registered it is invoked first.
  */

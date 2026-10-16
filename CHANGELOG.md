@@ -8,13 +8,17 @@ in the git log.
 
 ### Added
 
-- **Sync via browser**: the new F1 menu item "Sync via browser"
-  (letter V) starts a Kermit file server on the serial console. A
-  computer connected to the device's USB port can then list,
-  download, upload, rename and delete the files on the SD card with
-  any Kermit client, without WiFi. Starting it saves and closes the
-  open documents and switches the console's log output off; Stop
-  restores both. It is available only on boards whose USB port is
+- **Sync via browser**: the new F1 menu item "Sync via browser..."
+  (letter V) asks whether to start a Kermit file server on the serial
+  console. After Start, a dialog asks you to open
+  https://bridge.draftling.art/ on a computer connected to the
+  device's USB port and follow the instructions there to synchronize
+  the SD card with a Git repository, without WiFi; any other Kermit
+  client can list, download, upload, rename and delete the files as
+  well. Starting it saves and closes the open documents and switches
+  the console's log output off, and the device does not go to sleep
+  while the dialog is up. Select Finished in the dialog when you are
+  done: the server stops and everything is restored. It is available only on boards whose USB port is
   wired to the ESP32-S3's native USB (the boards that offer "SD card
   via USB"),
   not on boards with a USB-to-UART bridge such as the Seeed reTerminal

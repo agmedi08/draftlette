@@ -16,13 +16,23 @@ that implements the protocol over the browser's Web Serial API.
 
 ## Starting and stopping
 
-1. Press F1, select "Sync via browser" (letter V) and choose
-   **Start**.
+1. Press F1, select "Sync via browser..." (letter V) and choose
+   **Start** (or **Cancel** to go back to the menu).
 2. Draftling saves every open document, closes the editor and shows
-   the file browser with "Sync via browser active -- F1 to stop" in
-   its status bar. Transfers show their progress there as well.
-3. When you are done, press F1, select "Sync via browser" and choose
-   **Stop**. The file list is refreshed with whatever changed.
+   the "Sync via browser" dialog. It asks you to open
+   <https://bridge.draftling.art/> in Chrome, Edge or Opera on the
+   computer connected to the device's USB port and to follow the
+   instructions there (the bridge is
+   [Draftbridge](https://github.com/clackups/draftbridge)). Any other
+   Kermit client works as well. The dialog shows the progress of each
+   transfer.
+3. When you are done, select **Finished** in the dialog (Enter, or tap
+   it on a touchscreen). The server stops and the file list is
+   refreshed with whatever changed.
+
+While the dialog is up, the device does not go to sleep: the standby
+timer, the power button and Ctrl+P are ignored until you select
+Finished. The dialog cannot be closed any other way.
 
 Start is refused while "SD card via USB" or a Git sync is running,
 when no SD card is mounted, and while a new (never saved) document
@@ -81,7 +91,7 @@ C-Kermit> finish
 | `remote space` | Shows the SD card's size and free space |
 | `remote type` | Shows a file's contents |
 | `remote help` | Lists these commands |
-| `finish`, `bye` | Acknowledged; the server keeps running until you stop it on the device |
+| `finish`, `bye` | Acknowledged; the server keeps running until you select Finished on the device |
 
 The client cannot reach anything outside the SD card.
 
@@ -98,6 +108,5 @@ The client cannot reach anything outside the SD card.
   1, 2 and 3 (CRC-16), repeat-count compression, 8th-bit prefixing
   and attribute packets (file type, size and date). Sliding windows,
   streaming and transfer recovery are not supported.
-- A transfer in progress counts as activity for the standby timer.
 - Stopping the server during a transfer cancels it; a partially
   received file is deleted.

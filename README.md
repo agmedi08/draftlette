@@ -111,12 +111,14 @@ load the firmware quickly without having to compile it.
   light green on black (default), dark green on black, amber/orange on
   black, white on black, or black on beige.
 
-- **Sync via browser** F1 -> "Sync via browser" -> Start turns the
-  serial console into a Kermit file server: a computer on the
-  device's USB port can list, download, upload, rename and delete the
-  files on the SD card with any Kermit client (C-Kermit, or a web page
-  using Web Serial), no WiFi needed. The editor is closed while it
-  runs; Stop brings everything back. Available only on boards whose
+- **Sync via browser** F1 -> "Sync via browser..." -> Start turns the
+  serial console into a Kermit file server and asks you to open
+  https://bridge.draftling.art/ on a computer connected to the
+  device's USB port, which synchronizes the SD card with a Git
+  repository without WiFi. Any other Kermit client (e.g. C-Kermit)
+  can list, download, upload, rename and delete the files as well.
+  The editor is closed and the device stays awake while it runs;
+  Finished brings everything back. Available only on boards whose
   USB port is wired to the ESP32-S3's native USB (the same boards as
   "SD card via USB" below), not on boards with a USB-to-UART bridge
   such as the Seeed reTerminal E1001 / Sticky and the Elecrow CrowPanel.

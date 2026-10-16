@@ -694,19 +694,27 @@ pointing at the deleted files (open documents, Git repository,
 
 **Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `V`, only
 on boards with `CONFIG_DRAFTLING_HAS_KERMIT`; the rows after it shift up
-elsewhere, like after "SD card via USB") opens a Start / Stop picker rendered into `s_menu_list`
-(`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
-`kermit_picker_activate()`); the choice applies at once. `kermit_start()`
+elsewhere, like after "SD card via USB"; its label is static) opens a
+Start / Cancel picker rendered into `s_menu_list`, with the question in
+the menu header (`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
+`kermit_picker_activate()`). `kermit_start()`
 refuses while the card is handed off (`sd_handed_off_msg()`), no card is
 mounted, a Git sync runs, or an untitled document has unsaved changes;
 otherwise it saves every modified document, collapses a split, closes
 every titled document (`editor_close_file()` on each, so stale buffers
 cannot be written back over files the client replaces), forces the file
 browser and calls `kermit_server_start()` (see `components/kermit/`).
-`kermit_stop()` calls `kermit_server_stop()`. `kermit_status_cb()` runs
-on the server task: it takes the LVGL lock with a 200 ms timeout (Stop
-waits for that task while holding the lock), shows the message, refreshes
-the file list when files changed and resets the standby timer.
+On success it calls `standby_set_inhibit(true)` (no sleep of any kind
+during the session) and shows the message pop-up with `s_msg_kermit`
+set: `KERMIT_BRIDGE_TEXT` points the user at https://bridge.draftling.art/
+(github.com/clackups/draftbridge) and the hint reads "Enter: Finished".
+While `s_msg_kermit` is set the pop-up is modal for the whole session:
+Esc is ignored, `show_msg_popup()` refuses to replace it, and Enter or a
+tap calls `kermit_finish()`, which closes it, calls
+`kermit_server_stop()`, clears the standby inhibit and refreshes the
+file list. `kermit_status_cb()` runs on the server task: it takes the
+LVGL lock with a 200 ms timeout (Finished waits for that task while
+holding the lock) and appends the progress line to the dialog text.
 All of it is compiled out without `CONFIG_DRAFTLING_HAS_KERMIT`.
 `sd_handed_off_msg()` is the single guard for "the SD card belongs to
 someone else" (SD via USB or the Kermit server) used by the editor, both
@@ -1325,9 +1333,15 @@ range. The countdown is only armed on boards with
 skips it, since there is nothing to conserve and unexpectedly
 blanking the display during bring-up is more disruptive than helpful.
 
+`standby_set_inhibit(true)` keeps the device awake (the editor sets it
+for the duration of a "Sync via browser" session): the timers then do
+nothing and `standby_enter_sleep()` returns at once, so Ctrl+P and the
+power / sleep buttons are ignored too. Clearing it restarts the
+inactivity timer.
+
 Public API: `standby_init()`, `standby_reset_timer()`,
 `standby_set_timeout()`, `standby_set_pre_sleep_cb()`,
-`standby_enter_sleep()`.
+`standby_set_inhibit()`, `standby_enter_sleep()`.
 
 ### components/power/
 

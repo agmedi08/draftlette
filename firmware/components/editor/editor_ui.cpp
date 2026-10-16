@@ -938,6 +938,10 @@ static bool usbmsc_item_disabled(void)
 static bool s_kermit_picker_open     = false;
 static int  s_kermit_picker_sel      = 0;
 static int  s_kermit_picker_sel_prev = -1;
+/* True while the message pop-up is the "Sync via browser" dialog: it
+ * stays up for the whole Kermit session and its only action is
+ * Finished (Enter or a tap), which stops the server. */
+static bool s_msg_kermit             = false;
 #endif
 
 /* Why the firmware must keep off the SD card right now -- it is handed
@@ -950,7 +954,7 @@ static const char *sd_handed_off_msg(void)
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (kermit_server_is_running())
-        return "Sync via browser active -- stop it in F1 menu first";
+        return "Sync via browser active";
 #endif
     return NULL;
 }
@@ -3854,7 +3858,7 @@ static void browser_status_hint(char *buf, size_t buf_size)
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (kermit_server_is_running()) {
-        snprintf(buf, buf_size, "Sync via browser active -- F1 to stop");
+        snprintf(buf, buf_size, "Sync via browser active");
         return;
     }
 #endif
@@ -4283,7 +4287,7 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_USB_MSC,         'u', 12 },  /* "SD card via USB: ..." */
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
-    { MENU_IDX_KERMIT,          'v', 5  },  /* "Sync via browser: ..." */
+    { MENU_IDX_KERMIT,          'v', 5  },  /* "Sync via browser..." */
 #endif
     { MENU_IDX_FORMAT_SD,       'f', 0  },  /* "Format SD card..." */
     { MENU_IDX_HWINFO,          'i', 9  },  /* "Hardware information" */
@@ -4432,9 +4436,7 @@ static void refresh_menu_items(void)
 
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     /* Sync via browser: Kermit server on the serial console */
-    snprintf(buf, sizeof(buf), "Sync via browser: %s  (Enter to change)",
-             kermit_server_is_running() ? "Running" : "Stopped");
-    lv_list_add_btn(s_menu_list, NULL, buf);
+    lv_list_add_btn(s_menu_list, NULL, "Sync via browser...");
 #endif
 
     /* Format SD card */
@@ -4552,7 +4554,7 @@ static void commit_usb_msc_pending_mode(void)
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (cur == USB_MSC_MODE_OFF && kermit_server_is_running()) {
         s_usbmsc_pending_mode = cur;
-        editor_ui_set_status("Sync via browser active -- stop it first");
+        editor_ui_set_status("Sync via browser active");
         return;
     }
 #endif
@@ -5484,6 +5486,9 @@ static void handle_wifi_pw_prompt_key(const kb_event_t *ev)
 static void show_msg_popup(const char *title, const char *text, bool busy)
 {
     if (!s_msg_panel) return;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) return;   /* the Sync via browser dialog stays up */
+#endif
     lv_label_set_text(s_msg_title_lbl, title);
     lv_label_set_text(s_msg_text_lbl, text);
     if (busy) lv_obj_add_flag(s_msg_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -5502,10 +5507,26 @@ static void close_msg_popup(void)
     s_msg_open = false;
     s_msg_busy = false;
     if (s_msg_panel) lv_obj_add_flag(s_msg_panel, LV_OBJ_FLAG_HIDDEN);
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        s_msg_kermit = false;
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: close");
+    }
+#endif
 }
+
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+static void kermit_finish(void);
+#endif
 
 static void handle_msg_popup_key(const kb_event_t *ev)
 {
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        if (ev->keycode == KB_KEY_ENTER) kermit_finish();
+        return;
+    }
+#endif
     if (s_msg_busy) return;
     if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
         close_msg_popup();
@@ -5515,6 +5536,12 @@ static void handle_msg_popup_key(const kb_event_t *ev)
 static void msg_popup_touch_cb(lv_event_t *e)
 {
     (void)e;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        kermit_finish();
+        return;
+    }
+#endif
     if (!s_msg_busy) close_msg_popup();
 }
 #endif
@@ -5783,23 +5810,34 @@ static void close_usbmsc_picker(void)
 
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 /* ---- "Sync via browser": Kermit server on the serial console ----
- * Start hands the SD card and the console to components/kermit: every
- * open document is saved and closed and the editor is left for the
- * file browser, whose keys (like the editor's) are refused until Stop
- * -- see sd_handed_off_msg(). */
+ * F1 -> "Sync via browser..." asks Start / Cancel. Start hands the SD
+ * card and the console to components/kermit: every open document is
+ * saved and closed, the editor is left for the file browser, and the
+ * "Sync via browser" dialog (the message pop-up with s_msg_kermit set)
+ * tells the user to open the Draftbridge web page. The dialog is modal
+ * for the whole session and the device does not go to sleep; Finished
+ * stops the server. */
+
+#define KERMIT_BRIDGE_TEXT \
+    "On a computer connected to this device's USB port, open " \
+    "https://bridge.draftling.art/ in Chrome, Edge or Opera and follow " \
+    "the instructions there. Select Finished when the synchronization " \
+    "is complete."
 
 /* Runs on the Kermit server task. A short lock timeout: Stop waits for
  * that task while holding the LVGL lock, and a dropped progress line
  * is harmless. */
 static void kermit_status_cb(const char *msg, bool files_changed)
 {
+    (void)files_changed;   /* the file list is refreshed on Finished */
     if (!draftling_lvgl_port_lock(200)) return;
-    char buf[112];
-    snprintf(buf, sizeof(buf), "Sync via browser: %s", msg);
-    set_status_with_timeout(buf, 10000);
-    if (files_changed && lv_scr_act() == s_scr_browser) refresh_file_list();
-    /* Transfers count as activity for the inactivity standby. */
-    standby_reset_timer();
+    if (s_msg_kermit) {
+        char buf[sizeof(KERMIT_BRIDGE_TEXT) + 96];
+        snprintf(buf, sizeof(buf), KERMIT_BRIDGE_TEXT "\n\n%s", msg);
+        lv_label_set_text(s_msg_text_lbl, buf);
+        lv_obj_update_layout(s_msg_panel);
+        lv_obj_align(s_msg_panel, LV_ALIGN_CENTER, 0, 0);
+    }
     draftling_lvgl_port_unlock();
 }
 
@@ -5868,16 +5906,23 @@ static void kermit_start(void)
         editor_ui_set_status(buf);
         return;
     }
-    editor_ui_set_status("Sync via browser: started");
+    standby_set_inhibit(true);
+    close_menu();
+    show_msg_popup("Sync via browser", KERMIT_BRIDGE_TEXT, false);
+    s_msg_kermit = true;
+    lv_label_set_text(s_msg_hint_lbl, "Enter: Finished");
 }
 
-static void kermit_stop(void)
+/* "Finished" in the Sync via browser dialog. */
+static void kermit_finish(void)
 {
-    if (!kermit_server_is_running()) return;
+    close_msg_popup();
     kermit_server_stop();
+    standby_set_inhibit(false);
+    if (lv_scr_act() == s_scr_browser) refresh_file_list();
     editor_ui_set_status(kermit_server_is_running()
                              ? "Sync via browser: stopping..."
-                             : "Sync via browser: stopped");
+                             : "Sync via browser: finished");
 }
 
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
@@ -5887,10 +5932,10 @@ static void kermit_picker_activate(int idx);
 
 static void refresh_kermit_picker_items(void)
 {
-    bool running = kermit_server_is_running();
+    lv_label_set_text(s_lbl_menu_hdr, "Sync via browser: start the file server?");
     lv_obj_clean(s_menu_list);
-    lv_list_add_btn(s_menu_list, NULL, running ? "  Start" : "* Start");
-    lv_list_add_btn(s_menu_list, NULL, running ? "* Stop" : "  Stop");
+    lv_list_add_btn(s_menu_list, NULL, "Start");
+    lv_list_add_btn(s_menu_list, NULL, "Cancel");
     apply_list_selection_styles(s_menu_list, s_kermit_picker_sel);
     s_kermit_picker_sel_prev = s_kermit_picker_sel;
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
@@ -5912,16 +5957,15 @@ static void update_kermit_picker_highlight(void)
 static void close_kermit_picker(void)
 {
     s_kermit_picker_open = false;
+    lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
     refresh_menu_items();
 }
 
-/* Row 0 = Start, 1 = Stop (Enter or a second tap). */
+/* Row 0 = Start, 1 = Cancel (Enter or a second tap). */
 static void kermit_picker_activate(int idx)
 {
     close_kermit_picker();
     if (idx == 0) kermit_start();
-    else kermit_stop();
-    refresh_menu_items();
 }
 #endif /* CONFIG_DRAFTLING_HAS_KERMIT */
 
@@ -6241,7 +6285,7 @@ static void menu_activate_item(int idx)
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     case MENU_IDX_KERMIT:
         s_kermit_picker_open = true;
-        s_kermit_picker_sel = kermit_server_is_running() ? 1 : 0;
+        s_kermit_picker_sel = 0;
         refresh_kermit_picker_items();
         break;
 #endif
@@ -11123,6 +11167,9 @@ static void teardown_screens(void)
     s_dbx_open                = false;
     s_msg_open                = false;
     s_msg_busy                = false;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    s_msg_kermit              = false;
+#endif
     s_exit_open               = false;
     s_newfmt_open             = false;
     s_del_open                = false;
