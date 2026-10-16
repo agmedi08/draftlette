@@ -17,3 +17,9 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_xteink_x4_pro.csv"
 # Mass Storage device over the ESP32-S3's native USB port. See
 # components/usb_msc.
 CONFIG_TINYUSB_MSC_ENABLED=y
+# "Sync via browser" (F1 menu): the Kermit server's USB serial port is
+# a TinyUSB CDC-ACM device, not USB-Serial/JTAG, which resets the chip
+# when a browser opens the port. See components/kermit.
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_RX_BUFSIZE=4096
+CONFIG_TINYUSB_CDC_TX_BUFSIZE=4096

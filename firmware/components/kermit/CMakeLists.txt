@@ -11,9 +11,13 @@ if(CONFIG_DRAFTLING_HAS_KERMIT)
         SRCS "kermit.c" "kermit_port.c"
         INCLUDE_DIRS "include"
     )
-    idf_component_optional_requires(PRIVATE esp_driver_uart
-                                    esp_driver_usb_serial_jtag esp_rom
-                                    esp_timer log vfs)
+    ## espressif__esp_tinyusb is declared in components/usb_msc's
+    ## idf_component.yml (every board with Kermit also has "SD card via
+    ## USB"); esp_hal_usb provides hal/usb_serial_jtag_hal.h for handing
+    ## the USB PHY back to USB-Serial/JTAG (see kermit_port.c).
+    idf_component_optional_requires(PRIVATE esp_driver_uart esp_rom
+                                    esp_timer log vfs
+                                    espressif__esp_tinyusb esp_hal_usb)
 else()
     idf_component_register()
 endif()

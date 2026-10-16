@@ -17,6 +17,7 @@
 #include <esp_timer.h>
 
 #include "hal/usb_serial_jtag_hal.h"
+#include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_msc.h"
 
@@ -44,6 +45,52 @@ static int64_t                    s_disconnected_since_us = 0;
 static esp_timer_handle_t         s_idle_timer = NULL;
 
 #define IDLE_CHECK_PERIOD_US (10 * 1000 * 1000)  /* 10 s */
+
+/* MSC-only descriptors. esp_tinyusb's defaults describe every class
+ * enabled in sdkconfig, and CDC is enabled too (the Kermit server's
+ * serial port, components/kermit), so without these the host would see
+ * an extra serial port beside the drive. These match what the defaults
+ * were with MSC alone: Espressif VID, PID 0x4002 (esp_tinyusb's
+ * per-class PID map; the Kermit port uses 0x4001), one MSC interface on
+ * endpoint 1. */
+enum { MSC_ITF_NUM = 0, MSC_ITF_TOTAL };
+enum { MSC_STRID_LANGID = 0, MSC_STRID_MANUFACTURER, MSC_STRID_PRODUCT,
+       MSC_STRID_SERIAL, MSC_STRID_INTERFACE, MSC_STRID_COUNT };
+#define MSC_EPNUM 1
+#define MSC_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN)
+
+static const tusb_desc_device_t s_msc_device_desc = {
+    .bLength            = sizeof(tusb_desc_device_t),
+    .bDescriptorType    = TUSB_DESC_DEVICE,
+    .bcdUSB             = 0x0200,
+    .bDeviceClass       = 0x00,
+    .bDeviceSubClass    = 0x00,
+    .bDeviceProtocol    = 0x00,
+    .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
+    .idVendor           = TINYUSB_ESPRESSIF_VID,
+    .idProduct          = 0x4002,
+    .bcdDevice          = CONFIG_TINYUSB_DESC_BCD_DEVICE,
+    .iManufacturer      = MSC_STRID_MANUFACTURER,
+    .iProduct           = MSC_STRID_PRODUCT,
+    .iSerialNumber      = MSC_STRID_SERIAL,
+    .bNumConfigurations = 1,
+};
+
+static const uint8_t s_msc_config_desc[] = {
+    TUD_CONFIG_DESCRIPTOR(1, MSC_ITF_TOTAL, 0, MSC_CONFIG_TOTAL_LEN,
+                          TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+    TUD_MSC_DESCRIPTOR(MSC_ITF_NUM, MSC_STRID_INTERFACE, MSC_EPNUM,
+                       0x80 | MSC_EPNUM, 64),
+};
+
+static const char s_msc_langid[] = { 0x09, 0x04 };   /* English (0x0409) */
+static const char *s_msc_strings[MSC_STRID_COUNT] = {
+    s_msc_langid,
+    CONFIG_TINYUSB_DESC_MANUFACTURER_STRING,
+    CONFIG_TINYUSB_DESC_PRODUCT_STRING,
+    CONFIG_TINYUSB_DESC_SERIAL_STRING,
+    CONFIG_TINYUSB_DESC_MSC_STRING,
+};
 
 static void device_event_cb(tinyusb_event_t *event, void *arg)
 {
@@ -190,7 +237,11 @@ static esp_err_t bring_up_locked(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_cb, NULL);
+    tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG(device_event_cb, NULL);
+    tusb_cfg.descriptor.device            = &s_msc_device_desc;
+    tusb_cfg.descriptor.full_speed_config = s_msc_config_desc;
+    tusb_cfg.descriptor.string            = s_msc_strings;
+    tusb_cfg.descriptor.string_count      = MSC_STRID_COUNT;
     esp_err_t ret = tinyusb_driver_install(&tusb_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "tinyusb_driver_install failed: %s", esp_err_to_name(ret));

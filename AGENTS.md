@@ -1219,12 +1219,29 @@ server still listens on the console UART as well as USB-Serial/JTAG.
 - `kermit_port.c` -- transport. `kport_open()` silences every console
   output path (`esp_log_set_vprintf()` to a no-op, ROM printf channels
   1 and 2 to a no-op putc) and installs the UART driver on the console
-  UART (`CONFIG_ESP_CONSOLE_UART_NUM`) and, when a primary or secondary
-  console is on USB-Serial/JTAG, the USB-Serial/JTAG driver. Reads poll
-  both; writes go to the port the last input arrived on, so the server
-  works through a board's USB-UART bridge and through the S3's native
-  USB port alike. `kport_close()` removes the drivers and restores the
-  ROM printf set-up the way esp_system's start-up code does.
+  UART (`CONFIG_ESP_CONSOLE_UART_NUM`) and, when the build enables
+  TinyUSB CDC (`CONFIG_TINYUSB_CDC_ENABLED`, set in every Kermit board's
+  `sdkconfig.defaults.<board>`), a TinyUSB CDC-ACM serial port on the
+  S3's USB-OTG controller with its own descriptors (Espressif VID, PID
+  0x4001, product "Draftling"). Reads poll both; writes go to the port
+  the last input arrived on. The Kermit port deliberately does NOT use
+  USB-Serial/JTAG, the console port on these boards: its CDC-ACM
+  interface resets the chip in hardware when the host drives RTS = 1
+  with DTR = 0, and a browser opening the port through Web Serial did
+  that (`rst:0x15 USB_UART_CHIP_RESET` the moment Draftbridge
+  connected). The S3 has no way to switch that reset off --
+  `RTC_CNTL_USB_RESET_DISABLE` was tried and does not help (only the C6
+  and later chips have a working disable bit) -- while USB-OTG has no
+  such logic. Installing TinyUSB moves the internal USB PHY to USB-OTG,
+  so the computer sees the console port disappear and the "Draftling"
+  port appear. `kport_close()` removes the drivers, hands the PHY back
+  to USB-Serial/JTAG with `usb_serial_jtag_hal_phy_set_external(NULL,
+  false)` (as `components/usb_msc/` does; unlike that component it does
+  not restart afterwards) and restores the ROM printf set-up the way
+  esp_system's start-up code does. Enabling TinyUSB CDC changes
+  esp_tinyusb's default descriptors to a CDC + MSC composite, so
+  `usb_msc.cpp` now passes its own MSC-only descriptors (PID 0x4002,
+  identical to the previous defaults).
 - `kermit.c` -- stop-and-wait server (no sliding windows / streaming /
   recovery): long packets (we advertise 9000; the receive check only
   enforces the 9128-byte buffer because C-Kermit's longest packets run a

@@ -61,9 +61,16 @@ reset the device or hold it in reset.
 
 ## Connecting
 
-On a supported board the device appears on the computer as a USB
-serial port (`/dev/ttyACM0` on Linux, `/dev/cu.usbmodem*` on macOS, a
-COM port on Windows). The speed setting does not matter.
+When you select Start, the device's USB port switches over: the serial
+port the device normally shows (its log console) disappears and a new
+serial port named "Draftling" appears (`/dev/ttyACM0` on Linux,
+`/dev/cu.usbmodem*` on macOS, a COM port on Windows). Connect to that
+one; the speed setting does not matter. When you select Finished, the
+"Draftling" port goes away and the console port comes back.
+
+The console port itself cannot be used for this: the chip's built-in
+USB serial port resets the device when a program sets its control
+lines the way the browser does when it opens a port.
 
 Example with C-Kermit on Linux:
 
