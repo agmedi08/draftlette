@@ -1,4 +1,4 @@
-# CMakePresets.json board defaults: MicroJournal Rev 5
+# CMakePresets.json board defaults: MicroJournal Rev 5.0
 # Sets the hardware model and IDF target used by the preset.
 
 CONFIG_IDF_TARGET="esp32s3"

@@ -1,5 +1,5 @@
 #pragma once
-/* ----- MicroJournal Rev 5 -----
+/* ----- MicroJournal Rev 5.0 -----
  *
  * ESP32-S3 N16R8 writerdeck with an ILI9341 SPI LCD, an on-board SPI
  * MicroSD reader sharing the LCD bus, and a native USB host connector.
@@ -7,7 +7,7 @@
  * not provided, so software brightness control is disabled.
  */
 
-#define BOARD_NAME          "MicroJournal Rev 5"
+#define BOARD_NAME          "MicroJournal Rev 5.0"
 
 /* ILI9341 SPI panel (passed to display_ili9341.cpp through
  * display_spi_tft_config()). MISO is wired because the MicroSD card
