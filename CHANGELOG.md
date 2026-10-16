@@ -20,7 +20,11 @@ in the git log.
   not on boards with a USB-to-UART bridge such as the Seeed reTerminal
   E1001 / Sticky and the Elecrow CrowPanel 5.79". See
   docs/sync-via-browser.md.
-
+- **MicroJournal Rev 5 firmware target**: adds a dedicated build preset
+  for the ESP32-S3 writerdeck with its ILI9341 display (landscape,
+  turned 180 degrees to match the enclosure), shared-SPI MicroSD reader
+  and wired USB keyboard host; Bluetooth is disabled in this build. GPIO0 is reserved for hardware power control; after
+  deep sleep, wake by hardware reset or power cycling.
 - **Hardware information page**: the new F1 menu item "Hardware
   information" (letter I) shows the board model and chip, the RAM,
   PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch
@@ -30,6 +34,19 @@ in the git log.
   and "Sync via browser", or "not available" on boards without them)
   and the device's WiFi and Bluetooth MAC addresses. Esc or Enter
   closes it.
+- **File information page (Alt+I)**: in the editor, Alt+I shows the
+  word, paragraph, line and character counts and the size in bytes of
+  the document you are editing (unsaved changes included), and its Git
+  sync status: whether it is the same as on the server, not there yet,
+  or changed since the last sync, with the number of lines added and
+  deleted. In the file browser, Alt+I shows the same page for the
+  selected file. Esc or Enter closes it.
+
+### Changed
+
+- **Git sync messages name the server**: sync progress and error
+  messages show the server's host name instead of the word "remote",
+  e.g. "Contacting github.com..." or "Pushing to github.com...".
 
 ## [1.0.16] - 2026-10-10
 

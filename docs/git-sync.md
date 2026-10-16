@@ -122,6 +122,16 @@ on the device, without contacting the server. The next sync then
 commits the deletion, and the file stays available in the repository
 history.
 
+## File status
+
+`Alt+I` in the editor or the file browser shows the file information
+page. Its "Git sync" section compares the file with its version in the
+last commit that a sync pushed to (or fetched from) the server, on the
+device and without contacting the server: "same as on the server",
+"not on the server yet", or "changed since last sync" with the number
+of lines added and deleted. In the editor the comparison uses the
+text being edited, unsaved changes included.
+
 ## Scope and limitations
 
 This is deliberately a minimal client:

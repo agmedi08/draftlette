@@ -112,6 +112,53 @@ static bool lcs_align(const line_t *a, int na, const line_t *b, int nb,
 }
 
 /* ------------------------------------------------------------------ */
+/* line diff statistics                                               */
+/* ------------------------------------------------------------------ */
+
+esp_err_t git_diff_line_counts(const char *a, size_t a_len,
+                               const char *b, size_t b_len,
+                               int *added, int *deleted)
+{
+    *added = 0;
+    *deleted = 0;
+    lines_t A = {0}, B = {0};
+    int *match = NULL;
+    esp_err_t ret = ESP_ERR_NO_MEM;
+    if (!lines_split(a, a_len, &A)) goto done;
+    if (!lines_split(b, b_len, &B)) goto done;
+
+    /* Common leading and trailing lines need no LCS. */
+    int lo = 0;
+    while (lo < A.n && lo < B.n && line_eq(&A.v[lo], &B.v[lo])) lo++;
+    int ea = A.n, eb = B.n;
+    while (ea > lo && eb > lo && line_eq(&A.v[ea - 1], &B.v[eb - 1])) { ea--; eb--; }
+    int na = ea - lo, nb = eb - lo;
+
+    if (na > MERGE_MAX_LINES || nb > MERGE_MAX_LINES) {
+        /* Too large for the LCS matrix: count the whole changed region. */
+        *deleted = na;
+        *added = nb;
+        ret = ESP_OK;
+        goto done;
+    }
+    match = malloc(((size_t)na + 1) * sizeof(int));
+    if (!match) goto done;
+    if (!lcs_align(A.v + lo, na, B.v + lo, nb, match)) goto done;
+    int common = 0;
+    for (int i = 0; i < na; i++)
+        if (match[i] >= 0) common++;
+    *deleted = na - common;
+    *added = nb - common;
+    ret = ESP_OK;
+
+done:
+    free(match);
+    lines_free(&A);
+    lines_free(&B);
+    return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* diff3 merge                                                        */
 /* ------------------------------------------------------------------ */
 

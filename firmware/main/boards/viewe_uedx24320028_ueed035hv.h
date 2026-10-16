@@ -22,15 +22,33 @@
  *
  * Included by main/app_config.h when
  * CONFIG_DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV is selected.
- *
- * The LCD pins (MOSI=45, SCK=40, CS=42, DC=41, RST=39, backlight=13,
- * interface-mode straps IM0=47 / IM1=48) are hard-coded inside
- * components/display/display_ili9341.cpp's ST7365 branch, matching
- * that backend's per-controller pin convention, so this header
- * carries only the SD card, touch and wakeup pins.
  */
 
 #define BOARD_NAME          "Viewe UEDX24320028E-WB-A + UEED035HV"
+
+/* ST7365 SPI panel (passed to display_ili9341.cpp through
+ * display_spi_tft_config()). RST comes from the board's V1.1
+ * schematic. IM0/IM1 are the interface-mode straps (IM2 is tied HIGH
+ * on the board); both are driven HIGH to select 4-wire 8-bit SPI.
+ * The vendor runs this panel at 80 MHz, but these pins are not the
+ * SPI2 IOMUX pins and go through the GPIO matrix; 40 MHz leaves
+ * timing margin and still pushes a full 480x320 frame in ~60 ms.
+ * The backlight is an LP3310 boost LED driver with the PWM on its
+ * dimming input rather than on the LED string itself, so it uses a
+ * conventional LED-driver dimming frequency (above the audible
+ * range, well below what an internal soft-start filter could smooth
+ * into a DC level). */
+#define LCD_MOSI_PIN        45
+#define LCD_MISO_PIN        -1
+#define LCD_SCK_PIN         40
+#define LCD_CS_PIN          42
+#define LCD_DC_PIN          41
+#define LCD_RST_PIN         39
+#define LCD_BL_PIN          13
+#define LCD_IM0_PIN         47
+#define LCD_IM1_PIN         48
+#define LCD_SPI_CLOCK_HZ    (40 * 1000 * 1000)
+#define LCD_BL_PWM_HZ       20000
 
 /* MicroSD on the on-chip SDMMC peripheral. The slot is wired for
  * 4-bit mode (D1=18, D2=15, D3=21); Draftling uses 1-bit mode. */

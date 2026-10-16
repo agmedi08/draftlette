@@ -17,11 +17,10 @@
  * physically attached at boot time wins -- BLE pairing is not even
  * started).
  *
- * Currently used on the M5Stack Tab5, whose USB-A connector is
- * exposed through the espressif/m5stack_tab5 BSP. The BSP power
- * gate (BSP_FEATURE_USB on PI4IOE5V6408 #2) must be enabled
- * BEFORE usb_kbd_init() -- main.cpp does this via
- * bsp_usb_host_start().
+ * On ESP32-S3, usb_kbd_init() installs the USB Host stack and starts
+ * its daemon task; the board must provide 5 V on host VBUS. On the
+ * M5Stack Tab5, the BSP owns PHY, VBUS and daemon startup, and
+ * main.cpp calls bsp_usb_host_start() first.
  */
 
 #include "ble_keyboard.h"   /* kb_event_t, kb_event_callback_t */
@@ -32,9 +31,8 @@ extern "C" {
 
 /*
  * Install the USB Host library + HID driver and start the internal
- * task that processes hot-plug events. Safe to call only after the
- * USB host PHY/power gate has been enabled (e.g. via
- * bsp_usb_host_start() on Tab5).
+ * task that processes hot-plug events. On ESP32-S3 this initializes
+ * the host stack; on Tab5, call after bsp_usb_host_start().
  *
  * Returns 0 on success, non-zero on failure.
  */

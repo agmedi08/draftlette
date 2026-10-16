@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstring>
+#include <cctype>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -6512,6 +6513,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "Ctrl+Up/Down", "Page up / down, same as PgUp / PgDn");
         help_row(out, cols, kc, "Ctrl+Tab", "Switch pane (when split)");
         help_row(out, cols, kc, "Ctrl+L", "Next keyboard layout (also Win+Space)");
+        help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
         help_common_rows(out, cols, kc);
 
         pane_bind_focus();
@@ -6528,6 +6530,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
         help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file (only once it is pushed with Git sync)");
+        help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Ctrl+Tab", "Switch to the other pane");
         help_common_rows(out, cols, kc);
@@ -6779,6 +6782,179 @@ static void show_hwinfo(help_origin_t origin)
     build_hwinfo_text(text, help_cols());
     show_help_page(origin,
                    "Hardware information - Esc or Enter to close", text);
+}
+
+/* ---- File information (Alt+I) ----
+ * Shown on the help screen: counts for the editor's focused document
+ * (its buffer, unsaved changes included) or for the file selected in
+ * the file browser (read from the SD card), plus its Git sync status
+ * against the last copy known to be on the server. */
+
+/* A word is a run of non-space characters with at least one letter or
+ * digit (any non-ASCII byte counts as a letter), so Markdown markers
+ * like "#", "-" or "---" are not counted. A paragraph is a block of
+ * non-blank lines between blank lines that holds at least one word. */
+static void count_text(const char *t, size_t len, unsigned *words,
+                       unsigned *paras, unsigned *lines, unsigned *chars)
+{
+    *words = *paras = *lines = *chars = 0;
+    bool in_word = false, word_ok = false;
+    bool line_blank = true, para_counted = false;
+    for (size_t i = 0; i <= len; i++) {
+        unsigned char c = i < len ? (unsigned char)t[i] : '\n';
+        if (i < len && (c & 0xC0) != 0x80) (*chars)++;
+        bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+                     c == '\f' || c == '\v';
+        if (space) {
+            if (in_word && word_ok) {
+                (*words)++;
+                if (!para_counted) { (*paras)++; para_counted = true; }
+            }
+            in_word = word_ok = false;
+        } else {
+            in_word = true;
+            if (c >= 0x80 || isalnum(c)) word_ok = true;
+            line_blank = false;
+        }
+        if (c == '\n') {
+            /* The final pseudo-newline ends the last line unless the
+             * text is empty or already ended with a newline. */
+            if (i < len || (len && t[len - 1] != '\n')) (*lines)++;
+            if (line_blank) para_counted = false;
+            line_blank = true;
+        }
+    }
+}
+
+/* name is the bare file name in the sync directory, or NULL when the
+ * document is not saved there; data/len is the content to compare. */
+static void fileinfo_git_row(std::string &out, int cols, int kc,
+                             const char *name, const char *data, size_t len)
+{
+    char buf[96];
+    const char *msg;
+    if (!name) {
+        msg = git_sync_is_configured() ? "not saved in the sync folder"
+                                       : "not configured";
+        help_row(out, cols, kc, "Status", msg);
+        return;
+    }
+    int added = -1, deleted = -1;
+    switch (git_sync_file_diff(name, data, len, &added, &deleted)) {
+    case GIT_SYNC_FILE_PUSHED:         msg = "same as on the server"; break;
+    case GIT_SYNC_FILE_NOT_CONFIGURED: msg = "not configured"; break;
+    case GIT_SYNC_FILE_BUSY:           msg = "sync in progress"; break;
+    case GIT_SYNC_FILE_NOT_PUSHED:     msg = "not on the server yet"; break;
+    case GIT_SYNC_FILE_MODIFIED:       msg = "changed since last sync"; break;
+    default:                           msg = "cannot read the repository"; break;
+    }
+    help_row(out, cols, kc, "Status", msg);
+    if (added >= 0 && deleted >= 0) {
+        snprintf(buf, sizeof(buf), "%d added, %d deleted", added, deleted);
+        help_row(out, cols, kc, "Lines", buf);
+    }
+}
+
+static void build_fileinfo_text(std::string &out, int cols, const char *name,
+                                const char *fmt_name, bool unsaved,
+                                const char *data, size_t len,
+                                const char *git_name)
+{
+    const int kc = 15;
+    char buf[64];
+    unsigned words, paras, lines, chars;
+    count_text(data, len, &words, &paras, &lines, &chars);
+
+    help_heading(out, "File");
+    help_row(out, cols, kc, "Name", name);
+    help_row(out, cols, kc, "Format", fmt_name);
+    snprintf(buf, sizeof(buf), "%u bytes", (unsigned)len);
+    help_row(out, cols, kc, "Size", buf);
+    if (unsaved) help_row(out, cols, kc, "Unsaved", "yes (counts include the changes)");
+
+    help_heading(out, "Text");
+    snprintf(buf, sizeof(buf), "%u", words);
+    help_row(out, cols, kc, "Words", buf);
+    snprintf(buf, sizeof(buf), "%u", paras);
+    help_row(out, cols, kc, "Paragraphs", buf);
+    snprintf(buf, sizeof(buf), "%u", lines);
+    help_row(out, cols, kc, "Lines", buf);
+    snprintf(buf, sizeof(buf), "%u", chars);
+    help_row(out, cols, kc, "Characters", buf);
+
+    help_heading(out, "Git sync");
+    fileinfo_git_row(out, cols, kc, git_name, data, len);
+}
+
+static const char *fileinfo_format_name(editor_doc_format_t f)
+{
+    switch (f) {
+    case EDITOR_DOC_FOUNTAIN: return "Fountain screenplay";
+    case EDITOR_DOC_TEXT:     return "Plain text";
+    default:                  return "Markdown";
+    }
+}
+
+static void show_fileinfo_page(help_origin_t origin, const std::string &text)
+{
+    show_help_page(origin, "File information - Esc or Enter to close", text);
+}
+
+/* Alt+I in the editor: the focused pane's document. */
+static void show_editor_fileinfo(void)
+{
+    if (!s_scr_help) return;
+    pane_bind_focus();
+    const char *path = editor_get_file_path();
+    const char *name = "(untitled)";
+    const char *git_name = NULL;
+    if (path) {
+        const char *slash = strrchr(path, '/');
+        name = slash ? slash + 1 : path;
+        const char *mp = sd_card_get_mount_point();
+        size_t mpl = strlen(mp);
+        if (slash && (size_t)(slash - path) == mpl && strncmp(path, mp, mpl) == 0)
+            git_name = name;
+    }
+    size_t len = 0;
+    const char *data = editor_get_text(&len);
+    std::string text;
+    build_fileinfo_text(text, help_cols(), name,
+                        fileinfo_format_name(editor_get_format()),
+                        editor_is_modified(), data ? data : "", len, git_name);
+    show_fileinfo_page(HELP_FROM_EDITOR, text);
+}
+
+/* Alt+I in either file browser: the selected file, read from the SD
+ * card. */
+static void show_browser_fileinfo(void)
+{
+    if (!s_scr_help || !s_browser_list) return;
+    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
+    if (!btn) return;
+    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    if (idx < 0 || idx >= s_browser_count) return;
+    if (s_browser_entries[idx].is_dir) {
+        editor_ui_set_status("Select a file to see its information");
+        return;
+    }
+    const char *name = s_browser_entries[idx].name;
+    char path[320];
+    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(), name);
+    char *data = NULL;
+    size_t len = 0;
+    if (sd_card_read_file(path, &data, &len) != ESP_OK) {
+        editor_ui_set_status("Cannot read the file");
+        return;
+    }
+    editor_doc_format_t fmt = EDITOR_DOC_MARKDOWN;
+    editor_path_format(name, &fmt);
+    std::string text;
+    build_fileinfo_text(text, help_cols(), name, fileinfo_format_name(fmt),
+                        false, data, len, name);
+    free(data);
+    show_fileinfo_page(s_inpane_browser_open ? HELP_FROM_INPANE : HELP_FROM_BROWSER,
+                       text);
 }
 
 static void close_help(void)
@@ -8157,6 +8333,12 @@ static void handle_editor_key(const kb_event_t *ev)
         show_help(HELP_FROM_EDITOR);
         return;
     }
+    if ((ev->modifier & (KB_MOD_LALT | KB_MOD_RALT)) && !ctrl &&
+        kb_layout_shortcut_char(ev->keycode) == 'i') {
+        /* Alt+I: file information for the focused document. */
+        show_editor_fileinfo();
+        return;
+    }
 
     /* Defense-in-depth, not the primary guard: commit_usb_msc_pending_mode()
      * and kermit_start() force the file browser (not the editor)
@@ -8918,6 +9100,11 @@ static void handle_browser_key(const kb_event_t *ev)
         /* Del / Alt+D: delete the selected file, only if it is already
          * committed and pushed to the Git server (asks to confirm). */
         show_delete_prompt();
+        return;
+    }
+    if (ch == 'i' && alt && !ctrl) {
+        /* Alt+I: file information for the selected file. */
+        show_browser_fileinfo();
         return;
     }
     if (ev->keycode == KB_KEY_F2 || (ch == 'r' && alt && !ctrl)) {

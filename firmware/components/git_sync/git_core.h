@@ -270,6 +270,13 @@ esp_err_t git_merge_trees_flat(const git_oid *base,
                                git_merge_path_result **out, int *out_count,
                                int *out_nconflicts);
 
+/* Count the lines added to and deleted from `a` to get `b` (an LCS
+ * line diff, as `git diff --numstat` reports). Above the merge size
+ * limit the whole changed region counts as deleted + added. */
+esp_err_t git_diff_line_counts(const char *a, size_t a_len,
+                               const char *b, size_t b_len,
+                               int *added, int *deleted);
+
 #ifdef __cplusplus
 }
 #endif

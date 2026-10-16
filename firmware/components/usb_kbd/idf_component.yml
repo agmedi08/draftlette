@@ -1,11 +1,13 @@
 ## Pulls in the USB HID Host driver (boot keyboard / mouse / generic
-## reports). Gated to ESP32-P4: this component is currently only
-## wired in for the M5Stack Tab5 build path, whose USB-A connector
-## is the only USB host port across the supported devices.
+## reports), only for boards with a USB host keyboard port
+## (CONFIG_DRAFTLING_HAS_USB_HOST): the M5Stack Tab5 (ESP32-P4) and the
+## MicroJournal Rev 5 (ESP32-S3 native USB-OTG). The rule tests the
+## int mirror DRAFTLING_USB_HOST_DEP (see main/Kconfig.projbuild), not
+## the bool itself, which sdkconfig.json omits when it is n.
 dependencies:
   idf:
     version: ">=5.5"
   espressif/usb_host_hid:
     version: "^1.0.1"
     rules:
-      - if: "target == esp32p4"
+      - if: "$CONFIG{DRAFTLING_USB_HOST_DEP} == 1"
