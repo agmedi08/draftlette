@@ -43,6 +43,7 @@ load the firmware quickly without having to compile it.
   * Waveshare ESP32-S3-Touch-LCD-7 
   * Waveshare ESP32-S3-LCD-3.16
   * MicroJournal Rev 5 writerdeck (ESP32-S3, ILI9341)
+  * NiceMCU-C5E-DEV_2.8IPS (ESP32-C5, 2.8" color LCD)
   * M5Stack Tab5 (no web flasher support, as internal firmware needs an upgrade too)
 
 

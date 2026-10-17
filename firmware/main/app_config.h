@@ -99,6 +99,8 @@
 #include "boards/seeed_reterminal_sticky.h"
 #elif defined(CONFIG_DRAFTLING_MODEL_M5STACK_PAPERMONO)
 #include "boards/m5stack_papermono.h"
+#elif defined(CONFIG_DRAFTLING_MODEL_NICEMCU_C5_28IPS)
+#include "boards/nicemcu_c5_28ips.h"
 #else
 #error "No hardware model selected. Run idf.py menuconfig and choose a model."
 #endif

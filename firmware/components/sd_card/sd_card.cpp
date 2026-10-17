@@ -11,10 +11,13 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
+#include <soc/soc_caps.h>
 #include <esp_vfs_fat.h>
 #include <diskio_sdmmc.h>
 #include <sdmmc_cmd.h>
+#if SOC_SDMMC_HOST_SUPPORTED
 #include <driver/sdmmc_host.h>
+#endif
 #include <driver/sdspi_host.h>
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
@@ -37,6 +40,7 @@ static bool s_spi_bus_owned = false;
 static spi_device_handle_t s_keepalive_dev = NULL;
 #endif
 
+#if SOC_SDMMC_HOST_SUPPORTED
 extern "C" esp_err_t sd_card_init(int clk_pin, int cmd_pin, int d0_pin, const char *mount_point)
 {
     strncpy(s_mount, mount_point, sizeof(s_mount) - 1);
@@ -63,6 +67,17 @@ extern "C" esp_err_t sd_card_init(int clk_pin, int cmd_pin, int d0_pin, const ch
     ESP_LOGI(TAG, "SD card mounted at %s", s_mount);
     return ESP_OK;
 }
+#else
+/* Chips without an SDMMC host (ESP32-C5) mount the card over SPI only
+ * (sd_card_init_spi()); no board on them selects
+ * CONFIG_DRAFTLING_SD_SDMMC, so this stub only keeps the API linkable. */
+extern "C" esp_err_t sd_card_init(int clk_pin, int cmd_pin, int d0_pin, const char *mount_point)
+{
+    (void)clk_pin; (void)cmd_pin; (void)d0_pin; (void)mount_point;
+    ESP_LOGE(TAG, "SDMMC host not available on this chip");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+#endif
 
 extern "C" esp_err_t sd_card_init_spi(int spi_host, int miso, int mosi, int sck,
                                       int cs, int enable_gpio,

@@ -1,0 +1,13 @@
+# CMakePresets.json board defaults: NiceMCU-C5E-DEV_2.8IPS
+# Sets the hardware model and IDF target used by the "nicemcu_c5_28ips" preset.
+
+CONFIG_IDF_TARGET="esp32c5"
+CONFIG_DRAFTLING_MODEL_NICEMCU_C5_28IPS=y
+
+# The console is UART0, which the board routes to its CH340C USB-to-UART
+# bridge (the "UART" USB-C port). The MicroSD chip-select sits on the
+# ESP32-C5's native USB data pins (GPIO13 / GPIO14), which the firmware
+# drives as plain GPIOs, so the native USB-Serial/JTAG port must not be
+# used as a second console output.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

@@ -42,6 +42,10 @@ typedef struct {
     int intr;           /* INT GPIO, -1 if not wired */
     uint8_t i2c_addr;   /* 7-bit I2C address (0x3B for AXS5106L,
                          * 0x5D primary / 0x14 backup for GT911). */
+    /* Second 7-bit address tried when nothing answers at i2c_addr
+     * (FT6336U-family driver only), for boards that ship with one of
+     * two controllers sharing the same register layout. 0 = none. */
+    uint8_t i2c_addr_alt;
     int i2c_port;       /* 0 or 1 (I2C_NUM_0 / I2C_NUM_1) */
     uint32_t i2c_hz;    /* I2C clock, typically 400 kHz */
 

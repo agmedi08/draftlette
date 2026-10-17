@@ -1,6 +1,6 @@
 #include "sdkconfig.h"
 #if defined(CONFIG_DRAFTLING_DISPLAY_ILI9341) || defined(CONFIG_DRAFTLING_DISPLAY_ST7796) || \
-    defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
+    defined(CONFIG_DRAFTLING_DISPLAY_ST7365) || defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
 
 /*
  * Shared 4-wire SPI TFT backend for the Freenove FNK0104 family's
@@ -38,6 +38,17 @@
  * (ESP32_Display_Panel board file BOARD_VIEWE_UEDX32480035E_WB_A.h in
  * https://github.com/VIEWESMART/UEDX24320028ESP32-2.8inch-Touch-Display),
  * which the straps and init table here follow. Tested on hardware.
+ *
+ * It also drives the ST7789P3 2.8" 240x320 IPS panel of the
+ * NiceMCU-C5E-DEV_2.8IPS (CONFIG_DRAFTLING_DISPLAY_ST7789), with the
+ * init sequence of the vendor's Arduino example (Adafruit_ST7789
+ * init(240, 320)). That board's ESP32-C5 has a single general-purpose
+ * SPI controller, needed for its MicroSD slot on other pins, so with
+ * CONFIG_DRAFTLING_LCD_BUS_PARLIO the panel IO is created on the
+ * PARLIO peripheral in 1-bit SPI mode (esp_lcd_new_panel_io_parl)
+ * instead of a GP-SPI host; the rest of the backend is unchanged,
+ * since both panel IOs implement the same tx_param / tx_color calls.
+ * Tested on hardware (NiceMCU).
  */
 
 #include <cstdio>
@@ -50,6 +61,9 @@
 #include <driver/spi_master.h>
 #include <driver/ledc.h>
 #include <esp_lcd_panel_io.h>
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+#include <esp_lcd_io_parl.h>
+#endif
 
 #include "display.h"
 #include "display_margins.h"
@@ -124,6 +138,20 @@ static uint8_t *s_tx_buf = NULL;
  * always taken. */
 #define DMA_ALIGN_BYTES 64
 
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+/* On the PARLIO bus (ESP32-C5) the pixels are streamed through two
+ * small bounce buffers in internal RAM instead of being DMA'd from a
+ * PSRAM copy of the dirty rectangle. A 150 KB PARLIO transfer reading
+ * PSRAM starved the SPI DMA of the MicroSD card on the same chip:
+ * SD writes overlapping a screen update (e.g. while formatting, with
+ * the busy pop-up being drawn) broke off and left the card wedged
+ * until a power cycle. Each piece is sent with RAMWR (first) or RAMWRC
+ * (0x3C, memory write continue); this also keeps every transfer far
+ * below the PARLIO TX length counter's 19-bit limit. */
+#define PARLIO_CHUNK_BYTES 4096
+static uint8_t *s_bounce[2] = { NULL, NULL };
+#endif
+
 /* Last user-requested backlight percent, cached so display_sleep() /
  * display_wake() can restore the brightness after blanking the panel
  * (mirrors the same cache in display_axs15231b.cpp). Initialised to
@@ -137,6 +165,24 @@ static void send_command(uint8_t cmd)
     esp_lcd_panel_io_tx_param(s_io_handle, cmd, NULL, 0);
 }
 
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+/* The PARLIO panel IO's tx_param() always sends a command byte first:
+ * unlike the SPI panel IO it has no "-1 = parameters only" case, so a
+ * separate parameter write would go out as command 0xFF and the real
+ * command would get no parameters (on the NiceMCU board MADCTL and the
+ * CASET/RASET window never took effect: a portrait, smeared image).
+ * Send the command and its parameters in one call instead. The
+ * parameters are copied to RAM first: that panel IO DMAs straight from
+ * the caller's buffer, while the init tables are const data in flash,
+ * and IDF's own panel drivers always pass RAM buffers there. */
+static void send_cmd_data(uint8_t cmd, const uint8_t *data, size_t n)
+{
+    uint8_t buf[32];
+    if (n > sizeof(buf)) n = sizeof(buf); /* longest table here is 15 */
+    if (n > 0) memcpy(buf, data, n);
+    esp_lcd_panel_io_tx_param(s_io_handle, cmd, n ? buf : NULL, n);
+}
+#else
 static void send_data(const uint8_t *data, size_t n)
 {
     esp_lcd_panel_io_tx_param(s_io_handle, -1, data, n);
@@ -147,6 +193,7 @@ static void send_cmd_data(uint8_t cmd, const uint8_t *data, size_t n)
     send_command(cmd);
     if (n > 0) send_data(data, n);
 }
+#endif
 
 extern "C" void display_spi_tft_config(const display_spi_tft_config_t *cfg)
 {
@@ -289,6 +336,44 @@ static void ili9341_init_sequence(void)
     send_command(0x11); /* SLPOUT */
     vTaskDelay(pdMS_TO_TICKS(150));
     send_command(0x29); /* DISPON */
+}
+#endif
+
+#if defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
+/* MADCTL for the ST7789 landscape orientation: Adafruit_ST7789
+ * rotation 1 (MY | MV, RGB order), a quarter turn clockwise from the
+ * vendor example's upright portrait rotation 0 (MX | MY). Unlike the
+ * ILI9341 panels above, the ST7789 takes RGB order (BGR bit clear).
+ * If the image comes out upside-down on a real board, the Settings
+ * "Display upside down" option turns it; a mirrored image would need
+ * 0x60 (MX | MV) here instead. */
+#define ST7789_MADCTL_LANDSCAPE  0xA0
+
+static void st7789_init_sequence(void)
+{
+    /* Same sequence as Adafruit_ST7789::init() (generic_st7789 table),
+     * which the vendor's example uses on this panel. RST is tied to
+     * the chip's EN net, so SWRESET is all the host can send. */
+    panel_hw_reset();
+    send_command(0x01); /* SWRESET */
+    vTaskDelay(pdMS_TO_TICKS(150));
+    send_command(0x11); /* SLPOUT */
+    vTaskDelay(pdMS_TO_TICKS(120));
+
+    static const uint8_t colmod[] = {0x55};
+    static const uint8_t madctl[] = {ST7789_MADCTL_LANDSCAPE};
+    send_cmd_data(0x3A, colmod, sizeof(colmod));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    send_cmd_data(0x36, madctl, sizeof(madctl));
+
+    /* The IPS panel is "normally black": INVON makes RGB565 colors
+     * come out as intended (Adafruit sends it for every ST7789). */
+    send_command(0x21); /* INVON */
+    vTaskDelay(pdMS_TO_TICKS(10));
+    send_command(0x13); /* NORON */
+    vTaskDelay(pdMS_TO_TICKS(10));
+    send_command(0x29); /* DISPON */
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 #endif
 
@@ -451,6 +536,33 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
         }
     }
 
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+    /* PARLIO TX in 1-bit mode: data line 0 is MOSI, the "valid"
+     * signal (active low) is CS, DC is a plain GPIO toggled by the
+     * panel IO. Data shifts out on the falling clock edge (SPI mode
+     * 0). Unused data lines must be GPIO_NUM_NC, not 0. */
+    {
+        esp_lcd_panel_io_parl_config_t io_cfg = {};
+        io_cfg.dc_gpio_num  = (gpio_num_t)s_cfg.dc;
+        io_cfg.clk_gpio_num = (gpio_num_t)s_cfg.sck;
+        io_cfg.cs_gpio_num  = (gpio_num_t)s_cfg.cs;
+        for (int i = 0; i < ESP_PARLIO_LCD_WIDTH_MAX; i++) {
+            io_cfg.data_gpio_nums[i] = GPIO_NUM_NC;
+        }
+        io_cfg.data_gpio_nums[0]  = (gpio_num_t)s_cfg.mosi;
+        io_cfg.data_width         = 1;
+        io_cfg.pclk_hz            = s_cfg.spi_clock_hz;
+        io_cfg.clk_src            = PARLIO_CLK_SRC_DEFAULT;
+        io_cfg.max_transfer_bytes = PARLIO_CHUNK_BYTES;
+        io_cfg.dma_burst_size     = 32;
+        io_cfg.trans_queue_depth  = 10;
+        io_cfg.lcd_cmd_bits       = 8;
+        io_cfg.lcd_param_bits     = 8;
+        io_cfg.dc_levels.dc_cmd_level  = 0;
+        io_cfg.dc_levels.dc_data_level = 1;
+        ESP_ERROR_CHECK(esp_lcd_new_panel_io_parl(&io_cfg, &s_io_handle));
+    }
+#else
     spi_bus_config_t bus_cfg = {};
     bus_cfg.miso_io_num   = s_cfg.miso;
     bus_cfg.mosi_io_num   = s_cfg.mosi;
@@ -476,6 +588,7 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
      * pressure. */
     io_cfg.flags.psram_dma_direct = 1;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)FNK_SPI_HOST, &io_cfg, &s_io_handle));
+#endif /* CONFIG_DRAFTLING_LCD_BUS_PARLIO */
 
     s_fb_pixels = (size_t)width * height;
     s_fb = (uint16_t *)heap_caps_malloc(s_fb_pixels * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
@@ -485,14 +598,25 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
      * copy for a misaligned chunk. */
     size_t tx_buf_size = (s_fb_pixels * sizeof(uint16_t) + DMA_ALIGN_BYTES - 1) &
                          ~(size_t)(DMA_ALIGN_BYTES - 1);
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+    (void)tx_buf_size;
+    for (int i = 0; i < 2; i++) {
+        s_bounce[i] = (uint8_t *)heap_caps_aligned_alloc(
+            DMA_ALIGN_BYTES, PARLIO_CHUNK_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    }
+    assert(s_fb && s_bounce[0] && s_bounce[1]);
+#else
     s_tx_buf = (uint8_t *)heap_caps_aligned_alloc(DMA_ALIGN_BYTES, tx_buf_size, MALLOC_CAP_SPIRAM);
     assert(s_fb && s_tx_buf);
+#endif
     memset(s_fb, 0, s_fb_pixels * sizeof(uint16_t));
 
     backlight_pwm_init();
 
 #if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
     st7365_init_sequence();
+#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
+    st7789_init_sequence();
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
     st7796_init_sequence();
 #else
@@ -605,8 +729,44 @@ extern "C" void display_flush(void)
     int h = y2 - y1 + 1;
 
     set_addr_window(x1, y1, w, h);
-    send_command(0x2C); /* RAMWR */
+#if !defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+    send_command(0x2C); /* RAMWR (PARLIO sends it with the first piece) */
+#endif
 
+#if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
+    /* Fill one bounce buffer while the previous one is on the wire:
+     * tx_color() with a command first waits for the earlier piece, so
+     * by the time a buffer is refilled (two pieces later) its transfer
+     * has finished. */
+    {
+        int which = 0;
+        size_t fill = 0;
+        bool first = true;
+        uint8_t *dst = s_bounce[which];
+        for (int row = 0; row < h; row++) {
+            const uint16_t *src = s_fb + (size_t)(y1 + row) * s_width + x1;
+            for (int col = 0; col < w; col++) {
+                uint16_t px = src[col];
+                dst[fill++] = (uint8_t)(px >> 8);
+                dst[fill++] = (uint8_t)(px & 0xFF);
+                bool last = (row == h - 1) && (col == w - 1);
+                if (fill == PARLIO_CHUNK_BYTES || last) {
+                    esp_err_t ret = esp_lcd_panel_io_tx_color(
+                        s_io_handle, first ? 0x2C : 0x3C, dst, fill);
+                    if (ret != ESP_OK) {
+                        ESP_LOGW(TAG, "tx_color failed (%s) in %dx%d flush",
+                                 esp_err_to_name(ret), w, h);
+                        return;
+                    }
+                    first = false;
+                    which ^= 1;
+                    dst = s_bounce[which];
+                    fill = 0;
+                }
+            }
+        }
+    }
+#else
     uint8_t *dst = s_tx_buf;
     for (int row = 0; row < h; row++) {
         const uint16_t *src = s_fb + (size_t)(y1 + row) * s_width + x1;
@@ -620,6 +780,7 @@ extern "C" void display_flush(void)
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "tx_color failed (%s), dropped %dx%d flush", esp_err_to_name(ret), w, h);
     }
+#endif
 }
 
 extern "C" void display_full_refresh(void)
@@ -674,9 +835,25 @@ extern "C" void display_wake(void)
 extern "C" void display_deep_sleep_prepare(void)
 {
     display_set_backlight(0);
+#if defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
+    /* The NiceMCU board keeps the panel powered through deep sleep and
+     * wakes by a full reset (which re-runs the init sequence), so put
+     * the controller to sleep as well to cut its draw. */
+    if (!s_panel_asleep) {
+        send_command(0x28); /* DISPOFF */
+        send_command(0x10); /* SLPIN */
+        s_panel_asleep = true;
+    }
+#endif
     if (s_cfg.bl >= 0) {
         gpio_hold_en((gpio_num_t)s_cfg.bl);
+#if !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP
+        /* Chips without per-pad deep-sleep hold (ESP32-S3) need the
+         * global digital-pad hold as well; on the ESP32-C5,
+         * gpio_hold_en() alone holds the pad and this call does not
+         * exist. */
         gpio_deep_sleep_hold_en();
+#endif
     }
 }
 
@@ -692,9 +869,11 @@ const char *display_controller_name(void)
     return "ST7796";
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
     return "ST7365";
+#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
+    return "ST7789";
 #else
     return "ILI9341";
 #endif
 }
 
-#endif /* CONFIG_DRAFTLING_DISPLAY_ILI9341 || CONFIG_DRAFTLING_DISPLAY_ST7796 || CONFIG_DRAFTLING_DISPLAY_ST7365 */
+#endif /* CONFIG_DRAFTLING_DISPLAY_ILI9341 || _ST7796 || _ST7365 || _ST7789 */

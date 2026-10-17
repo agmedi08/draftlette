@@ -5,7 +5,7 @@
 ## epdiy-based backends (LilyGO T5 E-Paper S3 Pro / Pro Lite via
 ## the built-in epd_board_v7, M5Stack PaperS3 via the in-tree
 ## epd_board_papers3.c) depend on the vroland/epdiy managed
-## component, gated on `target != esp32p4` because epdiy ships
+## component, gated on `target == esp32s3` because epdiy ships
 ## Xtensa-only LX6/LX7 board headers.
 ##
 ## See:
@@ -37,9 +37,11 @@ dependencies:
   ##
   ## epdiy only supports Xtensa targets (LX6/LX7); its board headers
   ## include xtensa/core-macros.h which does not exist in the RISC-V
-  ## toolchain used for ESP32-P4. Exclude the dependency on ESP32-P4
-  ## (M5Stack Tab5) so that build does not pull it in and fail to
-  ## compile epd_board.h. display_epdiy.cpp is wrapped in
+  ## toolchain used for ESP32-P4 / ESP32-C5, and epdiy 2.1.3 declares
+  ## no support for esp32c5 at all (the component manager rejects the
+  ## build). Only ESP32-S3 boards use it, so pull it in only there --
+  ## the M5Stack Tab5 (ESP32-P4) and the NiceMCU-C5E-DEV_2.8IPS
+  ## (ESP32-C5) builds skip it. display_epdiy.cpp is wrapped in
   ## `#if CONFIG_DRAFTLING_DISPLAY_EPDIY` so skipping the dep on
   ## non-epdiy targets is sufficient.
   vroland/epdiy:
@@ -47,7 +49,7 @@ dependencies:
     version: "2.1.3"
     rules:
       - if: "idf_version >=5.3.0"
-      - if: "target != esp32p4"
+      - if: "target == esp32s3"
     require: public
   ## espressif/m5stack_tab5 BSP, pulled in only for the ESP32-P4
   ## M5Stack Tab5 build. Handles MIPI-DSI PHY LDO power-up,

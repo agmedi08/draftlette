@@ -370,6 +370,30 @@ config DRAFTLING_MODEL_M5STACK_PAPERMONO
         MIT-licensed M5GFX, M5PM1, M5IOE1 and M5PaperMono-PowerDemo
         sources.
 
+config DRAFTLING_MODEL_NICEMCU_C5_28IPS
+    bool "NiceMCU-C5E-DEV_2.8IPS (ESP32-C5, ST7789, 2.8\" color LCD, 320x240, touch)"
+    depends on IDF_TARGET_ESP32C5
+    help
+        NiceMCU-C5E-DEV_2.8IPS (also sold as NiceMCU-C5-2.8IPS):
+        XH-C5E_N16R8 module (ESP32-C5, 16 MB flash, 8 MB PSRAM) with a
+        2.8" 240x320 IPS panel (ST7789P3, write-only SPI) rendered
+        landscape at 320x240, a capacitive touch controller on I2C
+        (CST816D at 0x15 per the vendor's example, FT6336G at 0x38 per
+        its manual; both are probed), a MicroSD slot on SPI and a
+        CH340C USB-to-UART bridge for flashing and the console.
+
+        The ESP32-C5 has a single general-purpose SPI controller, and
+        the LCD and the MicroSD slot are on different pins, so the LCD
+        is driven by the PARLIO peripheral in 1-bit SPI mode
+        (DRAFTLING_LCD_BUS_PARLIO) and SPI2 is left to the SD card.
+        The MicroSD chip-select shares a pin with the chip's native
+        USB port, so the native USB-C port is not usable while the
+        firmware runs; use the CH340 USB-C port. No battery monitor.
+        GPIO28 (the BOOT / user button) cannot wake the ESP32-C5 from
+        deep sleep (only GPIO0-6 can), so the device is woken with the
+        RESET button. Tested on physical hardware.
+        See https://github.com/NiceMCU-01/NiceMCU-C5-2.8IPS
+
 endchoice
 
 # ---- Derived: display category (driven by hardware-model choice) ----
@@ -392,6 +416,7 @@ config DRAFTLING_DISPLAY_COLOR
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104S
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104N
     default y if DRAFTLING_MODEL_MICROJOURNAL_REV5
+    default y if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default y if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
     default n
 
@@ -533,6 +558,27 @@ config DRAFTLING_DISPLAY_ST77922
 config DRAFTLING_DISPLAY_ST7365
     bool
     default y if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
+    default n
+
+# DRAFTLING_DISPLAY_ST7789 is set automatically when the selected
+# board uses an ST7789 SPI color LCD (NiceMCU-C5E-DEV_2.8IPS: ST7789P3,
+# 2.8" 240x320 IPS panel). Same MIPI-DCS command set and RGB565
+# pipeline as DRAFTLING_DISPLAY_ILI9341; handled by
+# components/display/display_ili9341.cpp with the ST7789 init sequence.
+config DRAFTLING_DISPLAY_ST7789
+    bool
+    default y if DRAFTLING_MODEL_NICEMCU_C5_28IPS
+    default n
+
+# DRAFTLING_LCD_BUS_PARLIO makes components/display/display_ili9341.cpp
+# send its SPI traffic through the PARLIO TX peripheral in 1-bit mode
+# (esp_lcd_new_panel_io_parl) instead of a GP-SPI host. For chips with
+# only one general-purpose SPI controller (ESP32-C5), whose SPI2 is
+# needed for a MicroSD slot on a separate set of pins.
+config DRAFTLING_LCD_BUS_PARLIO
+    bool
+    depends on SOC_PARLIO_LCD_SUPPORTED
+    default y if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default n
 
 # DRAFTLING_DISPLAY_CAN_ROTATE enables a runtime "Rotate 180" entry in
@@ -716,6 +762,7 @@ config DRAFTLING_DISPLAY_HAS_BACKLIGHT
     default y if DRAFTLING_DISPLAY_ILI9341 && !DRAFTLING_MODEL_MICROJOURNAL_REV5
     default y if DRAFTLING_DISPLAY_ST7796
     default y if DRAFTLING_DISPLAY_ST7365
+    default y if DRAFTLING_DISPLAY_ST7789
     default y if DRAFTLING_DISPLAY_ST77922
     # LilyGO T5 E-Paper S3 Pro / Pro Lite carry a controllable white
     # front-light edge-lit LED on GPIO 11 (BOARD_BL_EN in the LilyGO
@@ -1233,6 +1280,12 @@ config DRAFTLING_WAKEUP_GPIO
     default 4  if DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY
     # M5Stack PaperMono: Button A on GPIO2 (active-low, RTC-capable).
     default 2  if DRAFTLING_MODEL_M5STACK_PAPERMONO
+    # NiceMCU-C5E-DEV_2.8IPS: BOOT / user button on GPIO28 (active-low,
+    # external 10K pull-up). Only polled for the 2 s "forget keyboards"
+    # hold: the ESP32-C5 can wake from deep sleep on GPIO0-6 only and
+    # has no EXT0, so standby arms no GPIO wake and the RESET button
+    # wakes the device.
+    default 28 if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default 0
 
 # DRAFTLING_SLEEP_BUTTON_GPIO names a second, board-specific GPIO
@@ -1313,6 +1366,7 @@ config DRAFTLING_TOUCHSCREEN
     # plus a combined Power/confirm button, so touch is the primary
     # way to interact with menus and dialogs without a keyboard.
     default y if DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY
+    default y if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default y if DRAFTLING_MODEL_M5STACK_PAPERMONO
     default n
     help
@@ -1368,6 +1422,9 @@ config DRAFTLING_TOUCH_FT6336U
     # at 0x2E, whose touch-point registers (0x02..0x06) follow the same
     # FocalTech layout (read from 0x00, see touchscreen.cpp).
     default y if DRAFTLING_MODEL_VIEWE_UEDX24320028_UEED035HV
+    # NiceMCU-C5E-DEV_2.8IPS: CST816D (0x15) or FT6336G (0x38); the
+    # CST816D's first touch point sits at the same registers.
+    default y if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default n
     help
         FocalTech FT6336U. Register-addressed protocol: 8-bit
@@ -1448,6 +1505,9 @@ config DRAFTLING_TOUCH_INT_GPIO
     # M5Stack PaperMono: FT6336G INT on GPIO4. Its reset line is on
     # the M5IOE1 expander, pulsed from main.cpp.
     default 4  if DRAFTLING_MODEL_M5STACK_PAPERMONO
+    # NiceMCU-C5E-DEV_2.8IPS: CTP INT on GPIO1. Its RST line is tied
+    # to the chip's EN (reset) net.
+    default 1  if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     default -1
 
 # Touchscreen reset GPIO. The reset line is often tied to the LCD
@@ -1582,6 +1642,9 @@ config DRAFTLING_DISPLAY_WIDTH
     default 800 if DRAFTLING_MODEL_SEEED_RETERMINAL_E1001
     default 800 if DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY
     default 800 if DRAFTLING_MODEL_M5STACK_PAPERMONO
+    # NiceMCU-C5E-DEV_2.8IPS: native 240x320 portrait panel, rendered
+    # landscape by the display backend (MADCTL MV).
+    default 320 if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     help
         Display width in pixels (derived). Driven by the hardware-model
         choice. Must be a multiple of 8 for e-paper backends.
@@ -1612,6 +1675,7 @@ config DRAFTLING_DISPLAY_HEIGHT
     default 480 if DRAFTLING_MODEL_SEEED_RETERMINAL_E1001
     default 480 if DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY
     default 480 if DRAFTLING_MODEL_M5STACK_PAPERMONO
+    default 240 if DRAFTLING_MODEL_NICEMCU_C5_28IPS
     help
         Display height in pixels (derived). Driven by the hardware-model
         choice.
