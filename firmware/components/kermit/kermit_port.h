@@ -25,3 +25,8 @@ int kport_read(uint8_t *buf, size_t max, uint32_t timeout_ms);
 /* Write to the port the last input came from (dropped if no input has
  * arrived yet). */
 void kport_write(const uint8_t *buf, size_t len);
+
+/* 1 while a USB host has configured the TinyUSB serial port (and the
+ * bus is not suspended), 0 otherwise, -1 when the build has no USB
+ * port to watch. */
+int kport_usb_connected(void);

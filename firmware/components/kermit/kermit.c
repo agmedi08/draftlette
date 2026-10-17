@@ -1534,3 +1534,9 @@ bool kermit_server_is_running(void)
 {
     return s_running;
 }
+
+int kermit_server_usb_connected(void)
+{
+    if (!s_running) return 0;
+    return kport_usb_connected();
+}

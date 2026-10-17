@@ -117,8 +117,10 @@ load the firmware quickly without having to compile it.
   device's USB port, which synchronizes the SD card with a Git
   repository without WiFi. Any other Kermit client (e.g. C-Kermit)
   can list, download, upload, rename and delete the files as well.
-  The editor is closed and the device stays awake while it runs;
-  Finished brings everything back. Available only on boards whose
+  The editor is closed while it runs. Until a computer is connected
+  over USB the dialog asks for the cable, and it tells you when the
+  connection is lost; the device stays awake only while a computer is
+  connected. Finished (Enter or Esc) brings everything back. Available only on boards whose
   USB port is wired to the ESP32-S3's native USB (the same boards as
   "SD card via USB" below), not on boards with a USB-to-UART bridge
   such as the Seeed reTerminal E1001 / Sticky and the Elecrow CrowPanel.
@@ -148,7 +150,7 @@ load the firmware quickly without having to compile it.
 
 | Shortcut | Action |
 |----------|--------|
-| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: S Settings, B BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, V Sync via browser, F Format SD card, I Hardware information, H Help |
+| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: S Settings, L BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, B Sync via browser, F Format SD card, I Hardware information, H Help |
 | F10 | Help: the shortcuts of the current screen and, in the editor, the formatting syntax of the document (Markdown or Fountain). Up/Down, PgUp/PgDn (or Ctrl+Up/Down), Home/End scroll; Esc or Enter closes it |
 | Arrow keys | Move cursor |
 | Home / End | Start / end of line |

@@ -4276,7 +4276,7 @@ struct menu_hotkey_t {
 
 static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_SETTINGS,        's', 0  },  /* "Settings..." */
-    { MENU_IDX_BLE_SCAN,        'b', 0  },  /* "BLE: Start scan" */
+    { MENU_IDX_BLE_SCAN,        'l', 1  },  /* "BLE: Start scan" */
     { MENU_IDX_WIFI_CONNECT,    'w', 0  },  /* "WiFi: ..." */
     { MENU_IDX_WIFI_NEW,        'n', 6  },  /* "WiFi: New connection..." */
     { MENU_IDX_WIFI_DISCONNECT, 'd', 6  },  /* "WiFi: Disconnect" */
@@ -4287,7 +4287,7 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_USB_MSC,         'u', 12 },  /* "SD card via USB: ..." */
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
-    { MENU_IDX_KERMIT,          'v', 5  },  /* "Sync via browser..." */
+    { MENU_IDX_KERMIT,          'b', 9  },  /* "Sync via browser..." */
 #endif
     { MENU_IDX_FORMAT_SD,       'f', 0  },  /* "Format SD card..." */
     { MENU_IDX_HWINFO,          'i', 9  },  /* "Hardware information" */
@@ -5523,7 +5523,8 @@ static void handle_msg_popup_key(const kb_event_t *ev)
 {
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (s_msg_kermit) {
-        if (ev->keycode == KB_KEY_ENTER) kermit_finish();
+        if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
+            kermit_finish();
         return;
     }
 #endif
@@ -5815,14 +5816,92 @@ static void close_usbmsc_picker(void)
  * saved and closed, the editor is left for the file browser, and the
  * "Sync via browser" dialog (the message pop-up with s_msg_kermit set)
  * tells the user to open the Draftbridge web page. The dialog is modal
- * for the whole session and the device does not go to sleep; Finished
- * stops the server. */
+ * for the whole session; Finished (Enter / Esc / a tap) stops the
+ * server.
+ *
+ * s_kermit_usb_timer watches the USB connection (kermit_usb_poll_cb()):
+ * until a computer has enumerated the server's USB serial port the
+ * dialog asks the user to plug the cable in, and when the connection
+ * goes away it says so. The device stays awake only while a computer
+ * is connected; otherwise the normal inactivity sleep applies. */
 
 #define KERMIT_BRIDGE_TEXT \
     "On a computer connected to this device's USB port, open " \
     "https://bridge.draftling.art/ in Chrome, Edge or Opera and follow " \
     "the instructions there. Select Finished when the synchronization " \
     "is complete."
+
+#define KERMIT_STARTING_TEXT "Starting the file server..."
+
+#define KERMIT_CONNECT_TEXT \
+    "Connect this device to a computer with a USB cable."
+
+#define KERMIT_LOST_TEXT \
+    "The USB connection to the computer was lost. Connect the cable " \
+    "again to continue, or select Finished."
+
+/* Time a computer gets to enumerate the USB serial port after the
+ * server starts before the dialog asks for the cable. */
+#define KERMIT_USB_GRACE_MS  3000
+#define KERMIT_USB_POLL_MS   500
+
+enum kermit_usb_state_t {
+    KUSB_STARTING,    /* server just started, waiting for enumeration */
+    KUSB_WAITING,     /* never connected: asking for the cable */
+    KUSB_CONNECTED,
+    KUSB_LOST,        /* was connected, now gone */
+};
+static kermit_usb_state_t s_kermit_usb_state = KUSB_STARTING;
+static lv_timer_t *s_kermit_usb_timer = NULL;
+static uint32_t    s_kermit_start_ms  = 0;
+
+static void kermit_set_dialog_text(const char *text)
+{
+    lv_label_set_text(s_msg_text_lbl, text);
+    lv_obj_update_layout(s_msg_panel);
+    lv_obj_align(s_msg_panel, LV_ALIGN_CENTER, 0, 0);
+}
+
+static void kermit_set_usb_state(kermit_usb_state_t st)
+{
+    if (st == s_kermit_usb_state) return;
+    s_kermit_usb_state = st;
+    /* Stay awake only while a computer can talk to the server. */
+    standby_set_inhibit(st == KUSB_CONNECTED);
+    switch (st) {
+    case KUSB_CONNECTED:
+        kermit_set_dialog_text(KERMIT_BRIDGE_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Finished");
+        break;
+    case KUSB_WAITING:
+        kermit_set_dialog_text(KERMIT_CONNECT_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Cancel");
+        break;
+    case KUSB_LOST:
+        kermit_set_dialog_text(KERMIT_LOST_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Finished");
+        break;
+    default:
+        break;
+    }
+}
+
+/* LVGL timer: follow the USB connection while the dialog is up. */
+static void kermit_usb_poll_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_msg_kermit) return;
+    int c = kermit_server_usb_connected();
+    if (c != 0) {
+        /* -1: no USB port to watch (UART only) -- assume a client. */
+        kermit_set_usb_state(KUSB_CONNECTED);
+    } else if (s_kermit_usb_state == KUSB_CONNECTED) {
+        kermit_set_usb_state(KUSB_LOST);
+    } else if (s_kermit_usb_state == KUSB_STARTING &&
+               lv_tick_elaps(s_kermit_start_ms) >= KERMIT_USB_GRACE_MS) {
+        kermit_set_usb_state(KUSB_WAITING);
+    }
+}
 
 /* Runs on the Kermit server task. A short lock timeout: Stop waits for
  * that task while holding the LVGL lock, and a dropped progress line
@@ -5831,12 +5910,10 @@ static void kermit_status_cb(const char *msg, bool files_changed)
 {
     (void)files_changed;   /* the file list is refreshed on Finished */
     if (!draftling_lvgl_port_lock(200)) return;
-    if (s_msg_kermit) {
+    if (s_msg_kermit && s_kermit_usb_state == KUSB_CONNECTED) {
         char buf[sizeof(KERMIT_BRIDGE_TEXT) + 96];
         snprintf(buf, sizeof(buf), KERMIT_BRIDGE_TEXT "\n\n%s", msg);
-        lv_label_set_text(s_msg_text_lbl, buf);
-        lv_obj_update_layout(s_msg_panel);
-        lv_obj_align(s_msg_panel, LV_ALIGN_CENTER, 0, 0);
+        kermit_set_dialog_text(buf);
     }
     draftling_lvgl_port_unlock();
 }
@@ -5906,16 +5983,25 @@ static void kermit_start(void)
         editor_ui_set_status(buf);
         return;
     }
-    standby_set_inhibit(true);
     close_menu();
-    show_msg_popup("Sync via browser", KERMIT_BRIDGE_TEXT, false);
+    show_msg_popup("Sync via browser", KERMIT_STARTING_TEXT, false);
     s_msg_kermit = true;
-    lv_label_set_text(s_msg_hint_lbl, "Enter: Finished");
+    lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Cancel");
+    /* Sleep stays allowed until a computer connects. */
+    s_kermit_usb_state = KUSB_STARTING;
+    s_kermit_start_ms = lv_tick_get();
+    if (!s_kermit_usb_timer)
+        s_kermit_usb_timer = lv_timer_create(kermit_usb_poll_cb,
+                                             KERMIT_USB_POLL_MS, NULL);
 }
 
 /* "Finished" in the Sync via browser dialog. */
 static void kermit_finish(void)
 {
+    if (s_kermit_usb_timer) {
+        lv_timer_delete(s_kermit_usb_timer);
+        s_kermit_usb_timer = NULL;
+    }
     close_msg_popup();
     kermit_server_stop();
     standby_set_inhibit(false);

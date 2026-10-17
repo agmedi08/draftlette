@@ -692,7 +692,7 @@ documents back, shows the busy message pop-up and runs `fmt_task()`:
 pointing at the deleted files (open documents, Git repository,
 `git.cfg`).
 
-**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `V`, only
+**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `B`, only
 on boards with `CONFIG_DRAFTLING_HAS_KERMIT`; the rows after it shift up
 elsewhere, like after "SD card via USB"; its label is static) opens a
 Start / Cancel picker rendered into `s_menu_list`, with the question in
@@ -704,17 +704,23 @@ otherwise it saves every modified document, collapses a split, closes
 every titled document (`editor_close_file()` on each, so stale buffers
 cannot be written back over files the client replaces), forces the file
 browser and calls `kermit_server_start()` (see `components/kermit/`).
-On success it calls `standby_set_inhibit(true)` (no sleep of any kind
-during the session) and shows the message pop-up with `s_msg_kermit`
-set: `KERMIT_BRIDGE_TEXT` points the user at https://bridge.draftling.art/
-(github.com/clackups/draftbridge) and the hint reads "Enter: Finished".
-While `s_msg_kermit` is set the pop-up is modal for the whole session:
-Esc is ignored, `show_msg_popup()` refuses to replace it, and Enter or a
-tap calls `kermit_finish()`, which closes it, calls
-`kermit_server_stop()`, clears the standby inhibit and refreshes the
-file list. `kermit_status_cb()` runs on the server task: it takes the
+On success it shows the message pop-up with `s_msg_kermit` set and
+starts `s_kermit_usb_timer` (`kermit_usb_poll_cb()`, every 500 ms),
+which follows `kermit_server_usb_connected()` through
+`kermit_usb_state_t`: `KUSB_STARTING` (a 3 s grace for the computer to
+enumerate the new USB serial port), `KUSB_WAITING` ("connect a USB
+cable"), `KUSB_CONNECTED` (`KERMIT_BRIDGE_TEXT`, which points the user
+at https://bridge.draftling.art/ -- github.com/clackups/draftbridge)
+and `KUSB_LOST` (connection lost). `kermit_set_usb_state()` calls
+`standby_set_inhibit()` with "state is CONNECTED", so the device sleeps
+normally while no computer is connected. While `s_msg_kermit` is set
+the pop-up is modal for the whole session: `show_msg_popup()` refuses
+to replace it, and Enter, Esc or a tap calls `kermit_finish()`, which
+deletes the timer, closes the pop-up, calls `kermit_server_stop()`,
+clears the standby inhibit and refreshes the file list. `kermit_status_cb()` runs on the server task: it takes the
 LVGL lock with a 200 ms timeout (Finished waits for that task while
-holding the lock) and appends the progress line to the dialog text.
+holding the lock) and appends the progress line to the dialog text
+(only in `KUSB_CONNECTED`).
 All of it is compiled out without `CONFIG_DRAFTLING_HAS_KERMIT`.
 `sd_handed_off_msg()` is the single guard for "the SD card belongs to
 someone else" (SD via USB or the Kermit server) used by the editor, both
@@ -1241,7 +1247,11 @@ server still listens on the console UART as well as USB-Serial/JTAG.
   esp_system's start-up code does. Enabling TinyUSB CDC changes
   esp_tinyusb's default descriptors to a CDC + MSC composite, so
   `usb_msc.cpp` now passes its own MSC-only descriptors (PID 0x4002,
-  identical to the previous defaults).
+  identical to the previous defaults). `kport_usb_connected()` reports
+  whether a host is using the TinyUSB port: `tud_mounted() &&
+  !tud_suspended()`. The boards do not sense VBUS, so an unplugged
+  cable shows up as a suspended bus, never as an unmount; a sleeping
+  computer reads as disconnected too.
 - `kermit.c` -- stop-and-wait server (no sliding windows / streaming /
   recovery): long packets (we advertise 9000; the receive check only
   enforces the 9128-byte buffer because C-Kermit's longest packets run a
@@ -1268,7 +1278,7 @@ block checks 1-3, long and short packets, repeat counts on and off,
 in the middle of an upload.
 
 Public API: `kermit_server_start()`, `kermit_server_stop()`,
-`kermit_server_is_running()`.
+`kermit_server_is_running()`, `kermit_server_usb_connected()`.
 
 ### components/sd_card/
 

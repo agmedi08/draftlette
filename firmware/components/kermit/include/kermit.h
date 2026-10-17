@@ -46,6 +46,14 @@ void kermit_server_stop(void);
  * after kermit_server_stop(). */
 bool kermit_server_is_running(void);
 
+/* Whether a computer is connected to the server's USB serial port:
+ * 1 while a USB host has enumerated it and the bus is active, 0 when
+ * the cable is unplugged, the host has not enumerated the port yet
+ * (it takes a moment after kermit_server_start()), the host computer
+ * sleeps, or the server is not running; -1 when the build has no USB
+ * serial port (UART only), so the connection cannot be watched. */
+int kermit_server_usb_connected(void);
+
 #ifdef __cplusplus
 }
 #endif

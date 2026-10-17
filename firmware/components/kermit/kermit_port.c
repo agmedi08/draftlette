@@ -105,6 +105,10 @@ static const char *s_usb_strings[USB_STRID_COUNT] = {
 /* Given by the TinyUSB task when data arrives; port_read() waits on it. */
 static SemaphoreHandle_t s_usb_rx_sem;
 
+/* True while TinyUSB is installed; kport_usb_connected() reads it from
+ * another task. */
+static volatile bool s_usb_up;
+
 static void usb_rx_cb(int itf, cdcacm_event_t *event)
 {
     (void)itf;
@@ -136,14 +140,17 @@ static esp_err_t usb_open(void)
     if (err != ESP_OK) {
         tinyusb_driver_uninstall();
         usb_serial_jtag_hal_phy_set_external(NULL, false);
+        return err;
     }
-    return err;
+    s_usb_up = true;
+    return ESP_OK;
 }
 
 /* Tear TinyUSB down and hand the internal PHY back to USB-Serial/JTAG
  * -- see teardown_locked() in components/usb_msc/usb_msc.cpp. */
 static void usb_close(void)
 {
+    s_usb_up = false;
     tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, pdMS_TO_TICKS(200));
     tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_0);
     tinyusb_driver_uninstall();
@@ -231,6 +238,20 @@ void kport_close(void)
     s_active = -1;
     console_restore();
     ESP_LOGI(TAG, "Kermit server stopped; console output restored");
+}
+
+int kport_usb_connected(void)
+{
+#if defined(KPORT_HAS_USB)
+    /* The board does not sense VBUS, so an unplugged cable shows up as
+     * a suspended bus, not as an unmount: a host is there only while
+     * the device is configured and the bus is not suspended. A
+     * sleeping computer suspends the bus too and reads as gone. */
+    if (!s_usb_up) return 0;
+    return (tud_mounted() && !tud_suspended()) ? 1 : 0;
+#else
+    return -1;
+#endif
 }
 
 static int port_read(int port, uint8_t *buf, size_t max, TickType_t ticks)

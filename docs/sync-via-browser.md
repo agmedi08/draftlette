@@ -16,23 +16,32 @@ that implements the protocol over the browser's Web Serial API.
 
 ## Starting and stopping
 
-1. Press F1, select "Sync via browser..." (letter V) and choose
+1. Press F1, select "Sync via browser..." (letter B) and choose
    **Start** (or **Cancel** to go back to the menu).
 2. Draftling saves every open document, closes the editor and shows
-   the "Sync via browser" dialog. It asks you to open
+   the "Sync via browser" dialog. If no computer is connected to the
+   device's USB port, the dialog first asks you to connect one with a
+   USB cable; as soon as the computer has detected the device, it
+   asks you to open
    <https://bridge.draftling.art/> in Chrome, Edge or Opera on the
    computer connected to the device's USB port and to follow the
    instructions there (the bridge is
    [Draftbridge](https://github.com/clackups/draftbridge)). Any other
    Kermit client works as well. The dialog shows the progress of each
    transfer.
-3. When you are done, select **Finished** in the dialog (Enter, or tap
-   it on a touchscreen). The server stops and the file list is
+3. When you are done, select **Finished** in the dialog (Enter or Esc,
+   or tap it on a touchscreen). The server stops and the file list is
    refreshed with whatever changed.
 
-While the dialog is up, the device does not go to sleep: the standby
-timer, the power button and Ctrl+P are ignored until you select
-Finished. The dialog cannot be closed any other way.
+If the USB connection goes away (the cable is unplugged, or the
+computer goes to sleep), the dialog says so. Plug the cable in again
+to continue, or select Finished.
+
+While a computer is connected, the device does not go to sleep: the
+standby timer, the power button and Ctrl+P are ignored. While no
+computer is connected (before the cable is plugged in, or after the
+connection is lost), the normal standby timeout applies again. The
+dialog cannot be closed except with Finished.
 
 Start is refused while "SD card via USB" or a Git sync is running,
 when no SD card is mounted, and while a new (never saved) document
