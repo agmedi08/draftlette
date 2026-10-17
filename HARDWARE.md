@@ -762,6 +762,11 @@ XH-C5E_N16R8 module: an ESP32-C5 (single-core RISC-V, dual-band
 ESP32-C5 board Draftling supports. Build with the `nicemcu_c5_28ips`
 preset.
 
+Generally, not recommended for new DIY builds: the board is only
+slightly cheaper than the Freenove board, and it does not have the
+battery power input. Also, lack of USB device functionality in
+ESP32-C5 limits the usability.
+
 - **Display**: 2.8" 240x320 IPS panel with an ST7789P3 controller,
   rendered landscape at 320x240. The ESP32-C5 has only one
   general-purpose SPI controller, and the board wires the display and
