@@ -54,7 +54,8 @@ top-level `README.md` / `HARDWARE.md` / `BUILDING.md` / this file.
 ## Project Overview
 
 Draftling is a distraction-free Markdown text editor for ESP32-S3-based
-development boards with reflective LCD displays. It is built with the
+development boards with reflective LCD displays (plus one ESP32-P4 and
+one ESP32-C5 board). It is built with the
 ESP-IDF framework (v6.0.2+) and uses LVGL v9 for the graphical
 interface.
 
@@ -85,6 +86,7 @@ card).
 | Seeed Studio reTerminal E1001 | 7.5-inch e-paper (UC8179), 800x480, no touch |
 | Seeed reTerminal Sticky | 3.97-inch e-paper (SSD1677/SSD2677, auto-detected), 800x480, GT911 touch |
 | M5Stack PaperMono / PaperMono-Lite | 3.97-inch e-paper (SSD1677), 800x480, FT6336G touch |
+| NiceMCU-C5E-DEV_2.8IPS (ESP32-C5) | 2.8-inch ST7789 IPS color LCD over PARLIO, 320x240, CST816D / FT6336G touch |
 
 The Seeed Studio reTerminal E1001 uses a Good Display GDEY075T7 7.5-inch
 monochrome e-paper panel driven by an UltraChip UC8179 controller over
@@ -108,6 +110,20 @@ signal reaches the device. Never pass `SPICOMMON_BUSFLAG_QUAD` (or
 transfers work without it, the flag only adds pin checks. See
 `components/display/display_st77922.cpp`.
 
+The NiceMCU-C5E-DEV_2.8IPS is the only ESP32-C5 board. The C5 has a
+single general-purpose SPI controller (SPI2), and this board puts the
+LCD and the MicroSD slot on different pins, so the LCD is driven by
+the PARLIO peripheral in 1-bit SPI mode (`esp_lcd_new_panel_io_parl()`,
+`CONFIG_DRAFTLING_LCD_BUS_PARLIO`) and SPI2 serves the SD card. Other
+C5 differences handled in shared code: no SDMMC host (`sd_card_init()`
+is a stub there), `gpio_hold_en()` holds a pad through deep sleep on
+its own (`gpio_deep_sleep_hold_en()` does not exist), no EXT0 wake
+and deep-sleep wake only on GPIO0-6 (the board wakes by RESET), the
+`vroland/epdiy` component is pulled in only for `target == esp32s3`,
+and IDF's C5 `BT_CONTROLLER_INIT_CONFIG_DEFAULT()` needs
+`-Wno-missing-field-initializers` in `components/ble_keyboard`. On
+the board, everything is tested on physical hardware.
+
 ## Repository Layout
 
 Paths below are relative to `firmware/` (see the note at the top of
@@ -129,6 +145,8 @@ partitions_seeed_reterminal_sticky.csv  Same dual-OTA layout for the
                             Seeed reTerminal Sticky (32 MB flash)
 sdkconfig.defaults          Common Kconfig defaults for all targets
 sdkconfig.defaults.esp32s3  ESP32-S3-specific defaults (PSRAM, BLE, WiFi)
+sdkconfig.defaults.esp32c5  ESP32-C5-specific defaults (quad PSRAM, BLE,
+                            WiFi)
 sdkconfig.defaults.<board>  Per-board target + hardware-model defaults, one
                             per CMakePresets.json preset (e.g.
                             sdkconfig.defaults.waveshare_rlcd42)
@@ -395,9 +413,27 @@ Per-board display backends behind a single C API:
   backend.
 - **display_ili9341.cpp** -- shared 4-wire SPI backend for the
   ILI9341 (Freenove FNK0104A/B, MicroJournal Rev 5), ST7796 (Freenove
-  FNK0104S) and ST7365 (Viewe UEED035HV) color LCDs, selected by
-  `CONFIG_DRAFTLING_DISPLAY_ILI9341` / `_ST7796` / `_ST7365`, which
-  pick the controller's init sequence. The file holds no board pins:
+  FNK0104S), ST7365 (Viewe UEED035HV) and ST7789 (NiceMCU-C5E-DEV_2.8IPS)
+  color LCDs, selected by `CONFIG_DRAFTLING_DISPLAY_ILI9341` /
+  `_ST7796` / `_ST7365` / `_ST7789`, which pick the controller's init
+  sequence. With `CONFIG_DRAFTLING_LCD_BUS_PARLIO` (NiceMCU, ESP32-C5)
+  the panel IO is created on the PARLIO peripheral in 1-bit SPI mode
+  (`esp_lcd_new_panel_io_parl()`: data line 0 = MOSI, the "valid"
+  signal = CS) instead of a GP-SPI host. That panel IO's `tx_param()`
+  always sends a command byte (it has no `-1` = "parameters only"
+  case, unlike the SPI one), so `send_cmd_data()` sends a command and
+  its parameters in one call there -- separate calls sent the
+  parameters after a bogus 0xFF command, and MADCTL / CASET / RASET
+  never took effect (portrait, smeared image on hardware). Parameters
+  are copied to RAM first (the init tables are const data in flash).
+  A flush is byte-swapped from the PSRAM framebuffer into two 4 KB
+  internal-RAM bounce buffers and sent piece by piece (RAMWR, then
+  RAMWRC 0x3C); there is no PSRAM scratch buffer on this bus. DMA'ing
+  the whole dirty rectangle from PSRAM starved the MicroSD card's SPI
+  DMA: SD writes overlapping a screen update (Format SD card, with its
+  busy pop-up being drawn) broke off and wedged the card until a power
+  cycle (reproduced and fixed on hardware with a concurrent SD / full
+  refresh stress test). The file holds no board pins:
   main.cpp fills a `display_spi_tft_config_t` from the board header's
   `LCD_*` macros (MOSI, MISO, SCK, CS, DC, RST, BL, IM0, IM1, SPI
   clock, backlight PWM frequency; -1 for an unwired pin) and passes it
@@ -1952,17 +1988,44 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   main.cpp (IMU CTRL1 sensorDisable = Power-Down; RTC Control_2
   COF = 111 = CLKOUT off), right after `display_init()`. Tested on
   physical hardware. *Requires ESP32-S3.*
+- **DRAFTLING_MODEL_NICEMCU_C5_28IPS** -- NiceMCU-C5E-DEV_2.8IPS:
+  XH-C5E_N16R8 module (ESP32-C5, 16 MB flash, 8 MB quad PSRAM), 2.8"
+  240x320 ST7789P3 IPS panel (write-only SPI on DC=4, CS=5, SCK=6,
+  MOSI=7, sent through PARLIO -- see "Supported Hardware"), rendered
+  landscape at 320x240 by MADCTL (0xA0, Adafruit_ST7789 rotation 1);
+  the panel's and the touch controller's RST lines are tied to EN.
+  Backlight MOSFET on GPIO25 (PWM, active HIGH). Touch on I2C (SDA=24,
+  SCL=23, INT=1): the vendor's example uses a CST816D at 0x15, its
+  manual lists an FT6336G at 0x38; both share the FocalTech point
+  layout, so the FT6336U driver is used with `TOUCH_I2C_ADDR` 0x15 and
+  `TOUCH_I2C_ADDR_ALT` 0x38 (`touchscreen_config_t::i2c_addr_alt`: the
+  alternate is taken only if it answers and 0x15 does not, since a
+  sleeping CST816D answers neither). MicroSD on SPI2 (MISO=8, SCK=9,
+  MOSI=10, CS=13). The schematic draws CS on the USB_D+ net (GPIO14),
+  but on hardware the card answers only on GPIO13, as the vendor's
+  sketch says. CS must be toggled by sdspi: holding it LOW permanently
+  mounted the card and saved files but made formatting fail ("card is
+  locked"). GPIO13 is the C5's USB D- pin, so the console is UART0
+  through the board's CH340C (`CONFIG_ESP_CONSOLE_SECONDARY_NONE`).
+  BOOT / user button on GPIO28 = `DRAFTLING_WAKEUP_GPIO`, polled for
+  the 2 s forget-keyboards hold only; the C5 cannot wake on it, so
+  standby arms no GPIO wake and RESET wakes the device. WS2812 LED
+  (GPIO27) switched off at boot. No battery monitor. Touch reports in
+  the panel's native portrait frame turned 180 degrees from the
+  vendor's upright portrait: swap + mirror Y (mirror X, as on the
+  FNK0104B, put lower-right taps in the upper-left corner). Tested on
+  physical hardware. *Requires ESP32-C5.*
 
 The hardware-model selection drives two non-prompted `int` symbols
 consumed in `main/app_config.h` as `DISPLAY_WIDTH` / `DISPLAY_HEIGHT`:
 
 - **DRAFTLING_DISPLAY_WIDTH** -- 400 (RLCD), 960 (PaperS3), 320
-  (FNK0104A/B, FNK0104N, Waveshare LCD-3.16), 480 (FNK0104S), 800 (Xteink X4 Pro / X4 Classic,
+  (FNK0104A/B, FNK0104N, Waveshare LCD-3.16, NiceMCU C5 2.8IPS), 480 (FNK0104S), 800 (Xteink X4 Pro / X4 Classic,
   Waveshare ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono),
   792 (Elecrow CrowPanel 5.79").
 - **DRAFTLING_DISPLAY_HEIGHT** -- 300 (RLCD), 540 (PaperS3), 820
   (Waveshare LCD-3.16, FNK0104N), 240
-  (FNK0104A/B), 320 (FNK0104S), 480 (Xteink X4 Pro / X4 Classic,
+  (FNK0104A/B, NiceMCU C5 2.8IPS), 320 (FNK0104S), 480 (Xteink X4 Pro / X4 Classic,
   Waveshare ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono),
   272 (Elecrow CrowPanel 5.79").
 
@@ -2128,14 +2191,16 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_ST7796          | Selects `display_ili9341.cpp` with the ST7796 init sequence | Freenove FNK0104S |
 | DRAFTLING_DISPLAY_ST77922         | Selects `display_st77922.cpp` (ST77922 QSPI panel, native portrait, LVGL port rotates) | Freenove FNK0104N |
 | DRAFTLING_DISPLAY_ST7365          | Selects `display_ili9341.cpp` with Viewe's ST7365 init table (pins, incl. RST and the IM0/IM1 interface-mode straps, come from the board header) | Viewe UEDX24320028E-WB-A + UEED035HV |
+| DRAFTLING_DISPLAY_ST7789          | Selects `display_ili9341.cpp` with the ST7789 init sequence (Adafruit_ST7789's) and RGB-order landscape MADCTL | NiceMCU-C5E-DEV_2.8IPS |
+| DRAFTLING_LCD_BUS_PARLIO          | `display_ili9341.cpp` sends its SPI traffic through PARLIO TX in 1-bit mode (`esp_lcd_new_panel_io_parl()`) instead of a GP-SPI host, leaving the C5's only GP-SPI controller to the SD card | NiceMCU-C5E-DEV_2.8IPS |
 | DRAFTLING_DISPLAY_MIPI_DSI        | Selects `display_mipi_dsi.cpp` (delegates to `espressif/m5stack_tab5` BSP) | M5Stack Tab5 |
 | DRAFTLING_DISPLAY_RGB             | Selects `display_rgb.cpp` (parallel RGB565 via `esp_lcd_new_rgb_panel`) | Sunton 8048S070 / 8048S043, Waveshare Touch-LCD-7, Waveshare LCD-3.16 |
 | DRAFTLING_RGB_PANEL_ST7701        | Switches `display_rgb.cpp` to the ST7701 branch: own pins / timings, direct-GPIO reset, active-low PWM backlight, and the vendor init sequence over a bit-banged 3-wire SPI bus (CS=0/BOOT, SCK=2, SDA=1) that is released afterwards for the BOOT button and the SDMMC slot | Waveshare LCD-3.16 |
 | DRAFTLING_HAS_CH422G              | Enables the `io_expander` component (CH422G I2C IO-expander) and switches `display_rgb.cpp` to the CH422G-based backlight / LCD-reset path instead of a direct GPIO | Waveshare Touch-LCD-7 |
 | DRAFTLING_HAS_M5IOE1              | Compiles in the M5IOE1 IO-expander driver in the `io_expander` component (stubs otherwise) | M5Stack PaperMono |
-| DRAFTLING_DISPLAY_COLOR           | Enables the color-theme picker; PARTIAL render mode in `lvgl_port.cpp` | AXS15231B boards, Tab5, RGB boards, Freenove FNK0104 family, MicroJournal Rev 5 |
+| DRAFTLING_DISPLAY_COLOR           | Enables the color-theme picker; PARTIAL render mode in `lvgl_port.cpp` | AXS15231B boards, Tab5, RGB boards, Freenove FNK0104 family, MicroJournal Rev 5, NiceMCU-C5E-DEV_2.8IPS |
 | DRAFTLING_DISPLAY_TRANSFLECTIVE   | Selects the separate transflective-panel copy of `COLOR_THEMES` in `editor_ui.cpp` (these panels render colors differently) | Viewe UEDX24320028E-WB-A + UEED035HV |
-| DRAFTLING_DISPLAY_HAS_BACKLIGHT   | Adds the "Backlight: NN%" entry to F1 -> Settings, enables the Ctrl+B cycle shortcut, and calls `display_set_backlight()` at boot from NVS -- unless DRAFTLING_DISPLAY_BACKLIGHT_BINARY is also set (see below) | AXS15231B boards, Tab5, LilyGO T5 E-Paper S3 Pro / Pro Lite, RGB boards, Freenove FNK0104 family, Xteink X4 Pro, M5Stack PaperMono |
+| DRAFTLING_DISPLAY_HAS_BACKLIGHT   | Adds the "Backlight: NN%" entry to F1 -> Settings, enables the Ctrl+B cycle shortcut, and calls `display_set_backlight()` at boot from NVS -- unless DRAFTLING_DISPLAY_BACKLIGHT_BINARY is also set (see below) | AXS15231B boards, Tab5, LilyGO T5 E-Paper S3 Pro / Pro Lite, RGB boards, Freenove FNK0104 family, Xteink X4 Pro, M5Stack PaperMono, NiceMCU-C5E-DEV_2.8IPS |
 | DRAFTLING_DISPLAY_BACKLIGHT_BINARY | Suppresses the entire backlight Settings entry / Ctrl+B feature (no PWM dimming is physically possible, so a brightness control would be misleading); the backlight is left at the display backend's own default (on) | Waveshare Touch-LCD-7 (any CH422G board) |
 | DRAFTLING_DISPLAY_HIDPI           | Renders the UI 1:1 with the larger Hack font (instead of upscaling the framebuffer); compiles the `hack_*` font sources and selects the Hack family in `editor_ui.cpp` | PaperS3, LilyGO T5 E-Paper S3 Pro / Pro Lite, Tab5, Sunton 8048S070 / 8048S043, Waveshare Touch-LCD-7, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono |
 | DRAFTLING_HAS_BATTERY             | Creates the battery-percentage status-bar label and its poll timer | RLCD-4.2, PaperS3, Touch-LCD-3.49, T5 E-Paper S3 Pro / Pro Lite, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono |
@@ -2152,7 +2217,7 @@ in C / C++ code:
 | DRAFTLING_SD_SDMMC                | Routes SD init through the on-chip SDMMC peripheral (1-bit) instead of generic SPI | RLCD-4.2, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, M5Stack PaperMono |
 | DRAFTLING_WAKEUP_GPIO             | RTC-capable EXT0 wake-up GPIO; consumed by `components/standby/standby.cpp` | per-model defaults |
 | DRAFTLING_TOUCH_ST77922           | Adds the ST77922 TDDI touch poll routine to `components/touchscreen/touchscreen.cpp` (16-bit register addresses, info at 0x0010, point 0 at 0x0014) | Freenove FNK0104N |
-| DRAFTLING_TOUCH_FT6336U           | Adds the FT6336U poll routine to `components/touchscreen/touchscreen.cpp` (8-bit register protocol) | Freenove FNK0104B / FNK0104S, M5Stack PaperMono (FT6336G) |
+| DRAFTLING_TOUCH_FT6336U           | Adds the FT6336U poll routine to `components/touchscreen/touchscreen.cpp` (8-bit register protocol) | Freenove FNK0104B / FNK0104S, M5Stack PaperMono (FT6336G), NiceMCU-C5E-DEV_2.8IPS (CST816D or FT6336G) |
 
 Components MUST key off these derived symbols; they MUST NOT
 test `DRAFTLING_MODEL_*` directly. Adding a new model means
@@ -2252,7 +2317,7 @@ board (`waveshare_rlcd42`, `m5stack_papers3`, `lilygo_t5_epd_s3_pro`,
 `freenove_fnk0104s`, `freenove_fnk0104n`, `microjournal_rev5`, `viewe_uedx24320028_ueed035hv`, `xteink_x4_pro`, `xteink_x4_classic`,
 `elecrow_crowpanel_579`, `waveshare_epaper_397`,
 `seeed_reterminal_e1001`, `seeed_reterminal_sticky`,
-`m5stack_papermono`). Each
+`m5stack_papermono`, `nicemcu_c5_28ips`). Each
 preset points `SDKCONFIG_DEFAULTS` at `sdkconfig.defaults` plus its own
 `sdkconfig.defaults.<board>` file (which sets `CONFIG_IDF_TARGET` and
 the board's `CONFIG_DRAFTLING_MODEL_*` option), and places `binaryDir` /

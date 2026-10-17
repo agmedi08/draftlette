@@ -216,6 +216,15 @@
                 "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.defaults.m5stack_papermono",
                 "SDKCONFIG": "build/m5stack_papermono/sdkconfig"
             }
+        },
+        {
+            "name": "nicemcu_c5_28ips",
+            "displayName": "NiceMCU-C5E-DEV_2.8IPS (ESP32-C5, 2.8in ST7789, touch)",
+            "binaryDir": "build/nicemcu_c5_28ips",
+            "cacheVariables": {
+                "SDKCONFIG_DEFAULTS": "sdkconfig.defaults;sdkconfig.defaults.nicemcu_c5_28ips",
+                "SDKCONFIG": "build/nicemcu_c5_28ips/sdkconfig"
+            }
         }
     ]
 }

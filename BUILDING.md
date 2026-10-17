@@ -34,7 +34,7 @@ Available preset names: `waveshare_rlcd42`, `m5stack_papers3`,
 `freenove_fnk0104a`, `freenove_fnk0104b`, `freenove_fnk0104s`,
 `microjournal_rev5`, `xteink_x4_pro`, `xteink_x4_classic`, `elecrow_crowpanel_579`,
 `waveshare_epaper_397`, `seeed_reterminal_e1001`,
-`seeed_reterminal_sticky`, `m5stack_papermono`.
+`seeed_reterminal_sticky`, `m5stack_papermono`, `nicemcu_c5_28ips`.
 
 To avoid repeating `--preset` on every command, set the `IDF_PRESET`
 environment variable instead:
@@ -113,7 +113,8 @@ components/
                      PaperS3 + LilyGO T5, AXS15231B QSPI,
                      MIPI-DSI for Tab5, RGB565 parallel for Sunton and
                      Waveshare Touch-LCD-7,
-                     ILI9341/ST7796 SPI for Freenove FNK0104) and
+                     ILI9341/ST7796 SPI for Freenove FNK0104,
+                     ST7789 over PARLIO for NiceMCU C5) and
                      LVGL v9 port
   editor/            Gap-buffer editor, Markdown parser, LVGL UI, menu
   fonts/             Custom LVGL fonts (Latin, Latin-1 Supplement, Cyrillic)

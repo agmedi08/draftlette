@@ -1,7 +1,7 @@
 # Draftling: supported hardware
 
 Draftling currently runs on a number of ESP32-S3 devices and
-development boards, and and one ESP32-P4 device).
+development boards, one ESP32-P4 device and one ESP32-C5 board.
 
 See the [photo gallery](images/README.md) of some of supported
 hardware.
@@ -749,6 +749,46 @@ sources. The touch mapping follows from M5Stack's demos, which compare
 raw touch points directly with their portrait UI, together with M5GFX's
 portrait-to-panel rotation for this board; it is the part most likely
 to need a fix on real hardware.
+
+
+## NiceMCU-C5E-DEV_2.8IPS
+
+Tested on physical hardware.
+
+The [NiceMCU-C5E-DEV_2.8IPS](https://github.com/NiceMCU-01/NiceMCU-C5-2.8IPS)
+(also sold as NiceMCU-C5-2.8IPS) is a small development board with an
+XH-C5E_N16R8 module: an ESP32-C5 (single-core RISC-V, dual-band
+2.4 / 5 GHz Wi-Fi 6, BLE), 16 MB flash and 8 MB PSRAM. It is the only
+ESP32-C5 board Draftling supports. Build with the `nicemcu_c5_28ips`
+preset.
+
+- **Display**: 2.8" 240x320 IPS panel with an ST7789P3 controller,
+  rendered landscape at 320x240. The ESP32-C5 has only one
+  general-purpose SPI controller, and the board wires the display and
+  the MicroSD slot to different pins, so the display is driven by the
+  chip's PARLIO peripheral working as a 1-bit SPI port (DC=4, CS=5,
+  SCK=6, MOSI=7). Backlight on GPIO25, adjustable from F1 -> Settings
+  -> Backlight or with Ctrl+B. If the picture comes out upside down,
+  turn on F1 -> Settings -> Display upside down.
+- **Touch**: capacitive, on I2C (SDA=24, SCL=23, INT=1). The vendor's
+  example talks to a CST816D at address 0x15, while its product manual
+  lists an FT6336G (0x38); the firmware works with either.
+- **MicroSD**: on the SPI controller (MISO=8, SCK=9, MOSI=10, CS=13).
+  The card's chip-select shares GPIO13 with the ESP32-C5's native USB,
+  so the board's native-USB USB-C port does not work while Draftling
+  runs. (The schematic shows CS on GPIO14; on the board it is GPIO13,
+  as the vendor's example says.)
+- **USB**: use the USB-C port connected to the CH340 USB-to-UART chip
+  for flashing and for the serial console. "SD card via USB" and "Sync
+  via browser" are not available on this board.
+- **Buttons**: hold BOOT (GPIO28) for 2 s to forget all paired BLE
+  keyboards. The ESP32-C5 can wake from deep sleep only through GPIO0-6,
+  so after the device goes to sleep, press RESET to wake it.
+- **Other**: the on-board RGB LED is switched off at boot; the buzzer
+  is not used. There is no battery monitor.
+
+Pin numbers come from the vendor's example sketch and the schematic in
+its repository.
 
 
 ## Other hardware

@@ -2608,12 +2608,12 @@ extern "C" void app_main(void)
     ws_lcd316_quiet_i2c_peripherals();
 #endif
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ILI9341) || defined(CONFIG_DRAFTLING_DISPLAY_ST7796) || \
-      defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
+      defined(CONFIG_DRAFTLING_DISPLAY_ST7365) || defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
     /* Freenove FNK0104A/B (ILI9341) / FNK0104S (ST7796) / Viewe
      * UEDX24320028E-WB-A + UEED035HV (ST7365) / MicroJournal Rev 5
-     * (ILI9341). Shared 4-wire SPI TFT backend; the panel wiring comes
-     * from the board header. display_init()'s pin parameters are
-     * ignored. */
+     * (ILI9341) / NiceMCU-C5E-DEV_2.8IPS (ST7789, over PARLIO).
+     * Shared 4-wire SPI TFT backend; the panel wiring comes from the
+     * board header. display_init()'s pin parameters are ignored. */
     {
         display_spi_tft_config_t tft = {};
         tft.mosi         = LCD_MOSI_PIN;
@@ -3365,6 +3365,9 @@ extern "C" void app_main(void)
 #endif
         tcfg.intr     = TOUCH_INT_PIN;
         tcfg.i2c_addr = TOUCH_I2C_ADDR;
+#if defined(TOUCH_I2C_ADDR_ALT)
+        tcfg.i2c_addr_alt = TOUCH_I2C_ADDR_ALT;
+#endif
         tcfg.i2c_port = 0;
         tcfg.i2c_hz   = 400000;
         tcfg.native_width   = TOUCH_NATIVE_W;

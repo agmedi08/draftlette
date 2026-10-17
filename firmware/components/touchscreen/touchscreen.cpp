@@ -822,6 +822,22 @@ extern "C" void touchscreen_init(const touchscreen_config_t *cfg)
     }
 #endif
 
+#if defined(CONFIG_DRAFTLING_TOUCH_FT6336U)
+    /* Boards that ship with either of two controllers sharing the
+     * FocalTech point layout (e.g. a CST816D at 0x15 or an FT6336G at
+     * 0x38) give a second address. Switch to it only when it answers
+     * and the configured one does not: a CST816D in its idle
+     * auto-sleep does not answer either, and wakes on the first
+     * touch, so the configured address stays the default. */
+    if (s_cfg.i2c_addr_alt != 0 && s_cfg.i2c_addr_alt != s_cfg.i2c_addr &&
+        i2c_master_probe(s_bus, s_cfg.i2c_addr, 100) != ESP_OK &&
+        i2c_master_probe(s_bus, s_cfg.i2c_addr_alt, 100) == ESP_OK) {
+        ESP_LOGI(TAG, "Touch controller responded at 0x%02X (configured 0x%02X)",
+                 s_cfg.i2c_addr_alt, s_cfg.i2c_addr);
+        s_cfg.i2c_addr = s_cfg.i2c_addr_alt;
+    }
+#endif
+
     i2c_device_config_t dev_cfg = {};
     dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     dev_cfg.device_address  = s_cfg.i2c_addr;

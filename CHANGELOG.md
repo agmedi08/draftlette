@@ -8,6 +8,14 @@ in the git log.
 
 ### Added
 
+- **NiceMCU-C5E-DEV_2.8IPS support**: a new build preset,
+  `nicemcu_c5_28ips`, for this ESP32-C5 board with a 2.8" color touch
+  screen, a MicroSD slot and 8 MB PSRAM. It is the first ESP32-C5 board
+  Draftling supports, tested on real hardware. Use
+  the board's UART (CH340) USB-C port for flashing; its native USB port
+  shares a pin with the MicroSD card and does not work while Draftling
+  runs. The device wakes from sleep with the RESET button. See
+  HARDWARE.md.
 - **Sync via browser**: the new F1 menu item "Sync via browser..."
   (letter B) asks whether to start a Kermit file server on the serial
   console. After Start, a dialog asks you to open
