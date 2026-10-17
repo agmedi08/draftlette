@@ -1798,7 +1798,15 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
 
 - **DRAFTLING_MODEL_WAVESHARE_RLCD42** -- Waveshare ESP32-S3-RLCD-4.2
   with a 400x300 reflective LCD and GPIO18 deep-sleep wakeup button.
-  *Requires ESP32-S3.*
+  Every chip on the board is on the always-on 3.3 V rail, so main.cpp
+  quiets the unused ones once per boot (`rlcd42_quiet_peripherals()`,
+  on a temporary I2C bus: SHTC3 sleep command, ES7210 / ES8311
+  power-down sequences from esp_codec_dev, PCF85063 CLKOUT off,
+  speaker amplifier GPIO46 low). `pre_sleep_rlcd42_deinit()` releases
+  the SD card, calls `display_deep_sleep_prepare()` (ST7305 DISPOFF +
+  SLPIN, panel control lines parked and held) and holds the amplifier
+  and I2S lines low; `rlcd42_release_held_pins()` undoes the holds at
+  the next boot before `display_init()`. *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_M5STACK_PAPERS3** -- M5Stack PaperS3 with a
   4.7" 540x960 ED047TC1 e-paper driven by the `vroland/epdiy`
   library (with the in-tree `epd_board_papers3` board definition),

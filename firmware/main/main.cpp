@@ -19,7 +19,8 @@
     defined(CONFIG_DRAFTLING_DISPLAY_WS_EPD397) || \
     defined(CONFIG_DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY) || \
     defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO) || \
-    defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_LCD_316)
+    defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_LCD_316) || \
+    defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
 #include <driver/i2c_master.h>
 #endif
 #if defined(CONFIG_DRAFTLING_DISPLAY_MIPI_DSI)
@@ -884,6 +885,166 @@ static void pre_sleep_crowpanel_579_deinit(void)
     display_deep_sleep_prepare();
 }
 #endif /* CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_579 */
+
+#if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
+/* Waveshare ESP32-S3-RLCD-4.2: everything on the board is on the
+ * always-on 3.3 V rail, so peripherals Draftling does not use keep
+ * drawing current through deep sleep unless they are told to stop. */
+
+/* Write register/value pairs to one I2C device; logs the first error. */
+static esp_err_t rlcd42_i2c_write_regs(i2c_master_bus_handle_t bus, uint8_t addr,
+                                       const uint8_t (*regs)[2], size_t n)
+{
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address  = addr;
+    dev_cfg.scl_speed_hz    = 100000;
+    i2c_master_dev_handle_t dev = NULL;
+    esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
+    if (err != ESP_OK) return err;
+    for (size_t i = 0; i < n && err == ESP_OK; i++)
+        err = i2c_master_transmit(dev, regs[i], 2, 50);
+    i2c_master_bus_rm_device(dev);
+    return err;
+}
+
+/* Once per boot: put the unused chips into their lowest-power state.
+ * They stay there through deep sleep (their supply never goes away),
+ * and a power cycle brings them back up in their default state,
+ * followed by this boot code again. */
+static void rlcd42_quiet_peripherals(void)
+{
+    /* Speaker amplifier off. */
+    gpio_config_t g = {};
+    g.intr_type    = GPIO_INTR_DISABLE;
+    g.mode         = GPIO_MODE_OUTPUT;
+    g.pin_bit_mask = 1ULL << RLCD42_AMP_EN_PIN;
+    gpio_config(&g);
+    gpio_set_level((gpio_num_t)RLCD42_AMP_EN_PIN, 0);
+
+    /* Nothing else uses this board's I2C bus, so open it just for
+     * these writes. */
+    i2c_master_bus_handle_t bus = NULL;
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.i2c_port          = -1;
+    bus_cfg.sda_io_num        = (gpio_num_t)I2C_SDA_PIN;
+    bus_cfg.scl_io_num        = (gpio_num_t)I2C_SCL_PIN;
+    bus_cfg.clk_source        = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = true;
+    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
+        ESP_LOGW(TAG, "RLCD-4.2: I2C bus init failed; sensor and codecs left powered up");
+        return;
+    }
+
+    /* SHTC3: comes up in idle state after power-on; the sleep command
+     * (0xB098) cuts its supply current to below 1 uA. */
+    {
+        i2c_device_config_t dev_cfg = {};
+        dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        dev_cfg.device_address  = RLCD42_SHTC3_ADDR;
+        dev_cfg.scl_speed_hz    = 100000;
+        i2c_master_dev_handle_t dev = NULL;
+        esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
+        if (err == ESP_OK) {
+            const uint8_t sleep_cmd[2] = { 0xB0, 0x98 };
+            err = i2c_master_transmit(dev, sleep_cmd, sizeof(sleep_cmd), 50);
+            i2c_master_bus_rm_device(dev);
+        }
+        ESP_LOGI(TAG, "SHTC3 sleep: %s", esp_err_to_name(err));
+    }
+
+    /* ES7210 microphone ADC: mic bias, PGAs, ADCs and clocks off --
+     * the stop sequence of Espressif's esp_codec_dev es7210 driver. */
+    static const uint8_t es7210_off[][2] = {
+        { 0x47, 0xFF }, { 0x48, 0xFF }, { 0x49, 0xFF }, { 0x4A, 0xFF },
+        { 0x4B, 0xFF }, { 0x4C, 0xFF }, { 0x40, 0xC0 }, { 0x01, 0x7F },
+        { 0x06, 0x07 },
+    };
+    ESP_LOGI(TAG, "ES7210 power-down: %s",
+             esp_err_to_name(rlcd42_i2c_write_regs(bus, RLCD42_ES7210_ADDR, es7210_off,
+                                                   sizeof(es7210_off) / sizeof(es7210_off[0]))));
+
+    /* ES8311 speaker codec: the suspend sequence of esp_codec_dev's
+     * es8311 driver (DAC / ADC muted and powered down, clocks off). */
+    static const uint8_t es8311_off[][2] = {
+        { 0x32, 0x00 }, { 0x17, 0x00 }, { 0x0E, 0xFF }, { 0x12, 0x02 },
+        { 0x14, 0x00 }, { 0x0D, 0xFA }, { 0x15, 0x00 }, { 0x02, 0x10 },
+        { 0x00, 0x00 }, { 0x00, 0x1F }, { 0x01, 0x30 }, { 0x01, 0x00 },
+        { 0x45, 0x00 }, { 0x0D, 0xFC }, { 0x02, 0x00 },
+    };
+    ESP_LOGI(TAG, "ES8311 power-down: %s",
+             esp_err_to_name(rlcd42_i2c_write_regs(bus, RLCD42_ES8311_ADDR, es8311_off,
+                                                   sizeof(es8311_off) / sizeof(es8311_off[0]))));
+
+    /* PCF85063 RTC: its CLKOUT pin runs a 32.768 kHz square wave by
+     * default; switch it off (Control_2 COF = 111). */
+    {
+        i2c_device_config_t dev_cfg = {};
+        dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        dev_cfg.device_address  = RLCD42_PCF85063_ADDR;
+        dev_cfg.scl_speed_hz    = 100000;
+        i2c_master_dev_handle_t dev = NULL;
+        esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &dev);
+        if (err == ESP_OK) {
+            uint8_t reg = 0x01, ctrl2 = 0;
+            err = i2c_master_transmit_receive(dev, &reg, 1, &ctrl2, 1, 50);
+            if (err == ESP_OK && (ctrl2 & 0x07) != 0x07) {
+                const uint8_t w[2] = { 0x01, (uint8_t)(ctrl2 | 0x07) };
+                err = i2c_master_transmit(dev, w, sizeof(w), 50);
+            }
+            i2c_master_bus_rm_device(dev);
+        }
+        ESP_LOGI(TAG, "PCF85063 CLKOUT off: %s", esp_err_to_name(err));
+    }
+
+    i2c_del_master_bus(bus);
+}
+
+/* Pads pre_sleep_rlcd42_deinit() and display_deep_sleep_prepare()
+ * latch for deep sleep. The latches survive the wake reset. */
+static const int s_rlcd42_held_pins[] = {
+    RLCD_CS_PIN, RLCD_RST_PIN, RLCD_DC_PIN, RLCD_SCK_PIN, RLCD_MOSI_PIN,
+    RLCD42_AMP_EN_PIN, RLCD42_I2S_MCLK_PIN, RLCD42_I2S_BCLK_PIN,
+    RLCD42_I2S_DOUT_PIN,
+};
+
+/* Undo those latches at boot, before anything drives the pins. */
+static void rlcd42_release_held_pins(void)
+{
+    gpio_deep_sleep_hold_dis();
+    for (int pin : s_rlcd42_held_pins) gpio_hold_dis((gpio_num_t)pin);
+}
+
+static void pre_sleep_rlcd42_deinit(void)
+{
+    ESP_LOGI(TAG, "Pre-sleep: Waveshare ESP32-S3-RLCD-4.2 peripheral teardown");
+
+    pre_sleep_autosave();
+    (void)sd_card_deinit();
+
+    /* Panel off and its control lines parked (display_rlcd.cpp). Take
+     * the LVGL lock so no flush is on the SPI bus meanwhile. */
+    bool locked = draftling_lvgl_port_lock(5000);
+    display_deep_sleep_prepare();
+    if (locked) draftling_lvgl_port_unlock();
+
+    /* Amplifier off and the audio clock / data lines into the codec
+     * low, so none of them floats while the chip sleeps. */
+    const int low_pins[] = { RLCD42_AMP_EN_PIN, RLCD42_I2S_MCLK_PIN,
+                             RLCD42_I2S_BCLK_PIN, RLCD42_I2S_DOUT_PIN };
+    for (int pin : low_pins) {
+        gpio_config_t g = {};
+        g.intr_type    = GPIO_INTR_DISABLE;
+        g.mode         = GPIO_MODE_OUTPUT;
+        g.pin_bit_mask = 1ULL << pin;
+        gpio_config(&g);
+        gpio_set_level((gpio_num_t)pin, 0);
+        gpio_hold_en((gpio_num_t)pin);
+    }
+    gpio_deep_sleep_hold_en();
+}
+#endif /* CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42 */
 
 #if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_EPAPER_397)
 static void pre_sleep_ws_epaper397_deinit(void)
@@ -2398,6 +2559,10 @@ extern "C" void app_main(void)
      * immediately after the BSP_FEATURE_WIFI bring-up. */
 #endif
 
+#if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
+    rlcd42_release_held_pins();
+    rlcd42_quiet_peripherals();
+#endif
 #if defined(CONFIG_DRAFTLING_DISPLAY_RLCD)
     display_init(RLCD_MOSI_PIN, RLCD_SCK_PIN, RLCD_DC_PIN,
                  RLCD_CS_PIN, RLCD_RST_PIN, -1,
@@ -3279,6 +3444,8 @@ extern "C" void app_main(void)
     standby_set_pre_sleep_cb(pre_sleep_reterminal_sticky_deinit);
 #elif defined(CONFIG_DRAFTLING_MODEL_M5STACK_PAPERMONO)
     standby_set_pre_sleep_cb(pre_sleep_papermono_deinit);
+#elif defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
+    standby_set_pre_sleep_cb(pre_sleep_rlcd42_deinit);
 #else
     standby_set_pre_sleep_cb(pre_sleep_autosave);
 #endif

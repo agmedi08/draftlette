@@ -22,6 +22,11 @@ static int s_disp_len = 0;
 static int s_width = 0;
 static int s_height = 0;
 static int s_rst_pin = -1;
+static int s_dc_pin = -1;
+static int s_cs_pin = -1;
+static int s_sck_pin = -1;
+static int s_mosi_pin = -1;
+static bool s_asleep = false;
 /* RLCD has no BUSY signal; the parameter is accepted for API
  * compatibility with the e-paper drivers and ignored. */
 
@@ -92,6 +97,11 @@ extern "C" void display_init(int mosi, int sck, int dc, int cs, int rst,
     s_width = width;
     s_height = height;
     s_rst_pin = rst;
+    s_dc_pin = dc;
+    s_cs_pin = cs;
+    s_sck_pin = sck;
+    s_mosi_pin = mosi;
+    s_asleep = false;
 
     /* Init SPI bus */
     spi_bus_config_t bus_cfg = {};
@@ -280,11 +290,41 @@ extern "C" void display_wake(void)
     /* No-op (see display_sleep). */
 }
 
+/* Drive a panel line to a fixed level and latch it for deep sleep. */
+static void hold_pin(int pin, int level)
+{
+    if (pin < 0) return;
+    gpio_config_t g = {};
+    g.intr_type    = GPIO_INTR_DISABLE;
+    g.mode         = GPIO_MODE_OUTPUT;
+    g.pin_bit_mask = 1ULL << pin;
+    gpio_config(&g);
+    gpio_set_level((gpio_num_t)pin, level);
+    gpio_hold_en((gpio_num_t)pin);
+}
+
 extern "C" void display_deep_sleep_prepare(void)
 {
-    /* The reflective LCD has no backlight, retains its image
-     * without power, and the panel goes dark naturally once VDD
-     * drops in deep sleep. No-op. */
+    /* The panel stays powered in deep sleep (it is on the always-on
+     * 3.3 V rail), so left alone the ST7305 keeps scanning the panel
+     * and its charge pump running for as long as the chip sleeps.
+     * Switch the display off (blank) and put the controller into its
+     * sleep mode; display_init() resets and wakes it after the next
+     * boot. Then park the control lines at their idle levels (CS and
+     * RST high, the rest low) and hold them, so no floating input
+     * toggles the controller or draws current. The caller enables
+     * gpio_deep_sleep_hold_en(); main.cpp releases the holds before
+     * display_init() on the next boot. */
+    if (!s_io_handle || s_asleep) return;
+    send_command(0x28);   /* DISPOFF */
+    send_command(0x10);   /* SLPIN */
+    vTaskDelay(pdMS_TO_TICKS(120));
+    s_asleep = true;
+    hold_pin(s_cs_pin, 1);
+    hold_pin(s_rst_pin, 1);
+    hold_pin(s_dc_pin, 0);
+    hold_pin(s_sck_pin, 0);
+    hold_pin(s_mosi_pin, 0);
 }
 
 extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)

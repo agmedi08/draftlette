@@ -33,3 +33,17 @@
 
 /* Deep-sleep wakeup on GPIO18 (EXT0, active-low) */
 #define WAKEUP_GPIO_NUM 18
+
+/* On-board peripherals Draftling does not use. They sit on the
+ * always-on 3.3 V rail, so main.cpp puts them in their lowest-power
+ * state at boot (rlcd42_quiet_peripherals()) and holds the amplifier
+ * and audio lines low through deep sleep. Pins and addresses are from
+ * Waveshare's factory firmware (github.com/waveshareteam/ESP32-S3-RLCD-4.2). */
+#define RLCD42_AMP_EN_PIN     46   /* speaker amplifier enable, active-high */
+#define RLCD42_I2S_MCLK_PIN   16
+#define RLCD42_I2S_BCLK_PIN   9
+#define RLCD42_I2S_DOUT_PIN   8    /* ESP32 -> ES8311 */
+#define RLCD42_SHTC3_ADDR     0x70 /* temperature / humidity sensor */
+#define RLCD42_ES8311_ADDR    0x18 /* speaker codec */
+#define RLCD42_ES7210_ADDR    0x40 /* microphone ADC */
+#define RLCD42_PCF85063_ADDR  0x51 /* RTC */

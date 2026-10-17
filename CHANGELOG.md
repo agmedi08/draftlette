@@ -59,6 +59,16 @@ in the git log.
   show the beginning of the name, cut off at the screen edge, instead
   of all scrolling at once.
 
+### Fixed
+
+- **Waveshare ESP32-S3-RLCD-4.2: less battery drain in sleep**: the
+  screen controller is now switched off before the device sleeps (the
+  screen goes blank), and the on-board temperature sensor, audio chips,
+  speaker amplifier and clock output that Draftling does not use are
+  put into their power-saving state. Previously they all kept running
+  while the device slept. The processor also runs at 80 MHz instead of
+  160 MHz, which lowers the current drawn while you type.
+
 ## [1.0.16] - 2026-10-10
 
 ### Fixed
