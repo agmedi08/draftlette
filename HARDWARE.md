@@ -289,29 +289,22 @@ The USB host connector must also receive 5 V VBUS; no VBUS enable pin
 was provided. The preset routes the console over UART because USB-OTG
 host and USB-Serial/JTAG share the ESP32-S3 internal PHY.
 
-Build with the `microjournal_rev5` preset.
+Build with the `microjournal_rev5_0` preset.
 
 ## MicroJournal Rev 5.1
 
 Micro Journal revision 5.1 (`rev.5/5.1` in the upstream repository)
-has the same electronics and wiring as Rev 5.0 -- only the enclosure
-and the parts list changed -- so everything in the Rev 5.0 section
-above applies: same pins, shared-SPI MicroSD on CS=GPIO9, USB host
-keyboard on GPIO19/20, no backlight control, no wake button, console
-on UART, Bluetooth disabled.
+has the same wiring as Rev 5.0 in a new enclosure, so everything in
+the Rev 5.0 section above applies: same pins, shared-SPI MicroSD on
+CS=GPIO9, USB host keyboard on GPIO19/20, no backlight control, no
+wake button, console on UART, Bluetooth disabled.
 
-The 2.8" 240x320 panel is an ILI9341, or the ST7789 version of the same
-module, which the upstream build guide mentions as an alternative. Pick
-the preset for the controller on your panel:
+The difference is the display: Rev 5.1 has an ST7789 2.8" 240x320
+panel instead of the ILI9341. Its init sequence follows TFT_eSPI's, as
+the upstream firmware's `rev_5_st7789` build does (BGR color order,
+display inversion off). Not yet tested on physical hardware.
 
-| Panel | Preset |
-|-------|--------|
-| ILI9341 | `microjournal_rev5_1` |
-| ST7789 | `microjournal_rev5_1_st7789` |
-
-The ST7789 init sequence follows TFT_eSPI's, as the upstream firmware's
-`rev_5_st7789` build does (BGR color order, display inversion off).
-Neither Rev 5.1 build has been tested on physical hardware yet.
+Build with the `microjournal_rev5_1` preset.
 
 
 ## Viewe UEDX24320028E-WB-A with UEED035HV-RX40-L001 display

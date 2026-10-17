@@ -42,7 +42,7 @@ load the firmware quickly without having to compile it.
   * Viewe UEDX24320028E-WB-A board with the UEED035HV-RX40-L001 3.5" transflective display
   * Waveshare ESP32-S3-Touch-LCD-7 
   * Waveshare ESP32-S3-LCD-3.16
-  * MicroJournal Rev 5.0 and Rev 5.1 writerdecks (ESP32-S3, ILI9341 or ST7789)
+  * MicroJournal Rev 5.0 (ILI9341) and Rev 5.1 (ST7789) writerdecks
   * M5Stack Tab5 (no web flasher support, as internal firmware needs an upgrade too)
 
 
