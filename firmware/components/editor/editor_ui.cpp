@@ -4209,6 +4209,19 @@ extern "C" void editor_ui_set_ble_prompt_text(const char *text)
     lv_label_set_text(s_ble_prompt_lbl, text);
 }
 
+/* In the file browsers only the selected row scrolls a name too long
+ * for the row; the other rows show its beginning, clipped. Switching
+ * the long mode also resets the scroll offset to the start. */
+static void list_row_set_scroll(lv_obj_t *list, lv_obj_t *btn, bool scroll)
+{
+    if (list != s_list_files && list != s_inpane_list) return;
+    lv_obj_t *lbl = lv_obj_get_child_by_type(btn, 0, &lv_label_class);
+    if (!lbl) return;
+    lv_label_long_mode_t mode = scroll ? LV_LABEL_LONG_MODE_SCROLL_CIRCULAR
+                                       : LV_LABEL_LONG_MODE_CLIP;
+    if (lv_label_get_long_mode(lbl) != mode) lv_label_set_long_mode(lbl, mode);
+}
+
 /* Apply the "selected" styling to item `sel` and the "unselected"
  * styling to every other item.  Used after a full list rebuild. */
 static void apply_list_selection_styles(lv_obj_t *list, int sel)
@@ -4216,6 +4229,7 @@ static void apply_list_selection_styles(lv_obj_t *list, int sel)
     uint32_t count = lv_obj_get_child_count(list);
     for (uint32_t i = 0; i < count; i++) {
         lv_obj_t *child = lv_obj_get_child(list, i);
+        list_row_set_scroll(list, child, (int)i == sel);
         if ((int)i == sel) {
             lv_obj_set_style_bg_color(child, theme_fg(), 0);
             lv_obj_set_style_bg_opa(child, LV_OPA_COVER, 0);
@@ -4247,9 +4261,11 @@ static void update_list_highlight(lv_obj_t *list, int sel, int prev_sel)
         lv_obj_t *prev = lv_obj_get_child(list, prev_sel);
         lv_obj_set_style_bg_opa(prev, LV_OPA_TRANSP, 0);
         lv_obj_set_style_text_color(prev, theme_fg(), 0);
+        list_row_set_scroll(list, prev, false);
     }
     if (sel >= 0 && (uint32_t)sel < count) {
         lv_obj_t *cur = lv_obj_get_child(list, sel);
+        list_row_set_scroll(list, cur, true);
         lv_obj_set_style_bg_color(cur, theme_fg(), 0);
         lv_obj_set_style_bg_opa(cur, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(cur, theme_bg(), 0);

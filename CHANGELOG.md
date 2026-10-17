@@ -54,6 +54,10 @@ in the git log.
 - **Git sync messages name the server**: sync progress and error
   messages show the server's host name instead of the word "remote",
   e.g. "Contacting github.com..." or "Pushing to github.com...".
+- **File browser scrolls only the selected name**: a file name too long
+  for the screen now scrolls only while it is selected; the other rows
+  show the beginning of the name, cut off at the screen edge, instead
+  of all scrolling at once.
 
 ## [1.0.16] - 2026-10-10
 
