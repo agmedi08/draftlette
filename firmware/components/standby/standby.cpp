@@ -75,6 +75,7 @@ static const char *TAG = "Standby";
 static uint32_t s_timeout_sec = STANDBY_DEFAULT_TIMEOUT_SEC;
 static esp_timer_handle_t s_timer = NULL;
 static standby_pre_sleep_cb_t s_pre_sleep_cb = NULL;
+static volatile bool s_inhibit = false;    /* see standby_set_inhibit() */
 
 /* "No keyboard connected" countdown. Armed in standby_init() from
  * CONFIG_DRAFTLING_NO_KEYBOARD_SLEEP_SEC. When it fires it checks
@@ -343,8 +344,19 @@ static void enter_display_off(void)
  * EXT0 cannot be armed (see standby_enter_sleep()). */
 #define STUCK_WAKE_PIN_TIMER_SEC 60
 
+extern "C" void standby_set_inhibit(bool inhibit)
+{
+    s_inhibit = inhibit;
+    ESP_LOGI(TAG, "Sleep %s", inhibit ? "inhibited" : "allowed again");
+    if (!inhibit) standby_reset_timer();
+}
+
 extern "C" void standby_enter_sleep(void)
 {
+    if (s_inhibit) {
+        ESP_LOGI(TAG, "Sleep request ignored (inhibited)");
+        return;
+    }
     stop_timer();
     if (s_kb_wait_timer) {
         esp_timer_stop(s_kb_wait_timer);

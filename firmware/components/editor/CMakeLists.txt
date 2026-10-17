@@ -19,3 +19,7 @@ endif()
 if(CONFIG_DRAFTLING_HAS_USB_MSC)
     idf_component_optional_requires(PRIVATE usb_msc)
 endif()
+
+if(CONFIG_DRAFTLING_HAS_KERMIT)
+    idf_component_optional_requires(PRIVATE kermit)
+endif()

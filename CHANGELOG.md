@@ -8,6 +8,25 @@ in the git log.
 
 ### Added
 
+- **Sync via browser**: the new F1 menu item "Sync via browser..."
+  (letter B) asks whether to start a Kermit file server on the serial
+  console. After Start, a dialog asks you to open
+  https://bridge.draftling.art/ on a computer connected to the
+  device's USB port and follow the instructions there to synchronize
+  the SD card with a Git repository, without WiFi; any other Kermit
+  client can list, download, upload, rename and delete the files as
+  well. Starting it saves and closes the open documents and switches
+  the console's log output off. Until a computer is connected over
+  USB, the dialog asks you to plug the cable in, and it tells you when
+  the USB connection is lost; the device does not go to sleep while a
+  computer is connected, and the normal standby timeout applies while
+  none is. Select Finished in the dialog (Enter or Esc) when you are
+  done: the server stops and everything is restored. It is available only on boards whose USB port is
+  wired to the ESP32-S3's native USB (the boards that offer "SD card
+  via USB"),
+  not on boards with a USB-to-UART bridge such as the Seeed reTerminal
+  E1001 / Sticky and the Elecrow CrowPanel 5.79". See
+  docs/sync-via-browser.md.
 - **MicroJournal Rev 5 firmware target**: adds a dedicated build preset
   for the ESP32-S3 writerdeck with its ILI9341 display (landscape,
   turned 180 degrees to match the enclosure), shared-SPI MicroSD reader
@@ -18,8 +37,10 @@ in the git log.
   PSRAM and flash sizes (with free RAM and PSRAM), the screen and touch
   controllers, the screen resolution, the SD card type, size and free
   space, the connected keyboard (with the Bluetooth keyboard's MAC
-  address) and the device's WiFi and Bluetooth MAC addresses. Esc or
-  Enter closes it.
+  address), the state of the USB device functions ("SD card via USB"
+  and "Sync via browser", or "not available" on boards without them)
+  and the device's WiFi and Bluetooth MAC addresses. Esc or Enter
+  closes it.
 - **File information page (Alt+I)**: in the editor, Alt+I shows the
   word, paragraph, line and character counts and the size in bytes of
   the document you are editing (unsaved changes included), and its Git

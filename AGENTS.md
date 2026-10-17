@@ -151,6 +151,8 @@ components/                 Reusable IDF components
   io_expander/              CH422G (Waveshare Touch-LCD-7) and M5IOE1
                             (M5Stack PaperMono) I2C IO-expander drivers
   kb_layout/                Keyboard layout translation (US/UA/DE/FR)
+  kermit/                   Kermit file server on the serial console
+                            ("Sync via browser")
   power/                    TCA9554-latched battery rail + PWR-button driver
   sd_card/                  SD card (SDMMC 1-bit) file operations
   standby/                  Deep-sleep / standby inactivity timer
@@ -690,6 +692,40 @@ documents back, shows the busy message pop-up and runs `fmt_task()`:
 pointing at the deleted files (open documents, Git repository,
 `git.cfg`).
 
+**Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `B`, only
+on boards with `CONFIG_DRAFTLING_HAS_KERMIT`; the rows after it shift up
+elsewhere, like after "SD card via USB"; its label is static) opens a
+Start / Cancel picker rendered into `s_menu_list`, with the question in
+the menu header (`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
+`kermit_picker_activate()`). `kermit_start()`
+refuses while the card is handed off (`sd_handed_off_msg()`), no card is
+mounted, a Git sync runs, or an untitled document has unsaved changes;
+otherwise it saves every modified document, collapses a split, closes
+every titled document (`editor_close_file()` on each, so stale buffers
+cannot be written back over files the client replaces), forces the file
+browser and calls `kermit_server_start()` (see `components/kermit/`).
+On success it shows the message pop-up with `s_msg_kermit` set and
+starts `s_kermit_usb_timer` (`kermit_usb_poll_cb()`, every 500 ms),
+which follows `kermit_server_usb_connected()` through
+`kermit_usb_state_t`: `KUSB_STARTING` (a 3 s grace for the computer to
+enumerate the new USB serial port), `KUSB_WAITING` ("connect a USB
+cable"), `KUSB_CONNECTED` (`KERMIT_BRIDGE_TEXT`, which points the user
+at https://bridge.draftling.art/ -- github.com/clackups/draftbridge)
+and `KUSB_LOST` (connection lost). `kermit_set_usb_state()` calls
+`standby_set_inhibit()` with "state is CONNECTED", so the device sleeps
+normally while no computer is connected. While `s_msg_kermit` is set
+the pop-up is modal for the whole session: `show_msg_popup()` refuses
+to replace it, and Enter, Esc or a tap calls `kermit_finish()`, which
+deletes the timer, closes the pop-up, calls `kermit_server_stop()`,
+clears the standby inhibit and refreshes the file list. `kermit_status_cb()` runs on the server task: it takes the
+LVGL lock with a 200 ms timeout (Finished waits for that task while
+holding the lock) and appends the progress line to the dialog text
+(only in `KUSB_CONNECTED`).
+All of it is compiled out without `CONFIG_DRAFTLING_HAS_KERMIT`.
+`sd_handed_off_msg()` is the single guard for "the SD card belongs to
+someone else" (SD via USB or the Kermit server) used by the editor, both
+file browsers, Git sync, Draftbox and Format SD card.
+
 **Hardware information.** The F1 row `MENU_IDX_HWINFO` (letter `I`)
 shows `build_hwinfo_text()` on the help screen (`show_hwinfo()`, which
 shares `show_help_page()` and the key / touch handling with the help
@@ -703,7 +739,10 @@ backends return the controller detected at boot), the touch controller
 from the `DRAFTLING_TOUCH_*` flags, the panel resolution and text
 area, the SD card from `sd_card_get_handle()` and
 `sd_card_get_fs_space()`, the connected keyboards (with the BLE
-keyboard's address from `ble_keyboard_get_device_addr()`) and the WiFi /
+keyboard's address from `ble_keyboard_get_device_addr()`), the USB
+device functions (`usb_msc_get_mode()` / `kermit_server_is_running()`,
+"not available" without `CONFIG_DRAFTLING_HAS_USB_MSC` /
+`CONFIG_DRAFTLING_HAS_KERMIT`) and the WiFi /
 Bluetooth MAC addresses (`esp_read_mac()`).
 
 **File information.** `Alt+I` in the editor (`show_editor_fileinfo()`,
@@ -1164,6 +1203,83 @@ Public API: `kb_layout_translate()`, `kb_layout_shortcut_char()`,
 `kb_layout_set_active()`, `kb_layout_active_count()`,
 `kb_layout_get_active_mask()`, `kb_layout_set_active_mask()`.
 
+### components/kermit/
+
+Kermit file-transfer server on the serial console, behind F1 -> "Sync
+via browser". User docs: `docs/sync-via-browser.md`.
+
+Only usable on boards whose USB port is wired to the ESP32-S3's native
+USB (USB-Serial/JTAG) -- the `DRAFTLING_HAS_USB_MSC` board list. On
+boards with a USB-to-UART bridge (Seeed reTerminal E1001 / Sticky,
+Elecrow CrowPanel 5.79") the bridge's DTR / RTS lines drive the
+auto-reset circuit on EN / GPIO0: on the Sticky, connecting with a Web
+Serial client (Draftbridge) left the device unresponsive with no
+answer to the I packet, and esptool afterwards found the chip not in
+download mode -- consistent with the open port resetting / holding the
+chip in reset. So the component is built only with the derived flag
+`CONFIG_DRAFTLING_HAS_KERMIT` (default y if `DRAFTLING_HAS_USB_MSC`);
+elsewhere it registers as an empty component, and the editor requires
+it via `idf_component_optional_requires()` under the same flag. The
+server still listens on the console UART as well as USB-Serial/JTAG.
+
+- `kermit_port.c` -- transport. `kport_open()` silences every console
+  output path (`esp_log_set_vprintf()` to a no-op, ROM printf channels
+  1 and 2 to a no-op putc) and installs the UART driver on the console
+  UART (`CONFIG_ESP_CONSOLE_UART_NUM`) and, when the build enables
+  TinyUSB CDC (`CONFIG_TINYUSB_CDC_ENABLED`, set in every Kermit board's
+  `sdkconfig.defaults.<board>`), a TinyUSB CDC-ACM serial port on the
+  S3's USB-OTG controller with its own descriptors (Espressif VID, PID
+  0x4001, product "Draftling"). Reads poll both; writes go to the port
+  the last input arrived on. The Kermit port deliberately does NOT use
+  USB-Serial/JTAG, the console port on these boards: its CDC-ACM
+  interface resets the chip in hardware when the host drives RTS = 1
+  with DTR = 0, and a browser opening the port through Web Serial did
+  that (`rst:0x15 USB_UART_CHIP_RESET` the moment Draftbridge
+  connected). The S3 has no way to switch that reset off --
+  `RTC_CNTL_USB_RESET_DISABLE` was tried and does not help (only the C6
+  and later chips have a working disable bit) -- while USB-OTG has no
+  such logic. Installing TinyUSB moves the internal USB PHY to USB-OTG,
+  so the computer sees the console port disappear and the "Draftling"
+  port appear. `kport_close()` removes the drivers, hands the PHY back
+  to USB-Serial/JTAG with `usb_serial_jtag_hal_phy_set_external(NULL,
+  false)` (as `components/usb_msc/` does; unlike that component it does
+  not restart afterwards) and restores the ROM printf set-up the way
+  esp_system's start-up code does. Enabling TinyUSB CDC changes
+  esp_tinyusb's default descriptors to a CDC + MSC composite, so
+  `usb_msc.cpp` now passes its own MSC-only descriptors (PID 0x4002,
+  identical to the previous defaults). `kport_usb_connected()` reports
+  whether a host is using the TinyUSB port: `tud_mounted() &&
+  !tud_suspended()`. The boards do not sense VBUS, so an unplugged
+  cable shows up as a suspended bus, never as an unmount; a sleeping
+  computer reads as disconnected too.
+- `kermit.c` -- stop-and-wait server (no sliding windows / streaming /
+  recovery): long packets (we advertise 9000; the receive check only
+  enforces the 9128-byte buffer because C-Kermit's longest packets run a
+  few characters past the advertised maximum), block checks 1/2/3 (the
+  check length is not in the packet, so a received packet is validated
+  with the current type first and then 3, 2, 1), control / 8th-bit /
+  repeat prefixing, attribute packets (incoming type "A" = text: CR LF
+  is stored as LF; outgoing files carry type B8, size and date). Packet
+  bodies may contain unprefixed control characters (C-Kermit's
+  "cautious" prefixing leaves TAB etc. bare); only SOH resynchronises.
+  Server commands: I, S (upload, written to `<name>.kpart` and renamed
+  over the target on Z), R (GET, wildcards), G subcommands C/A/D/E/R/m/
+  d/U/T/H/F/L. Short G replies ride in the ACK, long ones go out as an
+  S / X / D / Z / B text transfer. Paths are resolved against the root
+  and the current directory and may not leave the root. A received name
+  without lower-case letters is lower-cased (C-Kermit's "common form").
+  Buffers (3 x ~9 KB) and the 12 KB task stack are in PSRAM.
+
+The engine was tested on the host against C-Kermit 10 over a pty
+(kermit.c compiled with small FreeRTOS / ESP-IDF stubs and a pty-backed
+`kport_*`): uploads / downloads of binary files with every byte value,
+block checks 1-3, long and short packets, repeat counts on and off,
+8th-bit prefixing (`set parity space`), every REMOTE command, and a stop
+in the middle of an upload.
+
+Public API: `kermit_server_start()`, `kermit_server_stop()`,
+`kermit_server_is_running()`, `kermit_server_usb_connected()`.
+
 ### components/sd_card/
 
 Initializes the MicroSD card over SDMMC 1-bit interface and mounts it as
@@ -1244,9 +1360,15 @@ range. The countdown is only armed on boards with
 skips it, since there is nothing to conserve and unexpectedly
 blanking the display during bring-up is more disruptive than helpful.
 
+`standby_set_inhibit(true)` keeps the device awake (the editor sets it
+for the duration of a "Sync via browser" session): the timers then do
+nothing and `standby_enter_sleep()` returns at once, so Ctrl+P and the
+power / sleep buttons are ignored too. Clearing it restarts the
+inactivity timer.
+
 Public API: `standby_init()`, `standby_reset_timer()`,
 `standby_set_timeout()`, `standby_set_pre_sleep_cb()`,
-`standby_enter_sleep()`.
+`standby_set_inhibit()`, `standby_enter_sleep()`.
 
 ### components/power/
 
@@ -2014,6 +2136,7 @@ in C / C++ code:
 | DRAFTLING_BATTERY_CW2017          | Selects the CW2017 fuel-gauge backend (`battery_init_cw2017(shared_i2c_bus)`); no charger IC on the bus, so charging state always reads unknown | Xteink X4 Pro / X4 Classic |
 | DRAFTLING_BATTERY_AXP2101         | Selects the AXP2101 PMIC backend (`battery_init_axp2101(shared_i2c_bus)`); real integrated charger, so charging state is reported directly. Same chip's ALDO3 output also powers the e-paper panel -- see `battery_axp2101_enable_display_rail()`, called from the display backend's `display_set_shared_i2c_bus()` before `display_init()` | Waveshare ESP32-S3-ePaper-3.97 |
 | DRAFTLING_BATTERY_M5PM1           | Selects the M5PM1 backend (`battery_init_m5pm1(shared_i2c_bus)`, called early in boot since the chip gates the board's rails); voltage-only, "charging" = on USB. Its PWM0 drives the front-light (`battery_m5pm1_set_frontlight()`) | M5Stack PaperMono |
+| DRAFTLING_HAS_KERMIT              | Builds `components/kermit/` and shows F1 -> "Sync via browser" (Kermit file server on the serial console); only boards whose USB port is the ESP32-S3's native USB -- not boards with a USB-to-UART bridge, whose DTR / RTS auto-reset lines reset the chip when a computer opens the port | Every `DRAFTLING_HAS_USB_MSC` board |
 | DRAFTLING_HAS_USB_HOST            | Enables the `usb_kbd` USB HID keyboard host (boot-time probe; BLE stays idle while a USB keyboard is present) | M5Stack Tab5, MicroJournal Rev 5 |
 | DRAFTLING_USB_HOST_BSP_MANAGED    | USB PHY, VBUS and the USB Host library task are owned by the board BSP (`bsp_usb_host_start()`); otherwise `usb_kbd_init()` installs the host library and its task itself (ESP32-S3 native USB-OTG) | M5Stack Tab5 |
 | DRAFTLING_USB_HOST_DEP            | `int` mirror (0/1) of DRAFTLING_HAS_USB_HOST, tested by the `espressif/usb_host_hid` rule in `components/usb_kbd/idf_component.yml` (the component manager reads `sdkconfig.json`, which omits hidden bool symbols that are n); `components/usb_kbd/` registers as an empty component when DRAFTLING_HAS_USB_HOST is unset, so neither it nor `usb_host_hid` is compiled on other boards | M5Stack Tab5, MicroJournal Rev 5 |

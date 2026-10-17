@@ -39,6 +39,9 @@
 #include "kb_layout.h"
 #include "wifi_manager.h"
 #include "git_sync.h"
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+#include "kermit.h"
+#endif
 #include "sd_card.h"
 #include "lvgl_port.h"
 #include "display.h"
@@ -832,9 +835,11 @@ static int       s_menu_sel_prev = -1;
 static bool      s_menu_open    = false;
 
 /* F1 menu item indices. Fixed 0-8 for every board; "SD card via USB"
- * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC, so
- * "Format SD card" / "Hardware information" / "Help" / "Sleep now" /
- * "Close menu" shift down by one on every other board.
+ * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC and
+ * "Sync via browser" (next) only on boards with
+ * CONFIG_DRAFTLING_HAS_KERMIT, so "Format SD card" / "Hardware
+ * information" / "Help" / "Sleep now" / "Close menu" shift down on
+ * boards without them.
  * Use the MENU_IDX_* constants instead of bare integers everywhere
  * downstream so the two layouts stay in lock-step (mirrors the
  * SETTINGS_IDX_* convention used by the Settings submenu below). */
@@ -853,14 +858,20 @@ static bool      s_menu_open    = false;
 #else
 #define _MENU_NEXT_AFTER_USB_MSC 9
 #endif
-#define MENU_IDX_FORMAT_SD    _MENU_NEXT_AFTER_USB_MSC
-#define MENU_IDX_HWINFO       (_MENU_NEXT_AFTER_USB_MSC + 1)
-#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_USB_MSC + 2)
-#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_USB_MSC + 3)
-#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_USB_MSC + 4)
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+#define MENU_IDX_KERMIT          _MENU_NEXT_AFTER_USB_MSC
+#define _MENU_NEXT_AFTER_KERMIT  (_MENU_NEXT_AFTER_USB_MSC + 1)
+#else
+#define _MENU_NEXT_AFTER_KERMIT  _MENU_NEXT_AFTER_USB_MSC
+#endif
+#define MENU_IDX_FORMAT_SD    _MENU_NEXT_AFTER_KERMIT
+#define MENU_IDX_HWINFO       (_MENU_NEXT_AFTER_KERMIT + 1)
+#define MENU_IDX_HELP         (_MENU_NEXT_AFTER_KERMIT + 2)
+#define MENU_IDX_SLEEP        (_MENU_NEXT_AFTER_KERMIT + 3)
+#define MENU_IDX_CLOSE        (_MENU_NEXT_AFTER_KERMIT + 4)
 
 /* Number of menu items */
-#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_USB_MSC + 5)
+#define MENU_ITEM_COUNT (_MENU_NEXT_AFTER_KERMIT + 5)
 
 /* Header line of the F1 menu screen (s_lbl_menu_hdr); the "Format SD
  * card" picker replaces it with its question while it is open. */
@@ -918,6 +929,35 @@ static bool usbmsc_item_disabled(void)
     return usb_msc_get_mode() == USB_MSC_MODE_OFF && !sd_card_is_ready();
 }
 #endif
+
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+/* "Sync via browser" picker (Start / Stop), rendered into s_menu_list
+ * like the "SD card via USB" one. The choice applies at once -- see
+ * kermit_picker_activate(). While running, the Kermit server
+ * (components/kermit) owns the serial console and the SD card. */
+static bool s_kermit_picker_open     = false;
+static int  s_kermit_picker_sel      = 0;
+static int  s_kermit_picker_sel_prev = -1;
+/* True while the message pop-up is the "Sync via browser" dialog: it
+ * stays up for the whole Kermit session and its only action is
+ * Finished (Enter or a tap), which stops the server. */
+static bool s_msg_kermit             = false;
+#endif
+
+/* Why the firmware must keep off the SD card right now -- it is handed
+ * to a USB host or to the Kermit server -- or NULL if it may use it. */
+static const char *sd_handed_off_msg(void)
+{
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+    if (usb_msc_get_mode() != USB_MSC_MODE_OFF)
+        return "SD card via USB active -- disable it in F1 menu first";
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (kermit_server_is_running())
+        return "Sync via browser active";
+#endif
+    return NULL;
+}
 
 #if !defined(CONFIG_DRAFTLING_DISPLAY_EPD)
 static lv_timer_t *s_blink_timer = NULL;
@@ -3372,12 +3412,11 @@ static void show_sleep_prompt(void);
 static void show_help(help_origin_t origin);
 static void show_hwinfo(help_origin_t origin);
 
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC) || defined(CONFIG_DRAFTLING_HAS_KERMIT)
 /* Defined with the split-layout code further down (editor_ui_apply_split_mode);
- * commit_usb_msc_pending_mode(), called from close_usbmsc_picker()
- * above it, collapses any split before handing the SD card to USB so
- * no pane can be left silently editing a file it can no longer safely
- * save. */
+ * commit_usb_msc_pending_mode() and kermit_start() collapse any split
+ * before handing the SD card to USB / the Kermit server so no pane can
+ * be left silently editing a file it can no longer safely save. */
 static void editor_ui_apply_split_mode(split_mode_t mode);
 #endif
 
@@ -3817,6 +3856,12 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (kermit_server_is_running()) {
+        snprintf(buf, buf_size, "Sync via browser active");
+        return;
+    }
+#endif
     snprintf(buf, buf_size, "F1:Menu  N:New  F2:Rename");
 }
 
@@ -4231,7 +4276,7 @@ struct menu_hotkey_t {
 
 static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_SETTINGS,        's', 0  },  /* "Settings..." */
-    { MENU_IDX_BLE_SCAN,        'b', 0  },  /* "BLE: Start scan" */
+    { MENU_IDX_BLE_SCAN,        'l', 1  },  /* "BLE: Start scan" */
     { MENU_IDX_WIFI_CONNECT,    'w', 0  },  /* "WiFi: ..." */
     { MENU_IDX_WIFI_NEW,        'n', 6  },  /* "WiFi: New connection..." */
     { MENU_IDX_WIFI_DISCONNECT, 'd', 6  },  /* "WiFi: Disconnect" */
@@ -4240,6 +4285,9 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_KB_LAYOUT,       'k', 0  },  /* "Keyboard: ..." */
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     { MENU_IDX_USB_MSC,         'u', 12 },  /* "SD card via USB: ..." */
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    { MENU_IDX_KERMIT,          'b', 9  },  /* "Sync via browser..." */
 #endif
     { MENU_IDX_FORMAT_SD,       'f', 0  },  /* "Format SD card..." */
     { MENU_IDX_HWINFO,          'i', 9  },  /* "Hardware information" */
@@ -4386,6 +4434,11 @@ static void refresh_menu_items(void)
     lv_list_add_btn(s_menu_list, NULL, buf);
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    /* Sync via browser: Kermit server on the serial console */
+    lv_list_add_btn(s_menu_list, NULL, "Sync via browser...");
+#endif
+
     /* Format SD card */
     lv_list_add_btn(s_menu_list, NULL,
                     sd_card_get_handle() ? "Format SD card..."
@@ -4443,6 +4496,9 @@ static void show_menu(void)
     s_dbx_open = false;
     if (s_dbx_panel) lv_obj_add_flag(s_dbx_panel, LV_OBJ_FLAG_HIDDEN);
     s_fmt_step = FMT_STEP_NONE;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    s_kermit_picker_open = false;
+#endif
     if (s_lbl_menu_hdr) lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     /* Sync the staged choice to whatever usb_msc is actually doing
@@ -4494,6 +4550,14 @@ static void commit_usb_msc_pending_mode(void)
         esp_restart();
         /* does not return */
     }
+
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (cur == USB_MSC_MODE_OFF && kermit_server_is_running()) {
+        s_usbmsc_pending_mode = cur;
+        editor_ui_set_status("Sync via browser active");
+        return;
+    }
+#endif
 
     if (cur == USB_MSC_MODE_OFF) {
         /* Taking the card away from local editing for the first time:
@@ -5422,6 +5486,9 @@ static void handle_wifi_pw_prompt_key(const kb_event_t *ev)
 static void show_msg_popup(const char *title, const char *text, bool busy)
 {
     if (!s_msg_panel) return;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) return;   /* the Sync via browser dialog stays up */
+#endif
     lv_label_set_text(s_msg_title_lbl, title);
     lv_label_set_text(s_msg_text_lbl, text);
     if (busy) lv_obj_add_flag(s_msg_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -5440,10 +5507,27 @@ static void close_msg_popup(void)
     s_msg_open = false;
     s_msg_busy = false;
     if (s_msg_panel) lv_obj_add_flag(s_msg_panel, LV_OBJ_FLAG_HIDDEN);
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        s_msg_kermit = false;
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: close");
+    }
+#endif
 }
+
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+static void kermit_finish(void);
+#endif
 
 static void handle_msg_popup_key(const kb_event_t *ev)
 {
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
+            kermit_finish();
+        return;
+    }
+#endif
     if (s_msg_busy) return;
     if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
         close_msg_popup();
@@ -5453,6 +5537,12 @@ static void handle_msg_popup_key(const kb_event_t *ev)
 static void msg_popup_touch_cb(lv_event_t *e)
 {
     (void)e;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_msg_kermit) {
+        kermit_finish();
+        return;
+    }
+#endif
     if (!s_msg_busy) close_msg_popup();
 }
 #endif
@@ -5719,6 +5809,252 @@ static void close_usbmsc_picker(void)
 }
 #endif
 
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+/* ---- "Sync via browser": Kermit server on the serial console ----
+ * F1 -> "Sync via browser..." asks Start / Cancel. Start hands the SD
+ * card and the console to components/kermit: every open document is
+ * saved and closed, the editor is left for the file browser, and the
+ * "Sync via browser" dialog (the message pop-up with s_msg_kermit set)
+ * tells the user to open the Draftbridge web page. The dialog is modal
+ * for the whole session; Finished (Enter / Esc / a tap) stops the
+ * server.
+ *
+ * s_kermit_usb_timer watches the USB connection (kermit_usb_poll_cb()):
+ * until a computer has enumerated the server's USB serial port the
+ * dialog asks the user to plug the cable in, and when the connection
+ * goes away it says so. The device stays awake only while a computer
+ * is connected; otherwise the normal inactivity sleep applies. */
+
+#define KERMIT_BRIDGE_TEXT \
+    "On a computer connected to this device's USB port, open " \
+    "https://bridge.draftling.art/ in Chrome, Edge or Opera and follow " \
+    "the instructions there. Select Finished when the synchronization " \
+    "is complete."
+
+#define KERMIT_STARTING_TEXT "Starting the file server..."
+
+#define KERMIT_CONNECT_TEXT \
+    "Connect this device to a computer with a USB cable."
+
+#define KERMIT_LOST_TEXT \
+    "The USB connection to the computer was lost. Connect the cable " \
+    "again to continue, or select Finished."
+
+/* Time a computer gets to enumerate the USB serial port after the
+ * server starts before the dialog asks for the cable. */
+#define KERMIT_USB_GRACE_MS  3000
+#define KERMIT_USB_POLL_MS   500
+
+enum kermit_usb_state_t {
+    KUSB_STARTING,    /* server just started, waiting for enumeration */
+    KUSB_WAITING,     /* never connected: asking for the cable */
+    KUSB_CONNECTED,
+    KUSB_LOST,        /* was connected, now gone */
+};
+static kermit_usb_state_t s_kermit_usb_state = KUSB_STARTING;
+static lv_timer_t *s_kermit_usb_timer = NULL;
+static uint32_t    s_kermit_start_ms  = 0;
+
+static void kermit_set_dialog_text(const char *text)
+{
+    lv_label_set_text(s_msg_text_lbl, text);
+    lv_obj_update_layout(s_msg_panel);
+    lv_obj_align(s_msg_panel, LV_ALIGN_CENTER, 0, 0);
+}
+
+static void kermit_set_usb_state(kermit_usb_state_t st)
+{
+    if (st == s_kermit_usb_state) return;
+    s_kermit_usb_state = st;
+    /* Stay awake only while a computer can talk to the server. */
+    standby_set_inhibit(st == KUSB_CONNECTED);
+    switch (st) {
+    case KUSB_CONNECTED:
+        kermit_set_dialog_text(KERMIT_BRIDGE_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Finished");
+        break;
+    case KUSB_WAITING:
+        kermit_set_dialog_text(KERMIT_CONNECT_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Cancel");
+        break;
+    case KUSB_LOST:
+        kermit_set_dialog_text(KERMIT_LOST_TEXT);
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Finished");
+        break;
+    default:
+        break;
+    }
+}
+
+/* LVGL timer: follow the USB connection while the dialog is up. */
+static void kermit_usb_poll_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_msg_kermit) return;
+    int c = kermit_server_usb_connected();
+    if (c != 0) {
+        /* -1: no USB port to watch (UART only) -- assume a client. */
+        kermit_set_usb_state(KUSB_CONNECTED);
+    } else if (s_kermit_usb_state == KUSB_CONNECTED) {
+        kermit_set_usb_state(KUSB_LOST);
+    } else if (s_kermit_usb_state == KUSB_STARTING &&
+               lv_tick_elaps(s_kermit_start_ms) >= KERMIT_USB_GRACE_MS) {
+        kermit_set_usb_state(KUSB_WAITING);
+    }
+}
+
+/* Runs on the Kermit server task. A short lock timeout: Stop waits for
+ * that task while holding the LVGL lock, and a dropped progress line
+ * is harmless. */
+static void kermit_status_cb(const char *msg, bool files_changed)
+{
+    (void)files_changed;   /* the file list is refreshed on Finished */
+    if (!draftling_lvgl_port_lock(200)) return;
+    if (s_msg_kermit && s_kermit_usb_state == KUSB_CONNECTED) {
+        char buf[sizeof(KERMIT_BRIDGE_TEXT) + 96];
+        snprintf(buf, sizeof(buf), KERMIT_BRIDGE_TEXT "\n\n%s", msg);
+        kermit_set_dialog_text(buf);
+    }
+    draftling_lvgl_port_unlock();
+}
+
+static void kermit_untitled_cb(editor_doc_t *doc, void *ctx)
+{
+    if (editor_doc_is_modified(doc) && !editor_doc_get_path(doc))
+        *(bool *)ctx = true;
+}
+
+static void kermit_save_cb(editor_doc_t *doc, void *ctx)
+{
+    if (editor_doc_is_modified(doc) && editor_doc_get_path(doc) &&
+        editor_doc_save(doc) != ESP_OK)
+        *(bool *)ctx = true;
+}
+
+/* Drop a document's file so nothing can write the old content back
+ * over a file the client replaces. */
+static void kermit_close_cb(editor_doc_t *doc, void *ctx)
+{
+    (void)ctx;
+    if (editor_doc_get_path(doc)) {
+        editor_set_active(doc);
+        editor_close_file();
+    }
+}
+
+static void kermit_start(void)
+{
+    if (kermit_server_is_running()) return;
+    const char *busy = sd_handed_off_msg();
+    if (busy) {
+        editor_ui_set_status(busy);
+        return;
+    }
+    if (!sd_card_is_ready()) {
+        editor_ui_set_status("Sync via browser: no SD card");
+        return;
+    }
+    if (git_sync_get_state() == GIT_SYNC_IN_PROGRESS) {
+        editor_ui_set_status("Sync via browser: wait for Git sync to finish");
+        return;
+    }
+    bool untitled = false;
+    editor_doc_foreach(kermit_untitled_cb, &untitled);
+    if (untitled) {
+        editor_ui_set_status("Sync via browser: save or discard the new document first");
+        return;
+    }
+    bool save_failed = false;
+    editor_doc_foreach(kermit_save_cb, &save_failed);
+    if (save_failed) {
+        editor_ui_set_status("Sync via browser: could not save an open document");
+        return;
+    }
+    editor_ui_apply_split_mode(SPLIT_NONE);
+    editor_doc_foreach(kermit_close_cb, NULL);
+    pane_bind_focus();
+    s_editor_screen_active = false;   /* close_menu() goes to the browser */
+
+    esp_err_t err = kermit_server_start(sd_card_get_mount_point(), kermit_status_cb);
+    if (err != ESP_OK) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "Sync via browser: failed to start (%s)",
+                 esp_err_to_name(err));
+        editor_ui_set_status(buf);
+        return;
+    }
+    close_menu();
+    show_msg_popup("Sync via browser", KERMIT_STARTING_TEXT, false);
+    s_msg_kermit = true;
+    lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Cancel");
+    /* Sleep stays allowed until a computer connects. */
+    s_kermit_usb_state = KUSB_STARTING;
+    s_kermit_start_ms = lv_tick_get();
+    if (!s_kermit_usb_timer)
+        s_kermit_usb_timer = lv_timer_create(kermit_usb_poll_cb,
+                                             KERMIT_USB_POLL_MS, NULL);
+}
+
+/* "Finished" in the Sync via browser dialog. */
+static void kermit_finish(void)
+{
+    if (s_kermit_usb_timer) {
+        lv_timer_delete(s_kermit_usb_timer);
+        s_kermit_usb_timer = NULL;
+    }
+    close_msg_popup();
+    kermit_server_stop();
+    standby_set_inhibit(false);
+    if (lv_scr_act() == s_scr_browser) refresh_file_list();
+    editor_ui_set_status(kermit_server_is_running()
+                             ? "Sync via browser: stopping..."
+                             : "Sync via browser: finished");
+}
+
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+static list_touch_ctx_t s_kermit_touch_ctx;
+#endif
+static void kermit_picker_activate(int idx);
+
+static void refresh_kermit_picker_items(void)
+{
+    lv_label_set_text(s_lbl_menu_hdr, "Sync via browser: start the file server?");
+    lv_obj_clean(s_menu_list);
+    lv_list_add_btn(s_menu_list, NULL, "Start");
+    lv_list_add_btn(s_menu_list, NULL, "Cancel");
+    apply_list_selection_styles(s_menu_list, s_kermit_picker_sel);
+    s_kermit_picker_sel_prev = s_kermit_picker_sel;
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+    s_kermit_touch_ctx.p_sel      = &s_kermit_picker_sel;
+    s_kermit_touch_ctx.p_sel_prev = &s_kermit_picker_sel_prev;
+    s_kermit_touch_ctx.activate   = kermit_picker_activate;
+    list_touch_attach(s_menu_list, &s_kermit_touch_ctx);
+#endif
+    sync_battery_labels();
+}
+
+static void update_kermit_picker_highlight(void)
+{
+    update_list_highlight(s_menu_list, s_kermit_picker_sel,
+                          s_kermit_picker_sel_prev);
+    s_kermit_picker_sel_prev = s_kermit_picker_sel;
+}
+
+static void close_kermit_picker(void)
+{
+    s_kermit_picker_open = false;
+    lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
+    refresh_menu_items();
+}
+
+/* Row 0 = Start, 1 = Cancel (Enter or a second tap). */
+static void kermit_picker_activate(int idx)
+{
+    close_kermit_picker();
+    if (idx == 0) kermit_start();
+}
+#endif /* CONFIG_DRAFTLING_HAS_KERMIT */
+
 /* ---- "Format SD card" picker (see fmt_step_t) ---- */
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
 static list_touch_ctx_t s_fmt_touch_ctx;
@@ -5792,10 +6128,8 @@ static void close_fmt_picker(void)
 /* Why the card cannot be formatted right now, or NULL if it can. */
 static const char *fmt_blocked_reason(void)
 {
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-    if (usb_msc_get_mode() != USB_MSC_MODE_OFF)
-        return "SD card via USB active -- disable it first";
-#endif
+    const char *busy = sd_handed_off_msg();
+    if (busy) return busy;
     if (!sd_card_get_handle()) return "Format SD card: no SD card";
     if (git_sync_get_state() == GIT_SYNC_IN_PROGRESS)
         return "Format SD card: wait for Git sync to finish";
@@ -5965,19 +6299,17 @@ static void menu_activate_item(int idx)
         close_menu();
         break;
     case MENU_IDX_GIT_SYNC:
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
         /* Git sync reads and writes the SD card directly (its own
          * .git/ history plus the working tree), same as any other
-         * file I/O -- refuse it while the card belongs to a USB host,
-         * same as handle_browser_key()'s guard. This item is only
-         * reachable via the F1 menu, which stays reachable so the
-         * user can switch SD-via-USB back off; the menu is not itself
-         * gated the way the file browser is. */
-        if (usb_msc_get_mode() != USB_MSC_MODE_OFF) {
-            editor_ui_set_status("SD card via USB active -- disable it first");
+         * file I/O -- refuse it while the card belongs to a USB host
+         * or the Kermit server, same as handle_browser_key()'s guard.
+         * This item is only reachable via the F1 menu, which stays
+         * reachable so the user can switch those back off; the menu
+         * is not itself gated the way the file browser is. */
+        if (const char *busy = sd_handed_off_msg()) {
+            editor_ui_set_status(busy);
             break;
         }
-#endif
         /* Auto-save unsaved edits so the sync task pushes the latest content. */
         if (editor_is_modified() && editor_get_file_path()) {
             editor_save_file();
@@ -6000,13 +6332,11 @@ static void menu_activate_item(int idx)
         }
         break;
     case MENU_IDX_DRAFTBOX:
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
         /* Writes git.cfg on the SD card -- same guard as Git Sync. */
-        if (usb_msc_get_mode() != USB_MSC_MODE_OFF) {
-            editor_ui_set_status("SD card via USB active -- disable it first");
+        if (const char *busy = sd_handed_off_msg()) {
+            editor_ui_set_status(busy);
             break;
         }
-#endif
         if (wifi_manager_is_connected()) {
             show_dbx_prompt(false);
         } else {
@@ -6036,6 +6366,13 @@ static void menu_activate_item(int idx)
                             : (s_usbmsc_pending_mode == USB_MSC_MODE_READ_WRITE) ? 2
                             : 0;
         refresh_usbmsc_picker_items();
+        break;
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    case MENU_IDX_KERMIT:
+        s_kermit_picker_open = true;
+        s_kermit_picker_sel = 0;
+        refresh_kermit_picker_items();
         break;
 #endif
     case MENU_IDX_FORMAT_SD:
@@ -6143,6 +6480,30 @@ static void handle_menu_key(const kb_event_t *ev)
             break;
         case KB_KEY_ESCAPE:
             close_usbmsc_picker();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+#endif
+
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    if (s_kermit_picker_open) {
+        switch (ev->keycode) {
+        case KB_KEY_UP:
+            if (s_kermit_picker_sel > 0) s_kermit_picker_sel--;
+            update_kermit_picker_highlight();
+            break;
+        case KB_KEY_DOWN:
+            if (s_kermit_picker_sel < 1) s_kermit_picker_sel++;
+            update_kermit_picker_highlight();
+            break;
+        case KB_KEY_ENTER:
+            kermit_picker_activate(s_kermit_picker_sel);
+            break;
+        case KB_KEY_ESCAPE:
+            close_kermit_picker();
             break;
         default:
             break;
@@ -6487,6 +6848,19 @@ static void build_hwinfo_text(std::string &out, int cols)
     }
 #endif
     if (!any_kbd) help_row(out, cols, kc, "Status", "none connected");
+
+    help_heading(out, "USB device");
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+    help_row(out, cols, kc, "SD via USB", usb_msc_mode_name(usb_msc_get_mode()));
+#else
+    help_row(out, cols, kc, "SD via USB", "not available");
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    help_row(out, cols, kc, "Browser sync",
+             kermit_server_is_running() ? "Running" : "Stopped");
+#else
+    help_row(out, cols, kc, "Browser sync", "not available");
+#endif
 
     help_heading(out, "MAC address");
 #if SOC_WIFI_SUPPORTED || SOC_BT_SUPPORTED
@@ -8096,21 +8470,19 @@ static void handle_editor_key(const kb_event_t *ev)
         return;
     }
 
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     /* Defense-in-depth, not the primary guard: commit_usb_msc_pending_mode()
-     * forces the file browser (not the editor) whenever SD-via-USB
-     * turns on, and handle_browser_key() then refuses to open/create a
-     * file while it stays on, so this screen should be unreachable for
-     * as long as the card belongs to a USB host. Refuse every key but
-     * F1 here too anyway, in case some other path (a future feature, a
-     * bug) ever lands on the editor screen while it is active -- the
-     * card must not be written to while a host may also be writing to
-     * it. */
-    if (usb_msc_get_mode() != USB_MSC_MODE_OFF) {
-        editor_ui_set_status("SD card via USB active -- disable it in F1 menu first");
+     * and kermit_start() force the file browser (not the editor)
+     * whenever SD-via-USB / the Kermit server turns on, and
+     * handle_browser_key() then refuses to open/create a file while it
+     * stays on, so this screen should be unreachable for as long as
+     * the card is handed off. Refuse every key but F1 here too anyway,
+     * in case some other path (a future feature, a bug) ever lands on
+     * the editor screen while it is active -- the card must not be
+     * written to while a host may also be writing to it. */
+    if (const char *busy = sd_handed_off_msg()) {
+        editor_ui_set_status(busy);
         return;
     }
-#endif
 
     /* Win+Space cycles the keyboard layout, mirroring Ctrl+L. HID
      * keycode 0x2C is Space; the GUI ("Win"/"Cmd") modifier is
@@ -8620,15 +8992,13 @@ static void close_inpane_browser(void)
  * handler and the touchscreen tap-to-activate path. */
 static void browser_activate_item(int row)
 {
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     /* Touch-tap path for opening a file -- mirrors the keyboard guard
      * in handle_browser_key() so a touchscreen board cannot open a
-     * file while the SD card belongs to a USB host either. */
-    if (usb_msc_get_mode() != USB_MSC_MODE_OFF) {
-        editor_ui_set_status("SD card via USB active -- disable it in F1 menu first");
+     * file while the SD card is handed off either. */
+    if (const char *busy = sd_handed_off_msg()) {
+        editor_ui_set_status(busy);
         return;
     }
-#endif
     lv_obj_t *btn = lv_obj_get_child(s_browser_list, row);
     if (!btn) return;
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
@@ -8724,18 +9094,18 @@ static void handle_browser_key(const kb_event_t *ev)
         return;
     }
 
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-    /* While the SD card is handed to a USB host, refuse anything that
-     * would touch it from the firmware side -- opening/creating a
-     * file, Git sync, split changes, forced sleep, and so on. Only
-     * F1 (to reach the menu and switch it back off) and plain
-     * navigation stay live; see commit_usb_msc_pending_mode(). */
-    if (usb_msc_get_mode() != USB_MSC_MODE_OFF &&
-        ev->keycode != KB_KEY_UP && ev->keycode != KB_KEY_DOWN) {
-        editor_ui_set_status("SD card via USB active -- disable it in F1 menu first");
-        return;
+    /* While the SD card is handed to a USB host or the Kermit server,
+     * refuse anything that would touch it from the firmware side --
+     * opening/creating a file, Git sync, split changes, forced sleep,
+     * and so on. Only F1 (to reach the menu and switch it back off)
+     * and plain navigation stay live; see commit_usb_msc_pending_mode()
+     * and kermit_start(). */
+    if (const char *busy = sd_handed_off_msg()) {
+        if (ev->keycode != KB_KEY_UP && ev->keycode != KB_KEY_DOWN) {
+            editor_ui_set_status(busy);
+            return;
+        }
     }
-#endif
 
     /* Ctrl+G / Ctrl+W / Ctrl+M / Ctrl+P and the Ctrl+1/2/3 split
      * shortcuts work from the file browser as well. See the editor's
@@ -8932,17 +9302,16 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
         return;
     }
 
-#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
     /* Defense-in-depth, not the primary guard: split mode cannot be
-     * entered while SD-via-USB is on (commit_usb_msc_pending_mode()
-     * collapses it, and handle_browser_key() blocks Ctrl+2/3 from
-     * re-entering it), so this overlay should be unreachable in that
-     * state to begin with. See handle_editor_key()'s matching guard. */
-    if (usb_msc_get_mode() != USB_MSC_MODE_OFF) {
-        editor_ui_set_status("SD card via USB active -- disable it in F1 menu first");
+     * entered while the SD card is handed off (commit_usb_msc_pending_mode()
+     * and kermit_start() collapse it, and handle_browser_key() blocks
+     * Ctrl+2/3 from re-entering it), so this overlay should be
+     * unreachable in that state to begin with. See handle_editor_key()'s
+     * matching guard. */
+    if (const char *busy = sd_handed_off_msg()) {
+        editor_ui_set_status(busy);
         return;
     }
-#endif
 
     if (ctrl && ev->keycode == KB_KEY_TAB) {
         /* Ctrl+Tab leaves the in-pane file selector and moves keyboard
@@ -10884,6 +11253,9 @@ static void teardown_screens(void)
     s_dbx_open                = false;
     s_msg_open                = false;
     s_msg_busy                = false;
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    s_msg_kermit              = false;
+#endif
     s_exit_open               = false;
     s_newfmt_open             = false;
     s_del_open                = false;

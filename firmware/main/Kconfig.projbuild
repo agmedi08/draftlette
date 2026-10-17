@@ -1063,6 +1063,22 @@ config DRAFTLING_HAS_USB_MSC
     default y if DRAFTLING_MODEL_M5STACK_PAPERMONO
     default n
 
+# DRAFTLING_HAS_KERMIT enables F1 -> "Sync via browser", the Kermit file
+# server on the serial console (components/kermit). Only boards whose
+# USB port is wired to the ESP32-S3's native USB -- the same boards as
+# DRAFTLING_HAS_USB_MSC above. The server's USB serial port is a
+# TinyUSB CDC-ACM device (CONFIG_TINYUSB_CDC_ENABLED in each board's
+# sdkconfig.defaults), not USB-Serial/JTAG, which resets the chip when a
+# browser opens the port. On boards with a
+# USB-to-UART bridge (Seeed reTerminal E1001 / Sticky, Elecrow
+# CrowPanel 5.79") the bridge's DTR / RTS lines drive the EN / GPIO0
+# auto-reset circuit, and a computer opening the port reset the device
+# or held it in reset (seen on the reTerminal Sticky).
+config DRAFTLING_HAS_KERMIT
+    bool
+    default y if DRAFTLING_HAS_USB_MSC
+    default n
+
 config DRAFTLING_USB_MSC_IDLE_TIMEOUT_SEC
     int
     depends on DRAFTLING_HAS_USB_MSC
