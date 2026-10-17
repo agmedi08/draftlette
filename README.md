@@ -23,28 +23,28 @@ The [web flasher](https://clackups.github.io/draftling/) allows you to
 load the firmware quickly without having to compile it.
 
 * Ready-made consumer grade hardware
-  * Xteink X4 Pro (**unlocked devices only!**), so far the best value for money amongst e-paper devices.
-  * Xteink X4 Classic (**unlocked devices only!**) -- the buttons-only, no-front-light X4.
-  * Seeed reTerminal Sticky
-  * M5Stack PaperMono / PaperMono-Lite
-  * LilyGO T5 E-Paper S3 Pro / Pro Lite
-  * Waveshare ESP32-S3-Touch-LCD-3.49
-  * Seeed Studio reTerminal E1001 (7.5" e-paper, metal body)
-  * M5Stack PaperS3 (discontinued)
+  * [Xteink X4 Pro](https://www.xteink.com) (**unlocked devices only!**), so far the best value for money amongst e-paper devices.
+  * [Xteink X4 Classic](https://www.xteink.com) (**unlocked devices only!**) -- the buttons-only, no-front-light X4.
+  * [Seeed reTerminal Sticky](https://www.seeedstudio.com/sticky/docs/en/device-guide/hardware-overview/)
+  * M5Stack [PaperMono](https://docs.m5stack.com/en/core/PaperMono) / [PaperMono-Lite](https://docs.m5stack.com/en/core/PaperMono-Lite)
+  * [LilyGO T5 E-Paper S3 Pro / Pro Lite](https://github.com/Xinyuan-LilyGO/T5S3-4.7-e-paper-PRO)
+  * [Waveshare ESP32-S3-Touch-LCD-3.49](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.49)
+  * [Seeed Studio reTerminal E1001](https://wiki.seeedstudio.com/getting_started_with_reterminal_e1001/) (7.5" e-paper, metal body)
+  * [M5Stack PaperS3](https://docs.m5stack.com/en/core/papers3) (discontinued)
 
 * DIY boards
-  * Waveshare ESP32-S3-ePaper-3.97 ([a 3D-printed enclosure available](3D_Prints/Waveshare_ESP32-S3-ePaper-3.97/))
-  * Waveshare ESP32-S3-RLCD-4.2 ([a 3D-printed enclosure available](3D_Prints/Waveshare_ESP32-S3-RLCD-4.2/))
-  * Elecrow CrowPanel ESP32-S3 5.79" E-Paper HMI Display
+  * [Waveshare ESP32-S3-ePaper-3.97](https://docs.waveshare.com/ESP32-S3-ePaper-3.97) ([a 3D-printed enclosure available](3D_Prints/Waveshare_ESP32-S3-ePaper-3.97/))
+  * [Waveshare ESP32-S3-RLCD-4.2](https://docs.waveshare.com/ESP32-S3-RLCD-4.2) ([a 3D-printed enclosure available](3D_Prints/Waveshare_ESP32-S3-RLCD-4.2/))
+  * [Elecrow CrowPanel ESP32-S3 5.79" E-Paper HMI Display](https://www.elecrow.com/crowpanel-esp32-5-79-e-paper-hmi-display-with-272-792-resolution-black-white-color-driven-by-spi-interface.html) ([GitHub](https://github.com/Elecrow-RD/CrowPanel-ESP32-5.79-E-paper-HMI-Display-with-272-792))
   * Guition JC3248W535
-  * 7" and 4.3" Sunton boards
-  * 2.8", 3.5" and 4" Freenove boards
-  * Viewe UEDX24320028E-WB-A board with the UEED035HV-RX40-L001 3.5" transflective display
-  * Waveshare ESP32-S3-Touch-LCD-7 
-  * Waveshare ESP32-S3-LCD-3.16
-  * MicroJournal Rev 5 writerdeck (ESP32-S3, ILI9341)
-  * NiceMCU-C5E-DEV_2.8IPS (ESP32-C5, 2.8" color LCD)
-  * M5Stack Tab5 (no web flasher support, as internal firmware needs an upgrade too)
+  * [7" and 4.3" Sunton boards](https://github.com/rzeldent/platformio-espressif32-sunton)
+  * [2.8", 3.5" and 4" Freenove boards](https://github.com/Freenove/Freenove_ESP32_S3_Display)
+  * [Viewe UEDX24320028E-WB-A](https://github.com/VIEWESMART/UEDX24320028ESP32-2.8inch-Touch-Display) board with the [UEED035HV-RX40-L001](https://viewedisplay.com/product/3-5-inch-320x480-sunlight-readable-transflective-with-super-low-power-tft-lcd-module/) 3.5" transflective display
+  * [Waveshare ESP32-S3-Touch-LCD-7](https://docs.waveshare.com/ESP32-S3-Touch-LCD-7)
+  * [Waveshare ESP32-S3-LCD-3.16](https://www.waveshare.com/wiki/ESP32-S3-LCD-3.16)
+  * [MicroJournal Rev 5](https://github.com/unkyulee/micro-journal/blob/main/rev.5/5.0/readme.md) writerdeck (ESP32-S3, ILI9341)
+  * [NiceMCU-C5E-DEV_2.8IPS](https://github.com/NiceMCU-01/NiceMCU-C5-2.8IPS) (ESP32-C5, 2.8" color LCD)
+  * [M5Stack Tab5](https://docs.m5stack.com/en/core/Tab5) (no web flasher support, as internal firmware needs an upgrade too)
 
 
 ## Features
