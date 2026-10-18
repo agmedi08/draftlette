@@ -14,6 +14,7 @@
     <div class="wrap topnav-inner">
       <a class="brand" href="index.html">Draftling</a>
       <ul>
+        <li><a href="#usb">Over USB</a></li>
         <li><a href="#start">Before you start</a></li>
         <li><a href="#github">GitHub</a></li>
         <li><a href="#gitlab">GitLab</a></li>
@@ -54,6 +55,11 @@
         instructions for the three most common ones. You only need to do
         this once per device.
       </p>
+      <p>
+        No Wi-Fi at hand? You can also
+        <a href="#usb">sync over a USB cable</a> from a web browser on
+        your computer.
+      </p>
       <aside class="callout">
         <h3>Draftbox</h3>
         <p>
@@ -66,8 +72,60 @@
       </aside>
     </section>
 
+    <section id="usb">
+      <h2>Sync over USB with Draftbridge</h2>
+      <p>
+        <a href="https://bridge.draftling.art/">Draftbridge</a>
+        synchronizes your Draftling with a GitHub or Codeberg repository
+        through a USB cable, from a web browser, without Wi-Fi. You log
+        in with your GitHub or Codeberg account in the browser, so there
+        is no access token or <code>git.cfg</code> to set up by hand.
+      </p>
+      <ol>
+        <li>
+          Connect the Draftling to your computer with a USB cable. Use a
+          desktop version of Chrome, Edge or Opera; Firefox and Safari
+          do not support the Web Serial connection it needs.
+        </li>
+        <li>
+          On the Draftling, press <kbd>F1</kbd>, select
+          <strong>Sync via browser...</strong> (letter <kbd>B</kbd>) and
+          choose <strong>Start</strong>. Draftling saves and closes your
+          open documents and waits for the computer.
+        </li>
+        <li>
+          On the computer, open
+          <a href="https://bridge.draftling.art/">bridge.draftling.art</a>,
+          log in with GitHub or Codeberg, choose the repository for your
+          texts (or create a new one), and follow the instructions there
+          to connect to the device and synchronize. The device shows the
+          progress of each transfer.
+        </li>
+        <li>
+          When it is done, select <strong>Finished</strong> on the
+          Draftling (<kbd>Enter</kbd> or <kbd>Esc</kbd>).
+        </li>
+      </ol>
+      <p>
+        The browser does the same steps as Draftling's own Wi-Fi sync,
+        on the same Git repository on the SD card, so you can mix the
+        two freely. Draftbridge points the device's <code>git.cfg</code>
+        at the repository you chose; to sync over Wi-Fi as well, add an
+        access token to it as described below.
+      </p>
+      <p class="hint">
+        Needs Draftling 1.0.17 or newer, on a board whose USB port is
+        the ESP32-S3's built-in USB: the boards that offer "SD card via
+        USB" in the <kbd>F1</kbd> menu. The Seeed reTerminal E1001 and
+        Sticky and the Elecrow CrowPanel 5.79" do not support it. The
+        repository may contain only <code>.md</code>, <code>.txt</code>
+        and <code>.fountain</code> files. Details:
+        <a href="https://github.com/clackups/draftling/blob/main/docs/sync-via-browser.md">docs/sync-via-browser.md</a>.
+      </p>
+    </section>
+
     <section id="start">
-      <h2>Before you start</h2>
+      <h2>Wi-Fi sync: before you start</h2>
       <ol>
         <li>
           Create an <strong>empty private repository</strong> on your
@@ -258,6 +316,8 @@ author_email=jane@example.com</pre>
         <a href="index.html">&larr; Draftling home</a>
         <span class="sep">&middot;</span>
         <a href="https://clackups.github.io/draftling/">Web flasher</a>
+        <span class="sep">&middot;</span>
+        <a href="https://bridge.draftling.art/">Draftbridge</a>
         <span class="sep">&middot;</span>
         <a href="https://github.com/clackups/draftling">Source &amp; docs</a>
       </p>
