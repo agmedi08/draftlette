@@ -6,6 +6,8 @@ in the git log.
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-10-18
+
 ### Added
 
 - **NiceMCU-C5E-DEV_2.8IPS support**: a new build preset,
