@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draftling -- Git sync setup</title>
+  <meta name="description" content="How to set up Git synchronization on a Draftling writerdeck with GitHub, GitLab, Codeberg or any other Git host.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <nav class="topnav">
+    <div class="wrap topnav-inner">
+      <a class="brand" href="index.html">Draftling</a>
+      <ul>
+        <li><a href="#start">Before you start</a></li>
+        <li><a href="#github">GitHub</a></li>
+        <li><a href="#gitlab">GitLab</a></li>
+        <li><a href="#codeberg">Codeberg</a></li>
+        <li><a href="#settings">Settings</a></li>
+        <li><a href="#trouble">Troubleshooting</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <header class="hero hero-compact" id="top">
+    <div class="wrap">
+      <p class="eyebrow">Guide</p>
+      <h1>Set up Git sync</h1>
+      <p class="lead">
+        Keep the texts on your Draftling backed up and in sync with a
+        private Git repository.
+      </p>
+    </div>
+  </header>
+
+  <main class="wrap content">
+
+    <section id="intro">
+      <h2>How it works</h2>
+      <p>
+        Draftling has a built-in Git client. Press
+        <kbd>Ctrl</kbd>+<kbd>W</kbd> to connect to Wi-Fi, then
+        <kbd>Ctrl</kbd>+<kbd>G</kbd>, and Draftling commits your edits,
+        pulls in anything new from the server, merges the two, and
+        pushes the result back, using the same standard HTTPS protocol
+        that desktop <code>git</code> uses. A full commit history is kept
+        in <code>.git/</code> on the SD card, so you can also plug the
+        card into a computer and work with it there.
+      </p>
+      <p>
+        This works with any standard Git host. Below are step-by-step
+        instructions for the three most common ones. You only need to do
+        this once per device.
+      </p>
+      <aside class="callout">
+        <h3>Draftbox</h3>
+        <p>
+          With <a href="https://draftbox.art/">Draftbox</a> you skip all
+          of this: create a repository there, get a one-time password,
+          and enter it in the Draftling <kbd>F1</kbd> menu ("Connect a
+          Draftbox repository"). The device writes <code>git.cfg</code>
+          for you.
+        </p>
+      </aside>
+    </section>
+
+    <section id="start">
+      <h2>Before you start</h2>
+      <ol>
+        <li>
+          Create an <strong>empty private repository</strong> on your
+          Git host (no README, no <code>.gitignore</code>, no licence; a
+          completely empty repository is simplest). Note its branch
+          name; new repositories usually default to <code>main</code>.
+        </li>
+        <li>
+          Make sure your Draftling can reach the Internet: use the Wi-Fi
+          connection dialog in the <kbd>F1</kbd> menu, or put a
+          <code>wifi.cfg</code> file on the SD card root with your
+          network name on the first line and the password on the second
+          line.
+          <pre>MyHomeWiFi
+sup3r-secret</pre>
+        </li>
+      </ol>
+      <p class="hint">
+        Everything below ends with a small text file called
+        <code>git.cfg</code> on the SD card root. Create it with any text
+        editor. <strong>Keep it private</strong>: it contains an access
+        token.
+      </p>
+    </section>
+
+    <section id="github">
+      <h2>GitHub</h2>
+      <ol>
+        <li>
+          Open
+          <a href="https://github.com/settings/personal-access-tokens">Settings
+          &rarr; Developer settings &rarr; Personal access tokens &rarr;
+          Fine-grained tokens</a> and click <strong>Generate new
+          token</strong>.
+        </li>
+        <li>Give it a name (e.g. <em>draftling</em>) and an expiry date.</li>
+        <li>
+          Under <strong>Repository access</strong> choose
+          <em>Only select repositories</em> and pick your repository.
+        </li>
+        <li>
+          Under <strong>Permissions &rarr; Repository permissions</strong>
+          set <strong>Contents</strong> to <em>Read and write</em>. (This
+          also switches <em>Metadata</em> to read-only automatically,
+          which is fine.)
+        </li>
+        <li>
+          Click <strong>Generate token</strong> and copy the value. It
+          starts with <code>github_pat_</code> and is shown only once.
+        </li>
+      </ol>
+      <p><code>git.cfg</code>:</p>
+      <pre>repo_url=https://github.com/YOUR-USER/YOUR-REPO
+branch=main
+token=github_pat_xxxxxxxxxxxxxxxxxxxx
+author_name=Jane Doe
+author_email=jane@example.com</pre>
+    </section>
+
+    <section id="gitlab">
+      <h2>GitLab</h2>
+      <ol>
+        <li>Open your project and go to <strong>Settings &rarr; Access tokens</strong>.</li>
+        <li>Click <strong>Add new token</strong>. Give it a name and an expiry date.</li>
+        <li>Set the <strong>Role</strong> to <em>Developer</em> (or higher).</li>
+        <li>
+          Tick the <strong>read_repository</strong> and
+          <strong>write_repository</strong> scopes.
+        </li>
+        <li>
+          Click <strong>Create project access token</strong> and copy the
+          value. It starts with <code>glpat-</code> and is shown only
+          once. Note the token's name too; you need it as the username.
+        </li>
+      </ol>
+      <p><code>git.cfg</code>:</p>
+      <pre>repo_url=https://gitlab.com/YOUR-USER/YOUR-REPO
+branch=main
+username=draftling-token-name
+token=glpat-xxxxxxxxxxxxxxxxxxxx
+author_name=Jane Doe
+author_email=jane@example.com</pre>
+      <p class="hint">
+        If you use a <em>personal</em> access token (User Settings &rarr;
+        Access Tokens) instead of a project token, set
+        <code>username</code> to your GitLab account username.
+      </p>
+    </section>
+
+    <section id="codeberg">
+      <h2>Codeberg</h2>
+      <ol>
+        <li>
+          Open
+          <a href="https://codeberg.org/user/settings/applications">Settings
+          &rarr; Applications</a>.
+        </li>
+        <li>
+          Under <strong>Manage Access Tokens</strong> enter a token name
+          (e.g. <em>draftling</em>).
+        </li>
+        <li>
+          Expand <strong>Select permissions</strong> and set
+          <strong>repository</strong> to <em>Read and Write</em>.
+        </li>
+        <li>
+          Click <strong>Generate Token</strong> and copy the value. It is
+          shown only once.
+        </li>
+      </ol>
+      <p><code>git.cfg</code>:</p>
+      <pre>repo_url=https://codeberg.org/YOUR-USER/YOUR-REPO
+branch=main
+username=YOUR-CODEBERG-USERNAME
+token=xxxxxxxxxxxxxxxxxxxx
+author_name=Jane Doe
+author_email=jane@example.com</pre>
+      <p class="hint">
+        The same steps work for any Gitea or Forgejo host, not just
+        Codeberg.
+      </p>
+    </section>
+
+    <section id="settings">
+      <h2>All the git.cfg settings</h2>
+      <div class="table-scroll">
+        <table class="cfg-table">
+          <thead>
+            <tr><th>Key</th><th>Required</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>repo_url</code></td><td>yes</td><td>Repository URL. A trailing <code>.git</code> is optional.</td></tr>
+            <tr><td><code>token</code></td><td>yes</td><td>The access token you created above (used as the HTTPS password).</td></tr>
+            <tr><td><code>branch</code></td><td>no</td><td>Branch to sync. Default <code>main</code>.</td></tr>
+            <tr><td><code>username</code></td><td>no</td><td>HTTPS username. Default <code>x-access-token</code> (works for GitHub). GitLab and Codeberg need a real value (see above).</td></tr>
+            <tr><td><code>path</code></td><td>no</td><td>Sync into this sub-directory of the repository instead of its root, e.g. <code>notes/</code>.</td></tr>
+            <tr><td><code>author_name</code><br><code>author_email</code></td><td>no</td><td>Identity stamped on the commits Draftling makes.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="first">
+      <h2>First sync</h2>
+      <ol>
+        <li>Put <code>git.cfg</code> on the SD card root and insert the card.</li>
+        <li>Power on Draftling and connect Wi-Fi: press <kbd>Ctrl</kbd>+<kbd>W</kbd>, or use the <kbd>F1</kbd> menu.</li>
+        <li>Press <kbd>Ctrl</kbd>+<kbd>G</kbd> to sync.</li>
+      </ol>
+      <p>
+        On the very first sync Draftling downloads the repository's
+        history (nothing, for an empty repository), commits your current
+        files, and pushes them up. After that, every
+        <kbd>Ctrl</kbd>+<kbd>G</kbd> is a quick two-way merge.
+      </p>
+      <p>
+        If both sides changed the same lines of a file, Draftling writes
+        both versions into the file with
+        <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> /
+        <code>=======</code> /
+        <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code> markers and still
+        commits, so nothing is ever lost. Edit the file to resolve it and
+        sync again.
+      </p>
+      <p class="hint">
+        Full details of the protocol, the on-card layout and the merge
+        behaviour are in
+        <a href="https://github.com/clackups/draftling/blob/main/docs/git-sync.md">docs/git-sync.md</a>.
+      </p>
+    </section>
+
+    <section id="trouble">
+      <h2>Troubleshooting</h2>
+      <ul class="tshoot">
+        <li><strong>Auth failed / 401</strong>: wrong token, wrong <code>username</code>, or the token lacks write access to <em>Contents</em> / <em>repository</em>.</li>
+        <li><strong>Nothing happens / no Wi-Fi</strong>: check the Wi-Fi settings (in <code>wifi.cfg</code>: network name on line 1, password on line 2, no extra spaces) and that you connected with <kbd>Ctrl</kbd>+<kbd>W</kbd> first.</li>
+        <li><strong>404</strong>: check <code>repo_url</code>; the repository must already exist.</li>
+        <li><strong>Push rejected</strong>: the server's copy changed while syncing. Just press <kbd>Ctrl</kbd>+<kbd>G</kbd> again.</li>
+        <li><strong>Only some files sync</strong>: that is by design. Only <code>.md</code>, <code>.fountain</code> and <code>.txt</code> files in the top folder of the card are synchronized; sub-directories, images and other file types are not.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <p>
+        <a href="index.html">&larr; Draftling home</a>
+        <span class="sep">&middot;</span>
+        <a href="https://clackups.github.io/draftling/">Web flasher</a>
+        <span class="sep">&middot;</span>
+        <a href="https://github.com/clackups/draftling">Source &amp; docs</a>
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
