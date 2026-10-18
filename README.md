@@ -12,12 +12,9 @@ exists only to be published via GitHub Pages.
 ## Layout
 
 - `index.html`, `style.css`, `app.js` — the flasher UI and logic.
-- `git-sync.html` — a standalone, static help page (shares `style.css`)
-  with a short description of the project and step-by-step instructions
-  for setting up Git sync against a private GitHub, GitLab, or Codeberg
-  repository. Linked from `index.html`. Mirrors
-  [docs/git-sync.md](https://github.com/clackups/draftling/blob/main/docs/git-sync.md)
-  on `main` in end-user terms; keep the two roughly in step.
+- `git-sync.html` — a redirect to the Git sync setup guide, which now
+  lives on the project homepage (https://draftling.art/git-sync.html,
+  `web/git-sync.html` on `main`). Kept so old links keep working.
   `app.js` imports `esptool-js`'s prebuilt `bundle.js` from
   [jsdelivr](https://www.jsdelivr.com/), and `spark-md5` from
   [esm.sh](https://esm.sh), as ES modules; there is no build step.
