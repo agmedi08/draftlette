@@ -50,12 +50,14 @@
  * since both panel IOs implement the same tx_param / tx_color calls.
  * Tested on hardware (NiceMCU).
  *
- * It also drives the ST7789 version of the 2.8" 240x320 module used by
- * the MicroJournal Rev 5.1 (CONFIG_DRAFTLING_DISPLAY_ST7789). The init
- * table is TFT_eSPI's ST7789_Init.h (2.5.43), which the upstream
- * Micro Journal firmware (rev_5_st7789: ST7789_DRIVER, TFT_RGB_ORDER =
- * TFT_BGR, TFT_INVERSION_OFF) uses; it is selected by
- * CONFIG_DRAFTLING_ST7789_INIT_TFT_ESPI.
+ * It also drives both MicroJournal Rev 5 panels: the ILI9341 of Rev 5.0
+ * and the ST7789 of Rev 5.1. One build serves both
+ * (CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT): both init sequences are
+ * compiled in and probe_controller() below reads the controller ID at
+ * boot. The ST7789 init table is TFT_eSPI's ST7789_Init.h (2.5.43),
+ * which the upstream Micro Journal firmware (rev_5_st7789:
+ * ST7789_DRIVER, TFT_RGB_ORDER = TFT_BGR, TFT_INVERSION_OFF) uses; it is
+ * selected by CONFIG_DRAFTLING_ST7789_INIT_TFT_ESPI.
  */
 
 #include <cstdio>
@@ -68,6 +70,7 @@
 #include <driver/spi_master.h>
 #include <driver/ledc.h>
 #include <esp_lcd_panel_io.h>
+#include <esp_rom_sys.h>
 #if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
 #include <esp_lcd_io_parl.h>
 #endif
@@ -79,7 +82,7 @@ static const char *TAG = "DisplayILI9341";
 
 /* Board wiring, set by display_spi_tft_config() before display_init(). */
 static display_spi_tft_config_t s_cfg = {
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, 40 * 1000 * 1000, 50000
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, 40 * 1000 * 1000, 50000, -1
 };
 
 #define FNK_SPI_HOST       SPI2_HOST
@@ -216,6 +219,204 @@ static void panel_hw_reset(void)
     gpio_set_level((gpio_num_t)s_cfg.rst, 1);
     vTaskDelay(pdMS_TO_TICKS(120));
 }
+
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT)
+/* ============================================================
+ * Boot-time controller probe: ILI9341 or ST7789 (MicroJournal Rev 5.0 /
+ * 5.1). Bit-banged over the panel pins BEFORE spi_bus_initialize() and
+ * the panel IO claim them, the same approach as the Xteink e-paper
+ * probe (display_xteink_epd.cpp).
+ *
+ * - ST7789: RDDID (0x04) returns 85 85 52 after one dummy clock.
+ * - ILI9341: RDID4 (0xD3) returns a dummy byte, then 00 93 41. Many
+ *   ILI9341s only answer 0xD3 through the undocumented 0xD9 "index"
+ *   register (the way Adafruit_ILI9341 / TFT_eSPI readcommand8() read
+ *   it), so that is tried as well.
+ *
+ * The dummy cycles differ between controllers and interface modes, so
+ * the raw bit stream is searched for the signature at every bit offset
+ * instead of assuming an alignment. Read data is sampled on MISO (the
+ * panel's SDO in 4-wire interface II) and on MOSI (a bidirectional SDA
+ * in interface I). The SD card on the same bus is deselected first so
+ * it cannot drive MISO. Nothing found -> ILI9341.
+ * ============================================================ */
+
+typedef enum { TFT_CTRL_ILI9341, TFT_CTRL_ST7789 } tft_ctrl_t;
+static tft_ctrl_t s_ctrl = TFT_CTRL_ILI9341;
+
+#define PROBE_HALF_US 2
+#define PROBE_BYTES   6
+
+static void probe_write_byte(uint8_t b)
+{
+    for (int i = 0; i < 8; i++) {
+        gpio_set_level((gpio_num_t)s_cfg.mosi, (b & 0x80) ? 1 : 0);
+        esp_rom_delay_us(PROBE_HALF_US);
+        gpio_set_level((gpio_num_t)s_cfg.sck, 1);
+        esp_rom_delay_us(PROBE_HALF_US);
+        gpio_set_level((gpio_num_t)s_cfg.sck, 0);
+        b <<= 1;
+    }
+}
+
+/* Command (+ optional parameter) write, no read phase. */
+static void probe_write(uint8_t cmd, const uint8_t *data, int n)
+{
+    gpio_set_level((gpio_num_t)s_cfg.dc, 0);
+    gpio_set_level((gpio_num_t)s_cfg.cs, 0);
+    esp_rom_delay_us(PROBE_HALF_US);
+    probe_write_byte(cmd);
+    gpio_set_level((gpio_num_t)s_cfg.dc, 1);
+    for (int i = 0; i < n; i++) probe_write_byte(data[i]);
+    esp_rom_delay_us(PROBE_HALF_US);
+    gpio_set_level((gpio_num_t)s_cfg.cs, 1);
+    esp_rom_delay_us(PROBE_HALF_US);
+}
+
+/* Command followed by a PROBE_BYTES read phase, sampled on MISO and on
+ * MOSI (released to an input for the read). The panel shifts data out
+ * on the falling edge; it is sampled while SCK is high. Without a MISO
+ * pin its buffer stays all zeros, which matches no signature. */
+static void probe_read(uint8_t cmd, uint8_t miso[PROBE_BYTES], uint8_t mosi[PROBE_BYTES])
+{
+    gpio_set_level((gpio_num_t)s_cfg.dc, 0);
+    gpio_set_level((gpio_num_t)s_cfg.cs, 0);
+    esp_rom_delay_us(PROBE_HALF_US);
+    probe_write_byte(cmd);
+    gpio_set_level((gpio_num_t)s_cfg.dc, 1);
+    gpio_set_direction((gpio_num_t)s_cfg.mosi, GPIO_MODE_INPUT);
+    for (int i = 0; i < PROBE_BYTES; i++) {
+        uint8_t a = 0, b = 0;
+        for (int bit = 0; bit < 8; bit++) {
+            esp_rom_delay_us(PROBE_HALF_US);
+            gpio_set_level((gpio_num_t)s_cfg.sck, 1);
+            esp_rom_delay_us(PROBE_HALF_US);
+            a = (uint8_t)((a << 1) |
+                (s_cfg.miso >= 0 && gpio_get_level((gpio_num_t)s_cfg.miso) ? 1 : 0));
+            b = (uint8_t)((b << 1) | (gpio_get_level((gpio_num_t)s_cfg.mosi) ? 1 : 0));
+            gpio_set_level((gpio_num_t)s_cfg.sck, 0);
+        }
+        miso[i] = a;
+        mosi[i] = b;
+    }
+    gpio_set_level((gpio_num_t)s_cfg.cs, 1);
+    gpio_set_direction((gpio_num_t)s_cfg.mosi, GPIO_MODE_OUTPUT);
+    esp_rom_delay_us(PROBE_HALF_US);
+}
+
+/* True if the nbits-wide pattern appears at any bit offset of buf. */
+static bool probe_find(const uint8_t *buf, int nbytes, uint32_t pat, int nbits)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < nbytes; i++) v = (v << 8) | buf[i];
+    int total = nbytes * 8;
+    uint64_t mask = (1ULL << nbits) - 1;
+    for (int off = 0; off + nbits <= total; off++) {
+        if (((v >> (total - nbits - off)) & mask) == pat) return true;
+    }
+    return false;
+}
+
+static bool probe_has(const uint8_t miso[PROBE_BYTES], const uint8_t mosi[PROBE_BYTES],
+                      uint32_t pat, int nbits)
+{
+    return probe_find(miso, PROBE_BYTES, pat, nbits) ||
+           probe_find(mosi, PROBE_BYTES, pat, nbits);
+}
+
+static tft_ctrl_t probe_controller(void)
+{
+    /* gpio_config() also routes each pad to the GPIO function. The
+     * pull-ups make a silent line read 0xFF. */
+    {
+        gpio_config_t g = {};
+        g.intr_type    = GPIO_INTR_DISABLE;
+        g.mode         = GPIO_MODE_OUTPUT;
+        g.pull_up_en   = GPIO_PULLUP_ENABLE;
+        g.pin_bit_mask = (1ULL << s_cfg.cs) | (1ULL << s_cfg.dc) |
+                         (1ULL << s_cfg.sck) | (1ULL << s_cfg.mosi);
+        if (s_cfg.shared_cs >= 0) {
+            gpio_hold_dis((gpio_num_t)s_cfg.shared_cs);
+            g.pin_bit_mask |= 1ULL << s_cfg.shared_cs;
+        }
+        ESP_ERROR_CHECK(gpio_config(&g));
+        if (s_cfg.shared_cs >= 0) gpio_set_level((gpio_num_t)s_cfg.shared_cs, 1);
+        gpio_set_level((gpio_num_t)s_cfg.cs, 1);
+        gpio_set_level((gpio_num_t)s_cfg.dc, 1);
+        gpio_set_level((gpio_num_t)s_cfg.sck, 0);
+        if (s_cfg.miso >= 0) {
+            gpio_config_t in = {};
+            in.intr_type    = GPIO_INTR_DISABLE;
+            in.mode         = GPIO_MODE_INPUT;
+            in.pull_up_en   = GPIO_PULLUP_ENABLE;
+            in.pin_bit_mask = 1ULL << s_cfg.miso;
+            ESP_ERROR_CHECK(gpio_config(&in));
+        }
+    }
+
+    if (s_cfg.rst >= 0) {
+        panel_hw_reset();
+    } else {
+        probe_write(0x01, NULL, 0); /* SWRESET */
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+
+    uint8_t id_miso[PROBE_BYTES], id_mosi[PROBE_BYTES];
+    uint8_t d3_miso[PROBE_BYTES], d3_mosi[PROBE_BYTES];
+    probe_read(0x04, id_miso, id_mosi);  /* RDDID */
+    probe_read(0xD3, d3_miso, d3_mosi);  /* RDID4 */
+
+    /* 0xD9 index reads of 0xD3 parameters 1..3 (only sent to a panel
+     * that did not already identify itself). */
+    uint8_t ix_miso[3] = {0}, ix_mosi[3] = {0};
+    bool st7789  = probe_has(id_miso, id_mosi, 0x858552, 24);
+    bool ili9341 = !st7789 && probe_has(d3_miso, d3_mosi, 0x9341, 16);
+    if (!st7789 && !ili9341) {
+        for (int i = 0; i < 3; i++) {
+            uint8_t idx = (uint8_t)(0x11 + i);
+            uint8_t m[PROBE_BYTES], o[PROBE_BYTES];
+            probe_write(0xD9, &idx, 1);
+            probe_read(0xD3, m, o);
+            ix_miso[i] = m[0];
+            ix_mosi[i] = o[0];
+        }
+        ili9341 = (ix_miso[1] == 0x93 && ix_miso[2] == 0x41) ||
+                  (ix_mosi[1] == 0x93 && ix_mosi[2] == 0x41);
+    }
+
+    /* Release the pins: the SPI bus and the panel IO claim them next.
+     * The shared CS stays high until the SD driver takes it over. */
+    gpio_set_pull_mode((gpio_num_t)s_cfg.mosi, GPIO_FLOATING);
+    gpio_set_pull_mode((gpio_num_t)s_cfg.sck, GPIO_FLOATING);
+    gpio_set_pull_mode((gpio_num_t)s_cfg.dc, GPIO_FLOATING);
+    gpio_set_direction((gpio_num_t)s_cfg.mosi, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)s_cfg.sck, GPIO_MODE_INPUT);
+    gpio_set_direction((gpio_num_t)s_cfg.dc, GPIO_MODE_INPUT);
+    /* CS keeps its pull-up so the panel stays deselected until the
+     * panel IO drives it. */
+    gpio_set_direction((gpio_num_t)s_cfg.cs, GPIO_MODE_INPUT);
+
+    ESP_LOGI(TAG, "Probe RDDID miso %02X %02X %02X %02X mosi %02X %02X %02X %02X",
+             id_miso[0], id_miso[1], id_miso[2], id_miso[3],
+             id_mosi[0], id_mosi[1], id_mosi[2], id_mosi[3]);
+    ESP_LOGI(TAG, "Probe RDID4 miso %02X %02X %02X %02X mosi %02X %02X %02X %02X",
+             d3_miso[0], d3_miso[1], d3_miso[2], d3_miso[3],
+             d3_mosi[0], d3_mosi[1], d3_mosi[2], d3_mosi[3]);
+
+    if (st7789) {
+        ESP_LOGI(TAG, "Display controller probe: ST7789");
+        return TFT_CTRL_ST7789;
+    }
+    if (ili9341) {
+        ESP_LOGI(TAG, "Display controller probe: ILI9341");
+        return TFT_CTRL_ILI9341;
+    }
+    ESP_LOGW(TAG, "Display controller probe: no ID read back "
+             "(0xD9 index miso %02X %02X %02X), assuming ILI9341",
+             ix_miso[0], ix_miso[1], ix_miso[2]);
+    return TFT_CTRL_ILI9341;
+}
+#endif /* CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT */
 
 static void backlight_pwm_init(void)
 {
@@ -605,6 +806,12 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
         }
     }
 
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT)
+    /* Identify the controller before the SPI peripheral claims the
+     * pins -- see probe_controller() above. */
+    s_ctrl = probe_controller();
+#endif
+
 #if defined(CONFIG_DRAFTLING_LCD_BUS_PARLIO)
     /* PARLIO TX in 1-bit mode: data line 0 is MOSI, the "valid"
      * signal (active low) is CS, DC is a plain GPIO toggled by the
@@ -682,7 +889,13 @@ extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
 
     backlight_pwm_init();
 
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT)
+    if (s_ctrl == TFT_CTRL_ST7789) {
+        st7789_init_sequence();
+    } else {
+        ili9341_init_sequence();
+    }
+#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
     st7365_init_sequence();
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
     st7789_init_sequence();
@@ -907,7 +1120,9 @@ extern "C" void display_deep_sleep_prepare(void)
 #if defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
     /* The NiceMCU board keeps the panel powered through deep sleep and
      * wakes by a full reset (which re-runs the init sequence), so put
-     * the controller to sleep as well to cut its draw. */
+     * the controller to sleep as well to cut its draw. (On the
+     * MicroJournal Rev 5 this also covers the ILI9341, which takes the
+     * same DISPOFF / SLPIN commands.) */
     if (!s_panel_asleep) {
         send_command(0x28); /* DISPOFF */
         send_command(0x10); /* SLPIN */
@@ -934,7 +1149,9 @@ extern "C" void display_set_shared_i2c_bus(void * /*bus_handle*/)
 
 const char *display_controller_name(void)
 {
-#if defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
+#if defined(CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT)
+    return s_ctrl == TFT_CTRL_ST7789 ? "ST7789" : "ILI9341";
+#elif defined(CONFIG_DRAFTLING_DISPLAY_ST7796)
     return "ST7796";
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ST7365)
     return "ST7365";

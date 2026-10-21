@@ -6,6 +6,16 @@ in the git log.
 
 ## [Unreleased]
 
+### Changed
+
+- **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the
+  `microjournal_rev5_0` and `microjournal_rev5_1` build presets are
+  replaced by a single `microjournal_rev5` preset. At boot the firmware
+  reads the display controller's ID and picks the ILI9341 (Rev 5.0) or
+  ST7789 (Rev 5.1) settings by itself, so there is no need to know which
+  panel the device has. F1 -> Hardware information shows the detected
+  controller. Not yet tested on physical hardware.
+
 ## [1.0.17] - 2026-10-18
 
 ### Added

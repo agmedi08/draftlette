@@ -2610,8 +2610,8 @@ extern "C" void app_main(void)
 #elif defined(CONFIG_DRAFTLING_DISPLAY_ILI9341) || defined(CONFIG_DRAFTLING_DISPLAY_ST7796) || \
       defined(CONFIG_DRAFTLING_DISPLAY_ST7365) || defined(CONFIG_DRAFTLING_DISPLAY_ST7789)
     /* Freenove FNK0104A/B (ILI9341) / FNK0104S (ST7796) / Viewe
-     * UEDX24320028E-WB-A + UEED035HV (ST7365) / MicroJournal Rev 5.0
-     * (ILI9341) / Rev 5.1 (ST7789) / NiceMCU-C5E-DEV_2.8IPS (ST7789,
+     * UEDX24320028E-WB-A + UEED035HV (ST7365) / MicroJournal Rev 5
+     * (ILI9341 or ST7789, detected at boot) / NiceMCU-C5E-DEV_2.8IPS (ST7789,
      * over PARLIO). Shared 4-wire SPI TFT backend; the panel wiring
      * comes from the board header. display_init()'s pin parameters are
      * ignored. */
@@ -2628,6 +2628,11 @@ extern "C" void app_main(void)
         tft.im1          = LCD_IM1_PIN;
         tft.spi_clock_hz = LCD_SPI_CLOCK_HZ;
         tft.bl_pwm_hz    = LCD_BL_PWM_HZ;
+#ifdef LCD_SHARED_BUS_CS_PIN
+        tft.shared_cs    = LCD_SHARED_BUS_CS_PIN;
+#else
+        tft.shared_cs    = -1;
+#endif
         display_spi_tft_config(&tft);
     }
     display_init(-1, -1, -1, -1, -1, -1, DISPLAY_WIDTH, DISPLAY_HEIGHT);
