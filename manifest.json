@@ -462,55 +462,27 @@
       ]
     },
     {
-      "id": "microjournal_rev5_0",
-      "name": "MicroJournal Rev 5.0",
-      "description": "ESP32-S3, 320x240 color LCD (ILI9341), USB keyboard -- UNTESTED on physical hardware",
+      "id": "microjournal_rev5",
+      "name": "MicroJournal Rev 5.0 / 5.1",
+      "description": "ESP32-S3, 320x240 color LCD (ILI9341 or ST7789, auto-detected), USB keyboard -- UNTESTED on physical hardware",
       "chipFamily": "ESP32-S3",
       "releases": [
         {
-          "tag": "v1.0.17",
+          "tag": "main-eb3e505",
           "flashMode": "dio",
           "flashFreq": "80m",
           "flashSize": "16MB",
           "parts": [
             {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_0-bootloader.bin",
+              "path": "firmware/main-eb3e505/draftling-microjournal_rev5-bootloader.bin",
               "offset": "0x0"
             },
             {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_0-partition-table.bin",
+              "path": "firmware/main-eb3e505/draftling-microjournal_rev5-partition-table.bin",
               "offset": "0x8000"
             },
             {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_0.bin",
-              "offset": "0x10000"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "microjournal_rev5_1",
-      "name": "MicroJournal Rev 5.1",
-      "description": "ESP32-S3, 320x240 color LCD (ST7789), USB keyboard -- UNTESTED on physical hardware",
-      "chipFamily": "ESP32-S3",
-      "releases": [
-        {
-          "tag": "v1.0.17",
-          "flashMode": "dio",
-          "flashFreq": "80m",
-          "flashSize": "16MB",
-          "parts": [
-            {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_1-bootloader.bin",
-              "offset": "0x0"
-            },
-            {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_1-partition-table.bin",
-              "offset": "0x8000"
-            },
-            {
-              "path": "firmware/v1.0.17/draftling-microjournal_rev5_1.bin",
+              "path": "firmware/main-eb3e505/draftling-microjournal_rev5.bin",
               "offset": "0x10000"
             }
           ]
