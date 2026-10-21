@@ -1,27 +1,32 @@
 #pragma once
-/* ----- MicroJournal Rev 5.1 -----
+/* ----- MicroJournal Rev 5.0 / 5.1 -----
  *
- * Same wiring as Rev 5.0 (main/boards/microjournal_rev5_0.h), with an
- * ST7789 panel instead of the ILI9341 and a new enclosure. ESP32-S3
- * N16R8, 2.8" 240x320 ST7789 SPI LCD with an on-board MicroSD slot
- * sharing the LCD bus, and a USB-A host port for the keyboard on the
- * native USB pins (GPIO19 D-, GPIO20 D+).
- * No backlight control, battery monitor or wake button.
+ * ESP32-S3 N16R8 writerdeck with a 2.8" 240x320 SPI LCD (shown as
+ * 320x240 landscape), an on-board SPI MicroSD reader sharing the LCD
+ * bus, and a USB-A host port for the keyboard on the native USB pins
+ * (GPIO19 D-, GPIO20 D+). No backlight control, battery monitor or
+ * wake button.
  *
- * Sources: https://github.com/unkyulee/micro-journal rev.5/5.1/build.md
- * ("Internals of Rev.5.1. is the same as the previous Rev.5 build") and
- * rev.5/5.0/build.md for the pin table; the upstream firmware's
- * rev_5_st7789 environment
+ * Rev 5.1 has the same wiring as Rev 5.0 in a new enclosure. Rev 5.0
+ * uses an ILI9341 panel, Rev 5.1 an ST7789 one; the display backend
+ * reads the controller ID back over the panel's SDO line (wired to
+ * MISO, GPIO13) at boot and picks the init sequence
+ * (CONFIG_DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT).
+ *
+ * Sources: https://github.com/unkyulee/micro-journal rev.5/5.0/build.md
+ * (pin table) and rev.5/5.1/build.md ("Internals of Rev.5.1. is the
+ * same as the previous Rev.5 build"); the upstream firmware's
+ * rev_5_ili9341 / rev_5_st7789 environments
  * (https://github.com/unkyulee/micro-journal-mcu, platformio.ini) use
- * the same pins.
+ * the same pins, including TFT_MISO = 13.
  */
 
-#define BOARD_NAME          "MicroJournal Rev 5.1"
+#define BOARD_NAME          "MicroJournal Rev 5"
 
 /* SPI panel (passed to display_ili9341.cpp through
- * display_spi_tft_config()). MISO is wired because the MicroSD card
- * shares this bus. The LCD's LED pin is tied to VCC, so there is no
- * software backlight control. */
+ * display_spi_tft_config()). MISO carries the panel's SDO (used by the
+ * controller probe) and the MicroSD card's DO. The LCD's LED pin is
+ * tied to VCC, so there is no software backlight control. */
 #define LCD_MOSI_PIN        11
 #define LCD_MISO_PIN        13
 #define LCD_SCK_PIN         12
@@ -41,6 +46,10 @@
 #define SD_SPI_CS_PIN       9
 #define SD_EN_PIN           -1
 #define SD_SPI_HOST_NUM     SPI2_HOST
+
+/* Held high while the display controller is probed, so the MicroSD
+ * card does not drive MISO during the ID reads. */
+#define LCD_SHARED_BUS_CS_PIN  SD_SPI_CS_PIN
 
 /* No touch or battery hardware. */
 #define I2C_SDA_PIN         -1

@@ -47,6 +47,8 @@ typedef struct {
     int im1;           /* the reset pulse; -1 if strapped on the board */
     int spi_clock_hz;
     int bl_pwm_hz;
+    int shared_cs;     /* CS of another device on the bus (SD card), held
+                        * high during the controller probe; -1 if none */
 } display_spi_tft_config_t;
 
 /* Only implemented by display_ili9341.cpp. Must be called before

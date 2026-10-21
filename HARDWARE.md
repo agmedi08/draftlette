@@ -269,13 +269,22 @@ FT6336U capacitive touch controller, and the FNK0104N has touch built
 into its display controller, so touch works alongside the BLE
 keyboard.
 
-## MicroJournal Rev 5.0
+## MicroJournal Rev 5.0 / 5.1
 
-This section is about Micro Journal revision 5.0
-(<https://github.com/unkyulee/micro-journal>, `rev.5/5.0`); for 5.1
-see the next section.
+This section is about Micro Journal revisions 5.0 and 5.1
+(<https://github.com/unkyulee/micro-journal>, `rev.5/5.0` and
+`rev.5/5.1`). Rev 5.1 has the same wiring as 5.0 in a new enclosure;
+the difference is the display: Rev 5.0 has an ILI9341 2.8" 240x320
+panel, Rev 5.1 an ST7789 one. One firmware serves both: at boot it
+reads the controller ID back over the display's SDO line (wired to
+MISO) and sends the matching init sequence. The ST7789 sequence
+follows TFT_eSPI's, as the upstream firmware's `rev_5_st7789` build
+does (BGR color order, display inversion off). If no ID can be read
+back, it assumes the ILI9341; the boot log ("Display controller
+probe: ...") and F1 -> Hardware information show which controller was
+used.
 
-ESP32-S3 N16R8 writerdeck with an ILI9341 SPI color LCD, configured
+ESP32-S3 N16R8 writerdeck with a 2.8" SPI color LCD, configured
 for 320x240 landscape. LCD signals are MOSI=GPIO11, MISO=GPIO13,
 SCLK=GPIO12, CS=GPIO10, DC=GPIO46 and RST=GPIO3. The built-in
 MicroSD reader shares this SPI2 bus on CS=GPIO9. Native USB host uses
@@ -291,22 +300,7 @@ host and USB-Serial/JTAG share the ESP32-S3 internal PHY.
 
 Not yet tested on physical hardware.
 
-Build with the `microjournal_rev5_0` preset.
-
-## MicroJournal Rev 5.1
-
-Micro Journal revision 5.1 (`rev.5/5.1` in the upstream repository)
-has the same wiring as Rev 5.0 in a new enclosure, so everything in
-the Rev 5.0 section above applies: same pins, shared-SPI MicroSD on
-CS=GPIO9, USB host keyboard on GPIO19/20, no backlight control, no
-wake button, console on UART, Bluetooth disabled.
-
-The difference is the display: Rev 5.1 has an ST7789 2.8" 240x320
-panel instead of the ILI9341. Its init sequence follows TFT_eSPI's, as
-the upstream firmware's `rev_5_st7789` build does (BGR color order,
-display inversion off). Not yet tested on physical hardware.
-
-Build with the `microjournal_rev5_1` preset.
+Build with the `microjournal_rev5` preset (for both revisions).
 
 
 ## Viewe UEDX24320028E-WB-A with UEED035HV-RX40-L001 display
