@@ -38,11 +38,27 @@ typedef enum {
 
 typedef void (*git_sync_callback_t)(git_sync_state_t state, const char *message);
 
+/* Every project folder on the SD card is synced on its own. The
+ * project_dir arguments below are the folder's full path (for example
+ * "/sdcard/MyDrafts"): its configuration is <project_dir>/git.cfg, its
+ * history <project_dir>/.git, and its working tree the *.md /
+ * *.fountain / *.txt files directly inside it. */
+
 esp_err_t git_sync_init(void);
-esp_err_t git_sync_start(git_sync_direction_t direction);
+/* Sync one project. Only one sync runs at a time. */
+esp_err_t git_sync_start(const char *project_dir, git_sync_direction_t direction);
 git_sync_state_t git_sync_get_state(void);
 void git_sync_set_callback(git_sync_callback_t callback);
-bool git_sync_is_configured(void);
+/* True if <project_dir>/git.cfg names a repository. */
+bool git_sync_is_configured(const char *project_dir);
+/* Host name of the project's repository, the repository's name (the
+ * repo_url path without ".git", e.g. "user/notes") and the branch;
+ * false if the project is not configured. */
+bool git_sync_get_remote(const char *project_dir, char *host, size_t host_sz,
+                         char *repo, size_t repo_sz,
+                         char *branch, size_t branch_sz);
+/* Folder of the project the running (or last) sync works on. */
+const char *git_sync_get_project_dir(void);
 const char *git_sync_get_last_error(void);
 const char *git_sync_get_last_sync_time(void);
 
@@ -62,22 +78,39 @@ typedef enum {
     GIT_SYNC_FILE_ERROR,         /* unreadable file or repository */
 } git_sync_file_status_t;
 
-/* name is a bare file name in the sync directory (the SD card root). */
-git_sync_file_status_t git_sync_file_status(const char *name);
+/* name is a bare file name in the project folder. */
+git_sync_file_status_t git_sync_file_status(const char *project_dir, const char *name);
 
 /* Like git_sync_file_status(), but checks the given content (e.g. an
  * editor buffer with unsaved changes) instead of the file on the SD
  * card when data is non-NULL. On GIT_SYNC_FILE_MODIFIED, *added and
  * *deleted receive the number of lines added and deleted relative to
  * the server's copy; otherwise (or if the diff fails) they are -1. */
-git_sync_file_status_t git_sync_file_diff(const char *name,
+git_sync_file_status_t git_sync_file_diff(const char *project_dir, const char *name,
                                           const char *data, size_t len,
                                           int *added, int *deleted);
+
+/* Whole-project version of git_sync_file_status(), local only: one
+ * pass over the project's documents against the last commit known to
+ * be on the server. */
+typedef struct {
+    bool configured;     /* git.cfg names a repository */
+    bool busy;           /* a sync is running; counts not filled in */
+    bool error;          /* the repository or a file could not be read */
+    bool never_pushed;   /* nothing known to be on the server yet */
+    int  files;          /* documents in the project folder */
+    int  pushed;         /* identical to the server's copy */
+    int  modified;       /* changed since the last push */
+    int  not_pushed;     /* not on the server yet */
+    int  deleted_locally;/* on the server, deleted here (next sync deletes them there) */
+} git_sync_project_status_t;
+
+void git_sync_project_status(const char *project_dir, git_sync_project_status_t *st);
 
 /* Connect to a Draftbox repository (github.com/clackups/draftbox):
  * exchange the 8-digit one-time password for an access token via
  * https://<site>/api/v1/token-exchange, then write the returned clone
- * URL and token into /sdcard/git.cfg and reload the configuration.
+ * URL and token into <project_dir>/git.cfg.
  *
  * site is a host name such as "draftbox.art" (a leading "https://" and
  * trailing '/' are accepted and stripped). Blocks while the HTTPS
@@ -89,7 +122,8 @@ git_sync_file_status_t git_sync_file_diff(const char *name,
  * token, user and branch (username / branch only when the server sends
  * them); path is removed; author_name / author_email and any other
  * lines are kept. */
-esp_err_t git_sync_draftbox_connect(const char *site, const char *otp,
+esp_err_t git_sync_draftbox_connect(const char *project_dir,
+                                    const char *site, const char *otp,
                                     char *msg, size_t msg_len);
 
 #ifdef __cplusplus

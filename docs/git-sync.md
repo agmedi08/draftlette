@@ -19,17 +19,36 @@ active.
 
 ## What lives on the SD card
 
+Every project folder is synced on its own, with its own configuration,
+history and repository:
+
 ```
 /sdcard/
-  note1.md            working tree (the files you edit)
-  note2.md
-  .git/               real Git repository
-    HEAD
-    refs/heads/<branch>
-    refs/remotes/origin/<branch>
-    objects/xx/…       loose, zlib-compressed objects
-    tmp/               transient fetch.pack / push.pack
+  wifi.cfg            device-wide WiFi settings (never synced)
+  MyDrafts/           a project
+    git.cfg           this project's Git settings
+    note1.md          working tree (the files you edit)
+    note2.md
+    .git/             real Git repository
+      HEAD
+      refs/heads/<branch>
+      refs/remotes/origin/<branch>
+      objects/xx/...   loose, zlib-compressed objects
+      tmp/             transient fetch.pack / push.pack
+  Screenplay/         another project, maybe another repository
+    git.cfg
+    ...
 ```
+
+Ctrl+G (or F1 -> Git Sync) syncs the current project: the project of
+the document being edited, or the one shown or selected in the file
+browser. A project without `git.cfg` is not synced. Only one sync runs
+at a time.
+
+A card from before projects existed (documents, `git.cfg` and `.git`
+in the root) is converted at boot: the device asks for a project name
+and moves all of them into that project, so its history and
+remote-tracking state carry over.
 
 The object store uses standard loose objects (`<type> <size>\0<payload>`
 deflated with zlib), so the `.git` directory can be copied onto a
@@ -39,25 +58,25 @@ Crypto; TLS + HTTP by `esp_http_client` / `esp-tls`.
 
 ## What one sync does
 
-Triggered by `Ctrl+G`, by the F1 → Git Sync menu entry, or automatically
+Triggered by `Ctrl+G`, by the F1 -> Git Sync menu entry, or automatically
 before deep sleep. The sync task runs these steps in order:
 
-1. **Advertise** – contact the remote and read its branch tip.
-2. **Clone** – on the very first sync, if the remote branch exists its
+1. **Advertise** -- contact the remote and read its branch tip.
+2. **Clone** -- on the very first sync, if the remote branch exists its
    full history is fetched and checked out. (History is fetched in
    full; there is no shallow clone.)
 3. **Commit** -- the current `*.md`, `*.fountain` and `*.txt` files in the working directory are
    written as a tree and committed on top of the local branch tip. If
    nothing changed, no commit is made.
-4. **Fetch** – if the remote tip is not already in local history, the
+4. **Fetch** -- if the remote tip is not already in local history, the
    missing commits are fetched (sending `have` lines for the local
    commits so the server can send a minimal packfile).
 5. **Integrate**
-   - *remote unchanged* → nothing to do;
-   - *local unchanged* → **fast-forward** to the remote tip;
-   - *both advanced* → **rebase**: each local commit is replayed on top
+   - *remote unchanged* -> nothing to do;
+   - *local unchanged* -> **fast-forward** to the remote tip;
+   - *both advanced* -> **rebase**: each local commit is replayed on top
      of the remote tip through a three-way merge.
-6. **Merge & conflicts** – the three-way merge is done per file:
+6. **Merge & conflicts** -- the three-way merge is done per file:
    - a file changed on only one side is taken from that side;
    - a file changed identically on both sides is taken as-is;
    - a file changed on both sides gets a **diff3 line merge**. Cleanly
@@ -66,26 +85,26 @@ before deep sleep. The sync task runs these steps in order:
 
      ```
      <<<<<<< ours (remote)
-     …the remote version…
+     ...the remote version...
      =======
-     …your local version…
+     ...your local version...
      >>>>>>> theirs (local)
      ```
 
-     and the commit is still created – conflicts are **committed as-is**,
+     and the commit is still created -- conflicts are **committed as-is**,
      never lost. The commit message gets a `[draftling] N conflict(s)`
      note. Resolve them by editing the file and syncing again.
    - a delete/modify clash keeps the surviving content and marks a
      conflict.
-7. **Checkout** – the merged tree is written back to the SD card.
+7. **Checkout** -- the merged tree is written back to the SD card.
    The editor reloads the open buffer and the file browser refreshes so
    you immediately see the merged result.
-8. **Push** – the new commits are packed and pushed to the remote with
+8. **Push** -- the new commits are packed and pushed to the remote with
    `git-receive-pack`. The push is a plain fast-forward update of
    `refs/heads/<branch>`; if the remote moved again while the sync was
    running, the push is refused and you are asked to sync once more.
 
-## Configuration (`/sdcard/git.cfg`)
+## Configuration (`/sdcard/<project>/git.cfg`)
 
 ```
 repo_url=https://github.com/user/repo
@@ -137,12 +156,12 @@ text being edited, unsaved changes included.
 This is deliberately a minimal client:
 
 - **One branch**, no tags, no submodules, no signed commits.
-- The working tree is the **flat set of `*.md`, `*.fountain` and `*.txt` files** in the sync
-  directory (non-recursive). Sub-directories in the repository under
+- The working tree is the **flat set of `*.md`, `*.fountain` and `*.txt` files** in the project
+  folder (non-recursive). Sub-directories in the repository under
   `path` are not checked out. Dotfiles (`.git`, `*.meta`, `wifi.cfg`,
   `git.cfg`) are never committed.
 - Deleting every local `*.md` / `*.fountain` / `*.txt` file will commit the deletion of the whole
-  synced sub-tree on the next sync – that is correct Git behaviour, but
+  synced sub-tree on the next sync -- that is correct Git behaviour, but
   worth knowing.
 - The initial sync fetches full history; for a large repository that can
   be slow and use significant SD space.

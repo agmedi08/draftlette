@@ -109,7 +109,7 @@
       <p>
         The browser does the same steps as Draftling's own Wi-Fi sync,
         on the same Git repository on the SD card, so you can mix the
-        two freely. Draftbridge points the device's <code>git.cfg</code>
+        two freely. Draftbridge points the project's <code>git.cfg</code>
         at the repository you chose; to sync over Wi-Fi as well, add an
         access token to it as described below.
       </p>
@@ -145,8 +145,9 @@ sup3r-secret</pre>
       </ol>
       <p class="hint">
         Everything below ends with a small text file called
-        <code>git.cfg</code> on the SD card root. Create it with any text
-        editor. <strong>Keep it private</strong>: it contains an access
+        <code>git.cfg</code> in a project folder on the SD card (every
+        project has its own, and syncs with its own repository). Create
+        it with any text editor. <strong>Keep it private</strong>: it contains an access
         token.
       </p>
     </section>
@@ -271,9 +272,9 @@ author_email=jane@example.com</pre>
     <section id="first">
       <h2>First sync</h2>
       <ol>
-        <li>Put <code>git.cfg</code> on the SD card root and insert the card.</li>
+        <li>Put <code>git.cfg</code> in the project folder on the SD card (for example <code>MyDrafts/git.cfg</code>) and insert the card.</li>
         <li>Power on Draftling and connect Wi-Fi: press <kbd>Ctrl</kbd>+<kbd>W</kbd>, or use the <kbd>F1</kbd> menu.</li>
-        <li>Press <kbd>Ctrl</kbd>+<kbd>G</kbd> to sync.</li>
+        <li>Open the project and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to sync it.</li>
       </ol>
       <p>
         On the very first sync Draftling downloads the repository's

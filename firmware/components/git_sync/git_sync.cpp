@@ -1,8 +1,9 @@
 /* git_sync.cpp -- Draftling's Git synchronisation front-end.
  *
  * This file wires the native Git client (git_core.h / git_*.c) to the
- * editor: it keeps a real commit history under <sdcard>/.git, and on
- * every sync it
+ * editor. Every project folder on the SD card (/sdcard/<project>) is
+ * synced on its own: it keeps a real commit history under
+ * <project>/.git, and on every sync it
  *
  *   1. commits the current working tree ("*.md", "*.fountain" and
  *      "*.txt" files) locally,
@@ -14,7 +15,7 @@
  *      then reloads the open buffer), and
  *   5. pushes the result back to the remote.
  *
- * Configuration lives in /sdcard/git.cfg:
+ * Configuration lives in <project>/git.cfg:
  *
  *   repo_url=https://github.com/user/repo
  *   branch=main
@@ -49,7 +50,7 @@ static const char *TAG = "GitSync";
 
 /* ---- configuration ------------------------------------------------- */
 
-static struct {
+typedef struct {
     char repo_url[300];
     char branch[64];
     char token[160];
@@ -57,9 +58,14 @@ static struct {
     char remote_path[128];     /* remote sub-directory, no leading '/', trailing '/' */
     char author_name[64];
     char author_email[96];
-    char local_path[128];      /* SD working dir, e.g. "/sdcard" */
+    char local_path[160];      /* project folder, e.g. "/sdcard/MyDrafts" */
     bool configured;
-} s_cfg;
+} git_cfg_t;
+
+/* Configuration of the project being synced. Written only by
+ * git_sync_start() while no sync runs; the sync task reads it. Other
+ * calls load their own copy (load_config()). */
+static git_cfg_t s_cfg;
 
 static git_sync_state_t    s_state    = GIT_SYNC_IDLE;
 static git_sync_callback_t s_callback = NULL;
@@ -92,9 +98,9 @@ static void notify(git_sync_state_t st, const char *msg)
 /* Status messages name the server by its host name ("Pushing to
  * github.com..."): copy the host part of repo_url (no scheme, user
  * info, port or path) into out, or "server" if there is none. */
-static void remote_host(char *out, size_t osz)
+static void remote_host_of(const char *url, char *out, size_t osz)
 {
-    const char *p = s_cfg.repo_url;
+    const char *p = url;
     const char *sch = strstr(p, "://");
     if (sch) p = sch + 3;
     size_t n = strcspn(p, "/?#");
@@ -112,6 +118,29 @@ static void remote_host(char *out, size_t osz)
     if (n >= osz) n = osz - 1;
     memcpy(out, p, n);
     out[n] = '\0';
+}
+
+/* Repository name: the URL path after the host, without the leading
+ * '/', a query or fragment, trailing '/' and ".git". */
+static void repo_name_of(const char *url, char *out, size_t osz)
+{
+    const char *p = url;
+    const char *sch = strstr(p, "://");
+    if (sch) p = sch + 3;
+    p += strcspn(p, "/?#");
+    while (*p == '/') p++;
+    size_t n = strcspn(p, "?#");
+    while (n && p[n - 1] == '/') n--;
+    if (n >= 4 && strncmp(p + n - 4, ".git", 4) == 0) n -= 4;
+    if (n == 0) { strlcpy(out, "(server root)", osz); return; }
+    if (n >= osz) n = osz - 1;
+    memcpy(out, p, n);
+    out[n] = '\0';
+}
+
+static void remote_host(char *out, size_t osz)
+{
+    remote_host_of(s_cfg.repo_url, out, osz);
 }
 
 /* See the doc comment in include/git_sync.h. The native client streams
@@ -339,16 +368,23 @@ static esp_err_t commit_tree_oid(const git_oid *commit_oid, git_oid *out_tree)
     return ESP_OK;
 }
 
-/* Subtree oid for the configured remote path within a commit's tree. */
-static esp_err_t subtree_for_commit(const git_oid *commit_oid, git_oid *out)
+/* Subtree oid for a remote path within a commit's tree. */
+static esp_err_t subtree_for_commit_at(const char *remote_path,
+                                       const git_oid *commit_oid, git_oid *out)
 {
     git_oid root;
     esp_err_t ret = commit_tree_oid(commit_oid, &root);
     if (ret != ESP_OK) return ret;
     if (git_oid_is_zero(&root)) { git_oid_clear(out); return ESP_OK; }
-    ret = git_tree_subtree_oid(&root, s_cfg.remote_path, out);
+    ret = git_tree_subtree_oid(&root, remote_path, out);
     if (ret == ESP_ERR_NOT_FOUND) { git_oid_clear(out); return ESP_OK; }
     return ret;
+}
+
+/* Subtree oid for the syncing project's remote path. */
+static esp_err_t subtree_for_commit(const git_oid *commit_oid, git_oid *out)
+{
+    return subtree_for_commit_at(s_cfg.remote_path, commit_oid, out);
 }
 
 /* ---- the sync itself ------------------------------------------- */
@@ -750,11 +786,11 @@ static void trim(char *s)
         s[--n] = '\0';
 }
 
-static void parse_config(const char *data)
+static void parse_config(git_cfg_t *c, const char *data, const char *dir)
 {
-    memset(&s_cfg, 0, sizeof(s_cfg));
-    strlcpy(s_cfg.branch, "main", sizeof(s_cfg.branch));
-    strlcpy(s_cfg.local_path, sd_card_get_mount_point(), sizeof(s_cfg.local_path));
+    memset(c, 0, sizeof(*c));
+    strlcpy(c->branch, "main", sizeof(c->branch));
+    strlcpy(c->local_path, dir, sizeof(c->local_path));
 
     const char *p = data;
     while (*p) {
@@ -774,46 +810,59 @@ static void parse_config(const char *data)
         trim(key);
         trim(val);
 
-        if (!strcmp(key, "repo_url"))          strlcpy(s_cfg.repo_url, val, sizeof(s_cfg.repo_url));
-        else if (!strcmp(key, "branch"))       strlcpy(s_cfg.branch, val, sizeof(s_cfg.branch));
-        else if (!strcmp(key, "token"))        strlcpy(s_cfg.token, val, sizeof(s_cfg.token));
-        else if (!strcmp(key, "username"))     strlcpy(s_cfg.username, val, sizeof(s_cfg.username));
-        else if (!strcmp(key, "author_name"))  strlcpy(s_cfg.author_name, val, sizeof(s_cfg.author_name));
-        else if (!strcmp(key, "author_email")) strlcpy(s_cfg.author_email, val, sizeof(s_cfg.author_email));
+        if (!strcmp(key, "repo_url"))          strlcpy(c->repo_url, val, sizeof(c->repo_url));
+        else if (!strcmp(key, "branch"))       strlcpy(c->branch, val, sizeof(c->branch));
+        else if (!strcmp(key, "token"))        strlcpy(c->token, val, sizeof(c->token));
+        else if (!strcmp(key, "username"))     strlcpy(c->username, val, sizeof(c->username));
+        else if (!strcmp(key, "author_name"))  strlcpy(c->author_name, val, sizeof(c->author_name));
+        else if (!strcmp(key, "author_email")) strlcpy(c->author_email, val, sizeof(c->author_email));
         else if (!strcmp(key, "path")) {
-            strlcpy(s_cfg.remote_path, val, sizeof(s_cfg.remote_path));
+            strlcpy(c->remote_path, val, sizeof(c->remote_path));
             /* normalise: no leading '/', exactly one trailing '/' */
-            char *q = s_cfg.remote_path;
+            char *q = c->remote_path;
             while (*q == '/') memmove(q, q + 1, strlen(q));
-            size_t n = strlen(s_cfg.remote_path);
-            while (n && s_cfg.remote_path[n - 1] == '/') s_cfg.remote_path[--n] = '\0';
-            if (n && n + 1 < sizeof(s_cfg.remote_path)) {
-                s_cfg.remote_path[n] = '/';
-                s_cfg.remote_path[n + 1] = '\0';
+            size_t n = strlen(c->remote_path);
+            while (n && c->remote_path[n - 1] == '/') c->remote_path[--n] = '\0';
+            if (n && n + 1 < sizeof(c->remote_path)) {
+                c->remote_path[n] = '/';
+                c->remote_path[n + 1] = '\0';
             }
         }
     }
 
-    s_cfg.configured = (s_cfg.repo_url[0] != '\0');
-    if (s_cfg.branch[0] == '\0') strlcpy(s_cfg.branch, "main", sizeof(s_cfg.branch));
+    c->configured = (c->repo_url[0] != '\0');
+    if (c->branch[0] == '\0') strlcpy(c->branch, "main", sizeof(c->branch));
+}
+
+/* "<dir>/git.cfg" */
+static void cfg_path(const char *dir, char *out, size_t osz)
+{
+    joinp(out, osz, dir, "git.cfg");
+}
+
+/* Load <dir>/git.cfg into *c. Returns c->configured; a missing file
+ * leaves an unconfigured config for dir. */
+static bool load_config(git_cfg_t *c, const char *dir)
+{
+    char path[200];
+    cfg_path(dir, path, sizeof(path));
+    char *data = NULL;
+    size_t len = 0;
+    if (sd_card_read_file(path, &data, &len) == ESP_OK && data) {
+        parse_config(c, data, dir);
+        free(data);
+    } else {
+        parse_config(c, "", dir);
+    }
+    return c->configured;
 }
 
 /* ---- public API --------------------------------------------- */
 
 extern "C" esp_err_t git_sync_init(void)
 {
-    char *data = NULL;
-    size_t len = 0;
-    if (sd_card_read_file("/sdcard/git.cfg", &data, &len) == ESP_OK) {
-        parse_config(data);
-        free(data);
-        if (s_cfg.configured)
-            ESP_LOGI(TAG, "Git configured: %s branch=%s path=%s",
-                     s_cfg.repo_url, s_cfg.branch,
-                     s_cfg.remote_path[0] ? s_cfg.remote_path : "(root)");
-    } else {
-        ESP_LOGI(TAG, "No /sdcard/git.cfg -- sync disabled");
-    }
+    /* Nothing to load up front: each project folder carries its own
+     * git.cfg, read when that project is synced or checked. */
     return ESP_OK;
 }
 
@@ -861,9 +910,11 @@ static bool normalise_site(const char *in, char *out, size_t out_sz)
     return true;
 }
 
-static esp_err_t draftbox_connect(const char *site, const char *otp,
+static esp_err_t draftbox_connect(const char *dir, const char *site, const char *otp,
                                   char *msg, size_t msg_len)
 {
+    char cfgfile[200];
+    cfg_path(dir, cfgfile, sizeof(cfgfile));
     char host[128];
     if (!normalise_site(site ? site : "", host, sizeof(host))) {
         snprintf(msg, msg_len, "invalid site name");
@@ -910,7 +961,16 @@ static esp_err_t draftbox_connect(const char *site, const char *otp,
     std::string cfg;
     char *old = NULL;
     size_t old_len = 0;
-    if (sd_card_read_file("/sdcard/git.cfg", &old, &old_len) == ESP_OK && old) {
+    git_cfg_t *prev = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
+    if (!prev) {
+        memset(res->token, 0, sizeof(res->token));
+        free(res);
+        snprintf(msg, msg_len, "out of memory");
+        return ESP_ERR_NO_MEM;
+    }
+    parse_config(prev, "", dir);
+    if (sd_card_read_file(cfgfile, &old, &old_len) == ESP_OK && old) {
+        parse_config(prev, old, dir);
         const char *p = old;
         const char *end = old + old_len;
         while (p < end) {
@@ -941,50 +1001,59 @@ static esp_err_t draftbox_connect(const char *site, const char *otp,
         cfg += '\n';
     }
 
-    err = sd_card_write_file("/sdcard/git.cfg", cfg.data(), cfg.size());
+    err = sd_card_write_file(cfgfile, cfg.data(), cfg.size());
     if (err != ESP_OK) {
         snprintf(msg, msg_len, "cannot write git.cfg");
     } else {
         /* The remote-tracking ref describes what is on the *previous*
          * server; git_sync_file_status() must not take it as proof that
          * a file is stored on the new one. The next sync recreates it. */
-        if (s_cfg.repo_url[0] && strcmp(s_cfg.repo_url, res->clone_url) != 0) {
+        if (prev->repo_url[0] && strcmp(prev->repo_url, res->clone_url) != 0) {
             char refpath[400];
             snprintf(refpath, sizeof(refpath), "%s/.git/refs/remotes/origin/%s",
-                     s_cfg.local_path, s_cfg.branch);
+                     dir, prev->branch);
             if (sd_card_file_exists(refpath)) sd_card_delete_file(refpath);
         }
-        parse_config(cfg.c_str());
-        ESP_LOGI(TAG, "Draftbox: git.cfg now points at %s", s_cfg.repo_url);
+        ESP_LOGI(TAG, "Draftbox: %s now points at %s", cfgfile, res->clone_url);
         snprintf(msg, msg_len, "connected to %.80s%s",
                  res->repository[0] ? res->repository : res->clone_url,
                  res->read_only ? " (read-only)" : "");
     }
     /* Do not leave the secret lying around in freed heap. */
+    memset(prev, 0, sizeof(*prev));
+    free(prev);
     memset(res->token, 0, sizeof(res->token));
     std::fill(cfg.begin(), cfg.end(), '\0');
     free(res);
     return err;
 }
 
-extern "C" esp_err_t git_sync_draftbox_connect(const char *site, const char *otp,
+extern "C" esp_err_t git_sync_draftbox_connect(const char *project_dir,
+                                               const char *site, const char *otp,
                                                char *msg, size_t msg_len)
 {
+    if (!project_dir || !project_dir[0]) {
+        snprintf(msg, msg_len, "no project selected");
+        return ESP_ERR_INVALID_ARG;
+    }
     if (s_state == GIT_SYNC_IN_PROGRESS || s_draftbox_busy) {
         snprintf(msg, msg_len, "sync in progress, try later");
         return ESP_ERR_INVALID_STATE;
     }
     s_draftbox_busy = true;
-    esp_err_t err = draftbox_connect(site, otp, msg, msg_len);
+    esp_err_t err = draftbox_connect(project_dir, site, otp, msg, msg_len);
     s_draftbox_busy = false;
     return err;
 }
 
-extern "C" esp_err_t git_sync_start(git_sync_direction_t direction)
+extern "C" esp_err_t git_sync_start(const char *project_dir, git_sync_direction_t direction)
 {
-    if (!s_cfg.configured) { set_error("Not configured"); return ESP_ERR_INVALID_STATE; }
     if (s_state == GIT_SYNC_IN_PROGRESS) { set_error("Sync already in progress"); return ESP_ERR_INVALID_STATE; }
     if (s_draftbox_busy) { set_error("Draftbox connection in progress"); return ESP_ERR_INVALID_STATE; }
+    if (!project_dir || !project_dir[0]) { set_error("No project selected"); return ESP_ERR_INVALID_ARG; }
+    if (!load_config(&s_cfg, project_dir)) { set_error("Not configured"); return ESP_ERR_INVALID_STATE; }
+    ESP_LOGI(TAG, "Sync %s: %s branch=%s path=%s", project_dir, s_cfg.repo_url,
+             s_cfg.branch, s_cfg.remote_path[0] ? s_cfg.remote_path : "(root)");
 
     s_state = GIT_SYNC_IN_PROGRESS;
 
@@ -1000,32 +1069,53 @@ extern "C" esp_err_t git_sync_start(git_sync_direction_t direction)
     return ESP_OK;
 }
 
-extern "C" git_sync_file_status_t git_sync_file_diff(const char *name,
+static git_sync_file_status_t file_diff_cfg(git_cfg_t *c, const char *project_dir,
+                                            const char *name,
+                                            const char *data, size_t len,
+                                            int *added, int *deleted);
+
+extern "C" git_sync_file_status_t git_sync_file_diff(const char *project_dir,
+                                                    const char *name,
                                                     const char *data, size_t len,
                                                     int *added, int *deleted)
 {
     if (added) *added = -1;
     if (deleted) *deleted = -1;
-    if (!s_cfg.configured) return GIT_SYNC_FILE_NOT_CONFIGURED;
+    if (!project_dir || !project_dir[0]) return GIT_SYNC_FILE_NOT_CONFIGURED;
     /* The sync task owns the repository while it runs, and it can
      * rewrite both the file and the refs. Both this check and
      * git_sync_start() run on the UI task, so the state cannot change
      * under us. */
     if (s_state == GIT_SYNC_IN_PROGRESS) return GIT_SYNC_FILE_BUSY;
+    git_cfg_t *c = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
+    if (!c) return GIT_SYNC_FILE_ERROR;
+    git_sync_file_status_t result = file_diff_cfg(c, project_dir, name, data, len,
+                                                  added, deleted);
+    memset(c, 0, sizeof(*c));
+    free(c);
+    return result;
+}
+
+static git_sync_file_status_t file_diff_cfg(git_cfg_t *c, const char *project_dir,
+                                            const char *name,
+                                            const char *data, size_t len,
+                                            int *added, int *deleted)
+{
+    if (!load_config(c, project_dir)) return GIT_SYNC_FILE_NOT_CONFIGURED;
     if (!name || !*name || strchr(name, '/') || !is_doc(name)) return GIT_SYNC_FILE_NOT_PUSHED;
 
     /* Look for the remote-tracking ref first: git_repo_open() would
      * create an empty repository on a card that was never synced. */
     char remoteref[96];
-    snprintf(remoteref, sizeof(remoteref), "refs/remotes/origin/%s", s_cfg.branch);
+    snprintf(remoteref, sizeof(remoteref), "refs/remotes/origin/%s", c->branch);
     char refpath[400];
-    snprintf(refpath, sizeof(refpath), "%s/.git/%s", s_cfg.local_path, remoteref);
+    snprintf(refpath, sizeof(refpath), "%s/.git/%s", c->local_path, remoteref);
     if (!sd_card_file_exists(refpath)) return GIT_SYNC_FILE_NOT_PUSHED;
 
     char *file_data = NULL;
     if (!data) {
         char path[400];
-        joinp(path, sizeof(path), s_cfg.local_path, name);
+        joinp(path, sizeof(path), c->local_path, name);
         if (sd_card_read_file(path, &file_data, &len) != ESP_OK) return GIT_SYNC_FILE_ERROR;
         data = file_data;
     }
@@ -1033,11 +1123,11 @@ extern "C" git_sync_file_status_t git_sync_file_diff(const char *name,
     git_odb_hash(GIT_OBJ_BLOB, data, len, &work_blob);
 
     git_sync_file_status_t result = GIT_SYNC_FILE_ERROR;
-    if (git_repo_open(s_cfg.local_path) != ESP_OK) { free(file_data); return result; }
+    if (git_repo_open(c->local_path) != ESP_OK) { free(file_data); return result; }
     git_oid pushed, sub;
     if (git_ref_read(remoteref, &pushed) != ESP_OK) {
         result = GIT_SYNC_FILE_NOT_PUSHED;
-    } else if (subtree_for_commit(&pushed, &sub) == ESP_OK) {
+    } else if (subtree_for_commit_at(c->remote_path, &pushed, &sub) == ESP_OK) {
         if (git_oid_is_zero(&sub)) {
             result = GIT_SYNC_FILE_NOT_PUSHED;
         } else {
@@ -1070,13 +1160,128 @@ extern "C" git_sync_file_status_t git_sync_file_diff(const char *name,
     return result;
 }
 
-extern "C" git_sync_file_status_t git_sync_file_status(const char *name)
+static void project_status_cfg(git_cfg_t *c, const char *project_dir,
+                               git_sync_project_status_t *st)
 {
-    return git_sync_file_diff(name, NULL, 0, NULL, NULL);
+    if (!load_config(c, project_dir)) return;
+    st->configured = true;
+
+    sd_card_file_entry_t *entries = (sd_card_file_entry_t *)heap_caps_malloc(
+        WT_MAX_FILES * sizeof(sd_card_file_entry_t), MALLOC_CAP_SPIRAM);
+    if (!entries) { st->error = true; return; }
+    int count = sd_card_list_dir(project_dir, entries, WT_MAX_FILES);
+    if (count < 0) { heap_caps_free(entries); st->error = true; return; }
+
+    char remoteref[96];
+    snprintf(remoteref, sizeof(remoteref), "refs/remotes/origin/%s", c->branch);
+    char refpath[400];
+    snprintf(refpath, sizeof(refpath), "%s/.git/%s", project_dir, remoteref);
+
+    git_tree t = {};
+    bool have_tree = false;
+    if (sd_card_file_exists(refpath) && git_repo_open(project_dir) == ESP_OK) {
+        git_oid pushed, sub;
+        if (git_ref_read(remoteref, &pushed) == ESP_OK &&
+            subtree_for_commit_at(c->remote_path, &pushed, &sub) == ESP_OK) {
+            if (git_oid_is_zero(&sub) || git_tree_load(&sub, &t) == ESP_OK)
+                have_tree = true;
+            else
+                st->error = true;
+        } else {
+            st->error = true;
+        }
+    }
+    st->never_pushed = !have_tree && !st->error;
+
+    int seen_on_server = 0;
+    for (int i = 0; i < count; i++) {
+        if (entries[i].is_dir || !is_doc(entries[i].name)) continue;
+        st->files++;
+        const git_tree_entry *e = have_tree ? git_tree_get(&t, entries[i].name) : NULL;
+        if (!e) { st->not_pushed++; continue; }
+        seen_on_server++;
+        char path[400];
+        joinp(path, sizeof(path), project_dir, entries[i].name);
+        char *data = NULL;
+        size_t len = 0;
+        if (sd_card_read_file(path, &data, &len) != ESP_OK) { st->error = true; continue; }
+        git_oid blob;
+        git_odb_hash(GIT_OBJ_BLOB, data, len, &blob);
+        free(data);
+        if (git_oid_eq(&e->oid, &blob)) st->pushed++;
+        else st->modified++;
+    }
+    if (have_tree) {
+        int server_docs = 0;
+        for (int i = 0; i < t.count; i++) {
+            if ((t.entries[i].mode & 040000) != 040000 && is_doc(t.entries[i].name))
+                server_docs++;
+        }
+        st->deleted_locally = server_docs - seen_on_server;
+        if (st->deleted_locally < 0) st->deleted_locally = 0;
+    }
+    git_tree_free(&t);
+    git_repo_close();
+    heap_caps_free(entries);
+}
+
+extern "C" void git_sync_project_status(const char *project_dir,
+                                        git_sync_project_status_t *st)
+{
+    memset(st, 0, sizeof(*st));
+    if (!project_dir || !project_dir[0]) return;
+    if (s_state == GIT_SYNC_IN_PROGRESS) {
+        st->busy = true;
+        st->configured = git_sync_is_configured(project_dir);
+        return;
+    }
+    git_cfg_t *c = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
+    if (!c) { st->error = true; return; }
+    project_status_cfg(c, project_dir, st);
+    memset(c, 0, sizeof(*c));
+    free(c);
+}
+
+extern "C" git_sync_file_status_t git_sync_file_status(const char *project_dir,
+                                                      const char *name)
+{
+    return git_sync_file_diff(project_dir, name, NULL, 0, NULL, NULL);
 }
 
 extern "C" git_sync_state_t git_sync_get_state(void) { return s_state; }
 extern "C" void git_sync_set_callback(git_sync_callback_t cb) { s_callback = cb; }
-extern "C" bool git_sync_is_configured(void) { return s_cfg.configured; }
+extern "C" bool git_sync_is_configured(const char *project_dir)
+{
+    if (!project_dir || !project_dir[0]) return false;
+    git_cfg_t *c = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
+    if (!c) return false;
+    bool ok = load_config(c, project_dir);
+    memset(c, 0, sizeof(*c));
+    free(c);
+    return ok;
+}
+
+extern "C" bool git_sync_get_remote(const char *project_dir, char *host, size_t host_sz,
+                                    char *repo, size_t repo_sz,
+                                    char *branch, size_t branch_sz)
+{
+    if (host_sz) host[0] = '\0';
+    if (repo_sz) repo[0] = '\0';
+    if (branch_sz) branch[0] = '\0';
+    if (!project_dir || !project_dir[0]) return false;
+    git_cfg_t *c = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
+    if (!c) return false;
+    bool ok = load_config(c, project_dir);
+    if (ok) {
+        remote_host_of(c->repo_url, host, host_sz);
+        repo_name_of(c->repo_url, repo, repo_sz);
+        strlcpy(branch, c->branch, branch_sz);
+    }
+    memset(c, 0, sizeof(*c));
+    free(c);
+    return ok;
+}
+
+extern "C" const char *git_sync_get_project_dir(void) { return s_cfg.local_path; }
 extern "C" const char *git_sync_get_last_error(void) { return s_last_error; }
 extern "C" const char *git_sync_get_last_sync_time(void) { return s_last_sync; }

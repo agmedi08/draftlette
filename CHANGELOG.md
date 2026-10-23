@@ -6,6 +6,41 @@ in the git log.
 
 ## [Unreleased]
 
+### Added
+
+- **Projects**: the SD card now holds one folder per project, and each
+  project has its own files and its own Git sync settings (`git.cfg`
+  in the project folder), so different projects can sync with
+  different repositories. The file browser first lists the projects;
+  Enter opens one and Esc goes back. Each project remembers the file
+  you last selected in it, and the current project's name is shown in
+  the status bar. In the list of projects, N creates a project
+  (MyDrafts is proposed as its name, or MyDrafts2, MyDrafts3, ... if
+  it exists), F2
+  (or Alt+R) renames one, Del (or Alt+D) deletes one -- only
+  when all its files are on the Git server, after a confirmation --
+  and Alt+I shows the project information: name, number of files,
+  total size and sync status. Alt+I on a file shows the project
+  information too. Inside a project, Alt+M moves the selected file to
+  another project and Alt+C copies it, to another project or to the
+  same one under a new name; a new project can be created on the way.
+  Ctrl+G, F1 -> Git Sync, "Connect a Draftbox repository" and "Sync
+  via browser" work on the current project. In split-screen mode the
+  two panes can show files from different projects.
+- **Your existing files move into a project**: if the SD card root
+  holds documents (from an earlier firmware version, or copied there
+  over USB), at boot the device lists these files that do not belong
+  to any project and offers to move them to one of your projects or
+  to a new one (MyDrafts is proposed as its name). They move together with `git.cfg` and the
+  Git history, so syncing continues with the same repository. If you
+  are not ready to move them, Esc powers the device off; it asks again
+  the next time it starts. A card with
+  no project (new, or just formatted) asks for the first project's
+  name.
+- **Missing SD card**: when no SD card is found, the device says so on
+  the start screen and asks you to insert a card; Enter then restarts
+  the device. The dialog cannot be closed otherwise.
+
 ### Changed
 
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the

@@ -26,6 +26,7 @@
 #include "editor.h"
 #include "md_parser.h"
 #include "editor_format.h"
+#include "projects.h"
 #include "ble_keyboard.h"
 #if defined(CONFIG_DRAFTLING_HAS_USB_HOST)
 #include "usb_kbd.h"
@@ -943,6 +944,13 @@ static int  s_kermit_picker_sel_prev = -1;
  * Finished (Enter or a tap), which stops the server. */
 static bool s_msg_kermit             = false;
 #endif
+/* The pop-up lists documents found outside any project: Enter (or a
+ * tap) asks for the name of a new project to move them to, Esc powers
+ * the device off (deep sleep); it asks again on the next start. */
+static bool s_msg_migrate            = false;
+/* The pop-up says the SD card is missing. It cannot be closed: the user
+ * inserts a card, then Enter (or a tap) restarts the device. */
+static bool s_msg_restart            = false;
 
 /* Why the firmware must keep off the SD card right now -- it is handed
  * to a USB host or to the Kermit server -- or NULL if it may use it. */
@@ -975,6 +983,20 @@ static int  s_browser_sel    = 0;
 static int  s_browser_sel_prev = -1;
 static int  s_browser_count  = 0;
 static sd_card_file_entry_t s_browser_entries[64];
+
+/* ---- Projects (see projects.h) ----
+ * The file browser has two levels: the list of projects (the folders
+ * in the SD card root) and the documents of one project.
+ * s_cur_project is the project the browser shows ("" = the list of
+ * projects); s_last_project is the project the user last worked in,
+ * where untitled documents are saved and the browser reopens. */
+static project_name_t s_cur_project  = "";
+static project_name_t s_last_project = "";
+/* The first editor_ui_show_file_browser() opens the last project. */
+static bool s_browser_started = false;
+/* The boot-time "create a project" / "move the root files" prompt was
+ * dismissed with Esc; not asked again until the next boot. */
+static bool s_setup_dismissed = false;
 
 /* Settings screen objects */
 static lv_obj_t *s_scr_settings  = NULL;
@@ -1015,11 +1037,47 @@ static lv_obj_t *s_save_cur      = NULL;   /* blinking cursor in name field */
 static bool      s_save_open     = false;
 static char      s_save_buf[128] = "";     /* editable filename (no directory) */
 static int       s_save_pos      = 0;      /* cursor position in s_save_buf (byte) */
-/* The same overlay renames the file browser's selected file (F2 or Alt+R):
- * s_rename_src then holds the full path of the file being renamed and
- * the panel is moved onto whichever screen is showing the browser. */
-static bool      s_save_is_rename = false;
+/* The same overlay asks for other names too (s_save_mode): renaming the
+ * file browser's selected file (F2 or Alt+R; s_rename_src then holds
+ * its full path), and the project prompts. The panel is moved onto
+ * whichever screen is showing. */
+typedef enum {
+    SAVE_MODE_SAVE_AS,         /* save the document under a name */
+    SAVE_MODE_RENAME,          /* rename the selected file */
+    SAVE_MODE_PROJECT_NEW,     /* Ctrl+N in the list of projects */
+    SAVE_MODE_PROJECT_FIRST,   /* no project on the card yet */
+    SAVE_MODE_PROJECT_MIGRATE, /* documents found in the root folder */
+    SAVE_MODE_PROJECT_RENAME,  /* rename the selected project */
+    SAVE_MODE_XFER_PROJECT,    /* new project for Alt+M / Alt+C */
+    SAVE_MODE_XFER_NAME,       /* file name for Alt+M / Alt+C */
+} save_mode_t;
+static save_mode_t s_save_mode = SAVE_MODE_SAVE_AS;
+#define s_save_is_rename (s_save_mode == SAVE_MODE_RENAME)
 static char      s_rename_src[512] = "";
+/* Return to the in-pane (split) selector rather than the full-screen
+ * browser after a project prompt raised from it. */
+static bool      s_save_from_inpane = false;
+
+/* ---- Move / copy a file to a project (Alt+M / Alt+C) ----
+ * A project picker on the menu screen (s_menu_list), like the Format SD
+ * card picker; then, when needed, the name prompt above. */
+#define XFER_MAX_PROJECTS 32
+static bool           s_xfer_open = false;
+static bool           s_xfer_copy = false;
+static bool           s_xfer_from_inpane = false;
+static int            s_xfer_sel = 0;
+static int            s_xfer_sel_prev = -1;
+static project_name_t s_xfer_src_project = "";
+static char           s_xfer_src_name[256] = "";
+static project_name_t s_xfer_dst_project = "";
+static project_name_t s_xfer_projects[XFER_MAX_PROJECTS];
+static int            s_xfer_nprojects = 0;  /* rows before "New project..." */
+/* The picker moves the files found outside any project (see
+ * check_project_setup()) instead of one file. */
+static bool           s_xfer_migrate = false;
+/* Set while that picker hands over to the browser, so the browser does
+ * not raise the "Files outside projects" dialog again in between. */
+static bool           s_setup_busy = false;
 
 /* ---- WiFi "New connection" scan/pick flow ----
  * Selecting the F1 menu's "WiFi: New connection..." row
@@ -1197,6 +1255,8 @@ static int       s_del_sel     = DELCONF_CANCEL;
 static char      s_del_path[512] = "";
 /* Row to select after the deletion (the neighbouring file). */
 static char      s_del_next_name[256] = "";
+/* The prompt deletes the selected project (s_del_path is its folder). */
+static bool      s_del_is_project = false;
 
 /* ---- Help screen ----
  * F10 (or F1 -> Help) shows a scrollable page with the shortcuts of the
@@ -3846,6 +3906,90 @@ static void ble_prompt_forget_btn_cb(lv_event_t *e)
  * to hard-code "F1:Menu  N:New file" (editor_ui_show_file_browser()
  * and restore_default_status()) go through this instead, so they and
  * the auto-off idle timer (polled in key_drain_cb) all agree. */
+/* ---- Project helpers ---- */
+
+static bool browser_at_root(void) { return s_cur_project[0] == '\0'; }
+
+/* Proposed name for a new project: MyDrafts, or MyDrafts2, MyDrafts3,
+ * ... when that one exists. */
+static void default_project_name(char *out, size_t n)
+{
+    strlcpy(out, PROJECT_DEFAULT_NAME, n);
+    for (int i = 2; i < 100 && project_exists(out); i++)
+        snprintf(out, n, "%s%d", PROJECT_DEFAULT_NAME, i);
+}
+
+/* The browser's highlighted entry, or NULL (an empty list's
+ * placeholder row has no entry). */
+static const sd_card_file_entry_t *browser_selected_entry(void)
+{
+    if (!s_browser_list) return NULL;
+    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
+    if (!btn) return NULL;
+    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    if (idx < 0 || idx >= s_browser_count) return NULL;
+    return &s_browser_entries[idx];
+}
+
+/* Project of a document's file, if it lies in one. */
+static bool doc_project(const editor_doc_t *d, char *out, size_t n)
+{
+    const char *p = d ? editor_doc_get_path(d) : NULL;
+    return p && project_of_path(p, out, n);
+}
+
+/* The project the user works in: in the editor the focused document's
+ * project (an untitled one: the last project); in the browser the
+ * project shown, or the highlighted one in the list of projects. */
+static bool context_project(char *out, size_t n)
+{
+    out[0] = '\0';
+    if (s_editor_screen_active && !s_inpane_browser_open) {
+        if (doc_project(s_panes[s_focus].doc, out, n)) return true;
+    } else if (!browser_at_root()) {
+        strlcpy(out, s_cur_project, n);
+        return true;
+    } else {
+        const sd_card_file_entry_t *e = browser_selected_entry();
+        if (e && e->is_dir) {
+            strlcpy(out, e->name, n);
+            return true;
+        }
+        return false;
+    }
+    if (s_last_project[0] && project_exists(s_last_project)) {
+        strlcpy(out, s_last_project, n);
+        return true;
+    }
+    return false;
+}
+
+/* Folder where an untitled document is saved. */
+static bool new_doc_dir(char *out, size_t n)
+{
+    project_name_t p;
+    if (!browser_at_root() && project_exists(s_cur_project)) strlcpy(p, s_cur_project, sizeof(p));
+    else if (s_last_project[0] && project_exists(s_last_project)) strlcpy(p, s_last_project, sizeof(p));
+    else return false;
+    project_dir(p, out, n);
+    return true;
+}
+
+static int status_avail_width(void);
+
+/* prefix + the longest of hints (longest first) that fits the status
+ * bar; just the prefix if none does. */
+static void fit_status_text(char *buf, size_t n, const char *prefix,
+                            const char *const *hints, int nhints)
+{
+    int avail = status_avail_width() / char_width_for_font(FONT_11);
+    for (int i = 0; i < nhints; i++) {
+        snprintf(buf, n, "%s%s", prefix, hints[i]);
+        if (utf8_chars_in_bytes(buf, strlen(buf)) <= avail) return;
+    }
+    snprintf(buf, n, "%s", prefix);
+}
+
 static void browser_status_hint(char *buf, size_t buf_size)
 {
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
@@ -3862,7 +4006,25 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
-    snprintf(buf, buf_size, "F1:Menu  N:New  F2:Rename");
+    if (browser_at_root()) {
+        static const char *const hints[] = {
+            "F1:Menu  N:New project  F2:Rename  Del:Delete  Alt+I:Info",
+            "F1:Menu  N:New project  F2:Rename",
+            "F1:Menu  N:New project",
+            "F1:Menu",
+        };
+        fit_status_text(buf, buf_size, "Projects  ", hints, 4);
+    } else {
+        static const char *const hints[] = {
+            "F1:Menu  N:New  F2:Rename  Alt+M:Move  Alt+C:Copy  Esc:Projects",
+            "F1:Menu  N:New  F2:Rename  Esc:Projects",
+            "F1:Menu  N:New  Esc:Projects",
+            "F1:Menu",
+        };
+        char prefix[PROJECT_NAME_MAX + 4];
+        snprintf(prefix, sizeof(prefix), "%s  ", s_cur_project);
+        fit_status_text(buf, buf_size, prefix, hints, 4);
+    }
 }
 
 static void refresh_file_list(const char *select_name = NULL)
@@ -3888,24 +4050,43 @@ static void refresh_file_list(const char *select_name = NULL)
         }
     }
 
-    const char *mp = sd_card_get_mount_point();
-    s_browser_count = sd_card_list_dir(mp, s_browser_entries, 64);
-    if (s_browser_count < 0) s_browser_count = 0;
+    /* A project that went away (renamed or deleted elsewhere) drops
+     * the browser back to the list of projects. */
+    if (!browser_at_root() && !project_exists(s_cur_project)) {
+        strlcpy(remembered_name, s_cur_project, sizeof(remembered_name));
+        s_cur_project[0] = '\0';
+    }
 
-    /* Filter to show only documents (.md / .fountain / .txt) and
-     * directories */
+    if (browser_at_root()) {
+        /* The list of projects: the folders in the SD card root. */
+        static project_name_t names[64];
+        int n = project_list(names, 64);
+        for (int i = 0; i < n; i++) {
+            strlcpy(s_browser_entries[i].name, names[i], sizeof(s_browser_entries[i].name));
+            s_browser_entries[i].is_dir = true;
+            s_browser_entries[i].size = 0;
+        }
+        s_browser_count = n;
+    } else {
+        char dir[64];
+        project_dir(s_cur_project, dir, sizeof(dir));
+        s_browser_count = sd_card_list_dir(dir, s_browser_entries, 64);
+        if (s_browser_count < 0) s_browser_count = 0;
+    }
+
     lv_obj_clean(s_browser_list);
 
     int restored_row = -1;
     int row = 0;
     for (int i = 0; i < s_browser_count; i++) {
         const char *name = s_browser_entries[i].name;
-        bool show = s_browser_entries[i].is_dir;
-        if (!show) show = editor_path_format(name, NULL);
+        /* In a project only its documents are listed. */
+        bool show = browser_at_root() ? true
+                  : (!s_browser_entries[i].is_dir && editor_path_format(name, NULL));
         if (show) {
             char label[sizeof(s_browser_entries[0].name) + 8];
             if (s_browser_entries[i].is_dir)
-                snprintf(label, sizeof(label), "[DIR] %.255s", name);
+                snprintf(label, sizeof(label), "%.255s/", name);
             else
                 snprintf(label, sizeof(label), "  %.255s", name);
             lv_obj_t *btn = lv_list_add_btn(s_browser_list, NULL, label);
@@ -3915,6 +4096,19 @@ static void refresh_file_list(const char *select_name = NULL)
             }
             row++;
         }
+    }
+    if (row == 0) {
+        /* Placeholder row: no entry behind it (user data -1). */
+        lv_obj_t *btn = lv_list_add_btn(s_browser_list, NULL,
+                                        browser_at_root() ? "(no projects -- N: new project)"
+                                                          : "(no files -- N: new file)");
+        lv_obj_set_user_data(btn, (void *)(intptr_t)-1);
+    }
+    if (s_inpane_hdr) {
+        char hdr[PROJECT_NAME_MAX + 32];
+        if (browser_at_root()) snprintf(hdr, sizeof(hdr), "Open into pane: projects");
+        else snprintf(hdr, sizeof(hdr), "Open into pane: %s", s_cur_project);
+        lv_label_set_text(s_inpane_hdr, hdr);
     }
     s_browser_sel = (restored_row >= 0) ? restored_row : 0;
     /* Clamp in case the list shrank below the saved selection. */
@@ -3947,8 +4141,127 @@ static void refresh_file_list(const char *select_name = NULL)
     sync_battery_labels();
 }
 
+static void restore_default_status(void);
+static void set_status_with_timeout(const char *msg, uint32_t timeout_ms);
+static void show_msg_popup(const char *title, const char *text, bool busy);
+static void show_name_prompt(save_mode_t mode, const char *hdr, const char *initial);
+
+/* Open a project in the browser, with select (or the project's last
+ * selected file) highlighted. */
+static void browser_enter_project(const char *name, const char *select = NULL)
+{
+    strlcpy(s_cur_project, name, sizeof(s_cur_project));
+    strlcpy(s_last_project, name, sizeof(s_last_project));
+    projects_set_last(name);
+    char last[256] = "";
+    if (!select) {
+        project_get_last_file(name, last, sizeof(last));
+        select = last;
+    }
+    s_browser_sel = 0;
+    refresh_file_list(select[0] ? select : NULL);
+    restore_default_status();
+}
+
+/* Remember the highlighted file as the project's last selection. */
+static void browser_remember_selection(void)
+{
+    if (browser_at_root()) return;
+    const sd_card_file_entry_t *e = browser_selected_entry();
+    if (e && !e->is_dir) project_set_last_file(s_cur_project, e->name);
+}
+
+/* From a project back to the list of projects. */
+static void browser_go_up(void)
+{
+    if (browser_at_root()) return;
+    browser_remember_selection();
+    project_name_t old;
+    strlcpy(old, s_cur_project, sizeof(old));
+    s_cur_project[0] = '\0';
+    refresh_file_list(old);
+    restore_default_status();
+}
+
+/* Start-up checks of the card layout, when the file browser shows:
+ * the card is missing; documents lie in the root folder (from before
+ * projects existed, or copied there over USB); no project exists yet
+ * (a new or freshly formatted card). */
+static void check_project_setup(void)
+{
+    if (s_save_open || s_msg_open || s_menu_open || s_setup_busy) return;
+    if (sd_handed_off_msg()) return;
+    if (!sd_card_is_ready()) {
+        if (s_setup_dismissed) return;
+        s_setup_dismissed = true;
+        show_msg_popup("No SD card",
+                       "The SD card is missing or cannot be read.\n"
+                       "Insert a MicroSD card and restart the device.", false);
+        s_msg_restart = true;
+        lv_label_set_text(s_msg_hint_lbl, "Enter: restart");
+        return;
+    }
+    if (s_setup_dismissed) return;
+    const int SHOW = 6;
+    project_file_name_t names[SHOW];
+    int ndocs = project_root_doc_names(names, SHOW);
+    if (ndocs > 0) {
+        std::string text = ndocs == 1 ? "This file does not belong to any project:\n"
+                                      : "These files do not belong to any project:\n";
+        for (int i = 0; i < ndocs && i < SHOW; i++) {
+            text += "  ";
+            text += names[i];
+            text += '\n';
+        }
+        if (ndocs > SHOW) {
+            char more[48];
+            snprintf(more, sizeof(more), "  ...and %d more\n", ndocs - SHOW);
+            text += more;
+        }
+        project_name_t one[1];
+        bool have_projects = project_list(one, 1) > 0;
+        if (have_projects)
+            text += ndocs == 1 ? "Move it to a project?" : "Move them to a project?";
+        else
+            text += ndocs == 1 ? "Move it to a new project?" : "Move them to a new project?";
+        char cfg[32];
+        snprintf(cfg, sizeof(cfg), "%s/git.cfg", sd_card_get_mount_point());
+        if (sd_card_file_exists(cfg))
+            text += have_projects
+                ? " Their Git sync settings (git.cfg) and history go with them, "
+                  "unless the project has its own."
+                : " Their Git sync settings (git.cfg) and history go with them.";
+        show_msg_popup("Files outside projects", text.c_str(), false);
+        s_msg_migrate = true;
+        lv_label_set_text(s_msg_hint_lbl, have_projects
+                              ? "Enter: move to a project  Esc: power off"
+                              : "Enter: move to a new project  Esc: power off");
+        return;
+    }
+    project_name_t one[1];
+    if (project_list(one, 1) == 0) {
+        show_name_prompt(SAVE_MODE_PROJECT_FIRST, "Create a project (Enter):",
+                         PROJECT_DEFAULT_NAME);
+        set_status_with_timeout("Files are kept in projects. Name the first one", 0);
+    }
+}
+
 extern "C" void editor_ui_show_file_browser(void)
 {
+    /* The row to highlight: the file the editor had open, or on the
+     * first call the last project's last selected file. */
+    char select[256] = "";
+    if (!s_browser_started && sd_card_is_ready()) {
+        /* First time: reopen the project the user last worked in. */
+        s_browser_started = true;
+        projects_get_last(s_last_project, sizeof(s_last_project));
+        if (s_last_project[0] && project_exists(s_last_project)) {
+            strlcpy(s_cur_project, s_last_project, sizeof(s_cur_project));
+            project_get_last_file(s_cur_project, select, sizeof(select));
+        } else {
+            s_last_project[0] = '\0';
+        }
+    }
     if (s_pane_count > 1) {
         /* Split: overlay a compact file selector on just the focused
          * pane, keeping the other pane's document on screen. The editor
@@ -3968,6 +4281,7 @@ extern "C" void editor_ui_show_file_browser(void)
             editor_ui_refresh();
         }
         show_inpane_browser();
+        check_project_setup();
         return;
     }
 
@@ -3979,17 +4293,28 @@ extern "C" void editor_ui_show_file_browser(void)
     /* Single-pane: opening a file replaces the current document, so
      * close it now (historical behavior; the buffer is reloaded
      * from disk when a file is picked). */
+    {
+        /* Back in the project of the document being closed. */
+        const char *ap = editor_get_file_path();
+        project_name_t dp;
+        if (ap && project_of_path(ap, dp, sizeof(dp))) {
+            strlcpy(s_cur_project, dp, sizeof(s_cur_project));
+            strlcpy(s_last_project, dp, sizeof(s_last_project));
+            strlcpy(select, strrchr(ap, '/') + 1, sizeof(select));
+            project_set_last_file(dp, select);
+        }
+    }
     editor_close_file();
     s_open_target_pane = 0;
     /* Operate on the full-screen browser list. */
     s_browser_list = s_list_files;
-    refresh_file_list();
+    refresh_file_list(select[0] ? select : NULL);
 
     /* The Wi-Fi connection state is conveyed by the Wi-Fi icon; the
      * status bar shows the static hint so it doesn't compete with
      * transient messages (e.g. Git-sync progress). */
     if (s_lbl_br_status) {
-        char hint[64];
+        char hint[160];
         browser_status_hint(hint, sizeof(hint));
         lv_label_set_text(s_lbl_br_status, hint);
     }
@@ -4012,12 +4337,15 @@ extern "C" void editor_ui_show_file_browser(void)
     lv_obj_invalidate(s_scr_browser);
 #endif
     lv_scr_load(s_scr_browser);
+    check_project_setup();
 }
 
 extern "C" void editor_ui_show_editor(void)
 {
     s_editor_screen_active = true;
     editor_set_mode(EDITOR_MODE_EDITING);
+    /* The default text names the focused document's project. */
+    if (!s_status_clear_timer) restore_default_status();
     sync_battery_labels();
     lv_scr_load(s_scr);
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
@@ -4078,10 +4406,24 @@ static void update_status_visibility(void)
     }
 }
 
-/* Default status-bar text for the editor screen. Kept in one place
- * so the auto-clear timer and the initial label setup agree. */
-#define EDITOR_DEFAULT_STATUS \
-    "F1:Menu Ctrl+S:Save Ctrl+L:Layout Ctrl+G:Git Esc:Files"
+/* Default status-bar text for the editor screen: the focused
+ * document's project, then as many key hints as fit. Kept in one
+ * place so the auto-clear timer and the initial label setup agree. */
+static void editor_default_status(char *buf, size_t n)
+{
+    static const char *const hints[] = {
+        "F1:Menu Ctrl+S:Save Ctrl+L:Layout Ctrl+G:Git Esc:Files",
+        "F1:Menu Ctrl+S:Save Ctrl+G:Git Esc:Files",
+        "F1:Menu Esc:Files",
+        "F1:Menu",
+    };
+    project_name_t p = "";
+    if (!doc_project(s_panes[s_focus].doc, p, sizeof(p)) && s_last_project[0])
+        strlcpy(p, s_last_project, sizeof(p));
+    char prefix[PROJECT_NAME_MAX + 4] = "";
+    if (p[0]) snprintf(prefix, sizeof(prefix), "%s | ", p);
+    fit_status_text(buf, n, prefix, hints, 4);
+}
 
 /* Restore the status bar of both screens to its standard, no-message
  * state (the same text the screens show when they are first entered).
@@ -4092,11 +4434,13 @@ static void update_status_visibility(void)
 static void restore_default_status(void)
 {
     if (s_lbl_status) {
-        lv_label_set_text(s_lbl_status, EDITOR_DEFAULT_STATUS);
+        char st[160];
+        editor_default_status(st, sizeof(st));
+        lv_label_set_text(s_lbl_status, st);
     }
     update_status_visibility();
     if (s_lbl_br_status) {
-        char hint[64];
+        char hint[160];
         browser_status_hint(hint, sizeof(hint));
         lv_label_set_text(s_lbl_br_status, hint);
     }
@@ -4206,6 +4550,15 @@ extern "C" void editor_ui_set_ble_prompt_text(const char *text)
      * it has decided to bring up BLE, so the "Searching for BLE
      * keyboard..." message only appears on the no-USB path. */
     if (!s_ble_prompt_lbl || !text) return;
+    /* main.cpp mounts the card before this is called: say so here too,
+     * since the file browser (with its "insert the SD card" pop-up)
+     * only shows once a keyboard is connected. */
+    if (!sd_handed_off_msg() && !sd_card_is_ready()) {
+        std::string t(text);
+        t += "\n\nNo SD card found.\nInsert a MicroSD card and restart the device.";
+        lv_label_set_text(s_ble_prompt_lbl, t.c_str());
+        return;
+    }
     lv_label_set_text(s_ble_prompt_lbl, text);
 }
 
@@ -4422,12 +4775,21 @@ static void refresh_menu_items(void)
     /* 5: WiFi disconnect */
     lv_list_add_btn(s_menu_list, NULL, "WiFi: Disconnect");
 
-    /* 6: Git sync */
-    snprintf(buf, sizeof(buf), "Git Sync%s",
-             git_sync_is_configured() ? "" : " (not configured)");
+    /* 6: Git sync of the project the user works in */
+    {
+        project_name_t p;
+        char dir[64];
+        if (context_project(p, sizeof(p))) {
+            project_dir(p, dir, sizeof(dir));
+            snprintf(buf, sizeof(buf), "Git Sync: %s%s", p,
+                     git_sync_is_configured(dir) ? "" : " (not configured)");
+        } else {
+            snprintf(buf, sizeof(buf), "Git Sync (no project selected)");
+        }
+    }
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 7: Draftbox one-time password -> git.cfg */
+    /* 7: Draftbox one-time password -> <project>/git.cfg */
     lv_list_add_btn(s_menu_list, NULL, "Connect a Draftbox repository...");
 
     /* 8: Keyboard layout */
@@ -4451,8 +4813,17 @@ static void refresh_menu_items(void)
 #endif
 
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
-    /* Sync via browser: Kermit server on the serial console */
-    lv_list_add_btn(s_menu_list, NULL, "Sync via browser...");
+    /* Sync via browser: Kermit server on the serial console, serving
+     * the project the user works in (see kermit_start()). The hotkey
+     * letter stays at index 9 ("Sync via b..."). */
+    {
+        project_name_t p;
+        if (context_project(p, sizeof(p)))
+            snprintf(buf, sizeof(buf), "Sync via browser: %s...", p);
+        else
+            snprintf(buf, sizeof(buf), "Sync via browser (no project selected)");
+    }
+    lv_list_add_btn(s_menu_list, NULL, buf);
 #endif
 
     /* Format SD card */
@@ -4512,6 +4883,8 @@ static void show_menu(void)
     s_dbx_open = false;
     if (s_dbx_panel) lv_obj_add_flag(s_dbx_panel, LV_OBJ_FLAG_HIDDEN);
     s_fmt_step = FMT_STEP_NONE;
+    s_xfer_open = false;
+    s_xfer_migrate = false;
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     s_kermit_picker_open = false;
 #endif
@@ -5505,6 +5878,7 @@ static void show_msg_popup(const char *title, const char *text, bool busy)
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (s_msg_kermit) return;   /* the Sync via browser dialog stays up */
 #endif
+    if (s_msg_restart) return;  /* so does the missing SD card one */
     lv_label_set_text(s_msg_title_lbl, title);
     lv_label_set_text(s_msg_text_lbl, text);
     if (busy) lv_obj_add_flag(s_msg_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -5522,6 +5896,11 @@ static void close_msg_popup(void)
 {
     s_msg_open = false;
     s_msg_busy = false;
+    if (s_msg_restart || s_msg_migrate) {
+        s_msg_restart = false;
+        s_msg_migrate = false;
+        lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: close");
+    }
     if (s_msg_panel) lv_obj_add_flag(s_msg_panel, LV_OBJ_FLAG_HIDDEN);
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (s_msg_kermit) {
@@ -5535,6 +5914,34 @@ static void close_msg_popup(void)
 static void kermit_finish(void);
 #endif
 
+static void show_name_prompt(save_mode_t mode, const char *hdr, const char *initial);
+static void default_project_name(char *out, size_t n);
+
+/* "Files outside projects" pop-up: Enter asks for the new project's
+ * name; Esc powers off (deep sleep), the files stay where they are. */
+static void show_migrate_picker(void);
+
+static void migrate_popup_accept(void)
+{
+    close_msg_popup();
+    project_name_t one[1];
+    if (project_list(one, 1) > 0) {
+        /* Existing projects to choose from, or a new one. */
+        show_migrate_picker();
+        return;
+    }
+    char def[PROJECT_NAME_MAX + 1];
+    default_project_name(def, sizeof(def));
+    show_name_prompt(SAVE_MODE_PROJECT_MIGRATE, "Name of the new project (Enter/Esc):", def);
+}
+
+static void migrate_popup_power_off(void)
+{
+    ESP_LOGI(TAG, "Files outside projects not moved: powering off");
+    standby_enter_sleep();
+    /* Only returns while sleep is inhibited: keep asking. */
+}
+
 static void handle_msg_popup_key(const kb_event_t *ev)
 {
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
@@ -5545,6 +5952,19 @@ static void handle_msg_popup_key(const kb_event_t *ev)
     }
 #endif
     if (s_msg_busy) return;
+    if (s_msg_migrate) {
+        if (ev->keycode == KB_KEY_ENTER) migrate_popup_accept();
+        else if (ev->keycode == KB_KEY_ESCAPE) migrate_popup_power_off();
+        return;
+    }
+    if (s_msg_restart) {
+        /* No way out but a restart with a card inserted. */
+        if (ev->keycode == KB_KEY_ENTER) {
+            ESP_LOGI(TAG, "Restarting to look for the SD card again");
+            esp_restart();
+        }
+        return;
+    }
     if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
         close_msg_popup();
 }
@@ -5559,6 +5979,11 @@ static void msg_popup_touch_cb(lv_event_t *e)
         return;
     }
 #endif
+    if (s_msg_restart) esp_restart();
+    if (s_msg_migrate) {
+        migrate_popup_accept();
+        return;
+    }
     if (!s_msg_busy) close_msg_popup();
 }
 #endif
@@ -5974,6 +6399,11 @@ static void kermit_start(void)
         editor_ui_set_status("Sync via browser: wait for Git sync to finish");
         return;
     }
+    project_name_t kproj;
+    if (!context_project(kproj, sizeof(kproj))) {
+        editor_ui_set_status("Sync via browser: select a project first");
+        return;
+    }
     bool untitled = false;
     editor_doc_foreach(kermit_untitled_cb, &untitled);
     if (untitled) {
@@ -5991,7 +6421,11 @@ static void kermit_start(void)
     pane_bind_focus();
     s_editor_screen_active = false;   /* close_menu() goes to the browser */
 
-    esp_err_t err = kermit_server_start(sd_card_get_mount_point(), kermit_status_cb);
+    /* The client sees the project folder: its documents and git.cfg,
+     * the layout Draftbridge expects. */
+    static char kdir[64];
+    project_dir(kproj, kdir, sizeof(kdir));
+    esp_err_t err = kermit_server_start(kdir, kermit_status_cb);
     if (err != ESP_OK) {
         char buf[80];
         snprintf(buf, sizeof(buf), "Sync via browser: failed to start (%s)",
@@ -6000,7 +6434,9 @@ static void kermit_start(void)
         return;
     }
     close_menu();
-    show_msg_popup("Sync via browser", KERMIT_STARTING_TEXT, false);
+    char ktitle[PROJECT_NAME_MAX + 24];
+    snprintf(ktitle, sizeof(ktitle), "Sync via browser: %s", kproj);
+    show_msg_popup(ktitle, KERMIT_STARTING_TEXT, false);
     s_msg_kermit = true;
     lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: Cancel");
     /* Sleep stays allowed until a computer connects. */
@@ -6276,6 +6712,47 @@ static void open_fmt_picker(void)
     fmt_set_step(have_wifi ? FMT_STEP_WIFI : FMT_STEP_CONFIRM1);
 }
 
+static void save_modified_doc_cb(editor_doc_t *doc, void *ctx);
+
+/* Ctrl+G and F1 -> Git Sync: sync the project the user works in (see
+ * context_project()), after saving every open document so the sync
+ * task (which reads the files) picks up the latest edits. */
+static void start_project_sync(void)
+{
+    if (const char *busy = sd_handed_off_msg()) {
+        editor_ui_set_status(busy);
+        return;
+    }
+    project_name_t p;
+    if (!context_project(p, sizeof(p))) {
+        editor_ui_set_status("Git: select a project first");
+        return;
+    }
+    char dir[64];
+    project_dir(p, dir, sizeof(dir));
+    editor_doc_foreach(save_modified_doc_cb, NULL);
+    pane_bind_focus();
+    char sbuf[128];
+    if (!git_sync_is_configured(dir)) {
+        snprintf(sbuf, sizeof(sbuf), "Git: %.32s not configured (no git.cfg)", p);
+        editor_ui_set_status(sbuf);
+        return;
+    }
+    if (!wifi_manager_is_connected()) {
+        editor_ui_set_status("Git: connect WiFi first (F1)");
+        return;
+    }
+    if (git_sync_start(dir, GIT_SYNC_BOTH) == ESP_OK) {
+        snprintf(sbuf, sizeof(sbuf), "Git: syncing %.32s...", p);
+        editor_ui_set_status(sbuf);
+    } else {
+        const char *err = git_sync_get_last_error();
+        snprintf(sbuf, sizeof(sbuf), "Git: %s",
+                 (err && err[0]) ? err : "failed to start sync");
+        editor_ui_set_status(sbuf);
+    }
+}
+
 static void menu_activate_item(int idx)
 {
     switch (idx) {
@@ -6326,26 +6803,15 @@ static void menu_activate_item(int idx)
             editor_ui_set_status(busy);
             break;
         }
-        /* Auto-save unsaved edits so the sync task pushes the latest content. */
-        if (editor_is_modified() && editor_get_file_path()) {
-            editor_save_file();
-        }
-        if (git_sync_is_configured() && wifi_manager_is_connected()) {
-            close_menu();
-            if (git_sync_start(GIT_SYNC_BOTH) == ESP_OK) {
-                editor_ui_set_status("Git: syncing...");
-            } else {
-                char sbuf[128];
-                const char *err = git_sync_get_last_error();
-                snprintf(sbuf, sizeof(sbuf), "Git: %s",
-                         (err && err[0]) ? err : "failed to start sync");
-                editor_ui_set_status(sbuf);
+        if (git_sync_get_state() != GIT_SYNC_IN_PROGRESS && wifi_manager_is_connected()) {
+            project_name_t p;
+            char dir[64];
+            if (context_project(p, sizeof(p))) {
+                project_dir(p, dir, sizeof(dir));
+                if (git_sync_is_configured(dir)) close_menu();
             }
-        } else if (!wifi_manager_is_connected()) {
-            editor_ui_set_status("Git: connect WiFi first");
-        } else {
-            editor_ui_set_status("Git: not configured");
         }
+        start_project_sync();
         break;
     case MENU_IDX_DRAFTBOX:
         /* Writes git.cfg on the SD card -- same guard as Git Sync. */
@@ -6423,8 +6889,14 @@ static void menu_activate_item(int idx)
     }
 }
 
+static void handle_xfer_picker_key(const kb_event_t *ev);
+
 static void handle_menu_key(const kb_event_t *ev)
 {
+    if (s_xfer_open) {
+        handle_xfer_picker_key(ev);
+        return;
+    }
     if (s_wifi_scan_picker_open) {
         /* Up/Down/Enter/Esc only -- ignore keys while a scan is still
          * in flight (s_wifi_scan_in_progress) so Enter can't activate
@@ -6623,7 +7095,7 @@ static void help_common_rows(std::string &out, int cols, int kc)
     help_row(out, cols, kc, "Ctrl+1", "Single pane");
     help_row(out, cols, kc, "Ctrl+2", "Split into two equal panes");
     help_row(out, cols, kc, "Ctrl+3", "Split with a wide first pane; again to make it narrow");
-    help_row(out, cols, kc, "Ctrl+G", "Git sync");
+    help_row(out, cols, kc, "Ctrl+G", "Git sync of the current project");
     help_row(out, cols, kc, "Ctrl+W", "WiFi connect / disconnect");
     help_row(out, cols, kc, "Ctrl+P", "Sleep");
 #if defined(CONFIG_DRAFTLING_DISPLAY_HAS_BACKLIGHT) && !defined(CONFIG_DRAFTLING_DISPLAY_BACKLIGHT_BINARY)
@@ -6659,7 +7131,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "Ctrl+Up/Down", "Page up / down, same as PgUp / PgDn");
         help_row(out, cols, kc, "Ctrl+Tab", "Switch pane (when split)");
         help_row(out, cols, kc, "Ctrl+L", "Next keyboard layout (also Win+Space)");
-        help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
+        help_row(out, cols, kc, "Alt+I", "File and project information: words, size, Git status");
         help_common_rows(out, cols, kc);
 
         pane_bind_focus();
@@ -6668,15 +7140,28 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         for (const fmt_help_row_t *r = fmt->help; r->syntax; r++)
             help_row(out, cols, kc, r->syntax, r->meaning);
     } else {
-        help_heading(out, "File browser");
-        help_row(out, cols, kc, "Up / Down", "Select a file");
-        help_row(out, cols, kc, "Enter", "Open the file or folder");
+        help_heading(out, "Projects");
+        help_row(out, cols, kc, "Up / Down", "Select a project");
+        help_row(out, cols, kc, "Enter", "Open the project");
+        help_row(out, cols, kc, "N, Ctrl+N", "New project");
+        help_row(out, cols, kc, "F2, Alt+R", "Rename the project");
+        help_row(out, cols, kc, "Del, Alt+D", "Delete the project (only when synchronized with Git)");
+        help_row(out, cols, kc, "Alt+I", "Project information: files, size, Git status");
+        help_row(out, cols, kc, "Ctrl+G", "Git sync of the selected project");
         if (origin == HELP_FROM_INPANE)
-            help_row(out, cols, kc, "Esc", "Back to the editor");
+            help_row(out, cols, kc, "Ctrl+Tab", "Back to the editor, in the other pane");
+
+        help_heading(out, "Files of a project");
+        help_row(out, cols, kc, "Up / Down", "Select a file");
+        help_row(out, cols, kc, "Enter", "Open the file");
+        help_row(out, cols, kc, "Esc, Backspace", "Back to the list of projects");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
         help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file (only once it is pushed with Git sync)");
-        help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
+        help_row(out, cols, kc, "Alt+M", "Move the file to another project");
+        help_row(out, cols, kc, "Alt+C", "Copy the file to a project (also this one, under a new name)");
+        help_row(out, cols, kc, "Alt+I", "File and project information: words, size, Git status");
+        help_row(out, cols, kc, "Ctrl+G", "Git sync of this project");
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Ctrl+Tab", "Switch to the other pane");
         help_common_rows(out, cols, kc);
@@ -6972,21 +7457,22 @@ static void count_text(const char *t, size_t len, unsigned *words,
     }
 }
 
-/* name is the bare file name in the sync directory, or NULL when the
- * document is not saved there; data/len is the content to compare. */
-static void fileinfo_git_row(std::string &out, int cols, int kc,
+/* project is the document's project and name its bare file name, or
+ * NULL when the document is not saved in a project; data/len is the
+ * content to compare. */
+static void fileinfo_git_row(std::string &out, int cols, int kc, const char *project,
                              const char *name, const char *data, size_t len)
 {
     char buf[96];
     const char *msg;
-    if (!name) {
-        msg = git_sync_is_configured() ? "not saved in the sync folder"
-                                       : "not configured";
-        help_row(out, cols, kc, "Status", msg);
+    if (!project || !name) {
+        help_row(out, cols, kc, "Status", "not saved in a project");
         return;
     }
+    char dir[64];
+    project_dir(project, dir, sizeof(dir));
     int added = -1, deleted = -1;
-    switch (git_sync_file_diff(name, data, len, &added, &deleted)) {
+    switch (git_sync_file_diff(dir, name, data, len, &added, &deleted)) {
     case GIT_SYNC_FILE_PUSHED:         msg = "same as on the server"; break;
     case GIT_SYNC_FILE_NOT_CONFIGURED: msg = "not configured"; break;
     case GIT_SYNC_FILE_BUSY:           msg = "sync in progress"; break;
@@ -7001,10 +7487,71 @@ static void fileinfo_git_row(std::string &out, int cols, int kc,
     }
 }
 
+static void format_bytes(char *buf, size_t n, uint64_t bytes)
+{
+    if (bytes < 10000) snprintf(buf, n, "%u bytes", (unsigned)bytes);
+    else if (bytes < 10000000ULL) snprintf(buf, n, "%u KB", (unsigned)((bytes + 512) / 1024));
+    else snprintf(buf, n, "%u MB", (unsigned)(bytes / (1024 * 1024)));
+}
+
+/* Project name, number of documents, total size and Git status. */
+static void build_projectinfo_text(std::string &out, int cols, const char *name)
+{
+    const int kc = 15;
+    char buf[96], dir[64];
+    project_dir(name, dir, sizeof(dir));
+    int files = 0;
+    uint64_t bytes = 0;
+    project_stats(name, &files, &bytes);
+
+    help_heading(out, "Project");
+    help_row(out, cols, kc, "Name", name);
+    snprintf(buf, sizeof(buf), "%d", files);
+    help_row(out, cols, kc, "Files", buf);
+    format_bytes(buf, sizeof(buf), bytes);
+    help_row(out, cols, kc, "Total size", buf);
+
+    help_heading(out, "Project sync");
+    char host[96], repo[160], branch[64];
+    if (!git_sync_get_remote(dir, host, sizeof(host), repo, sizeof(repo),
+                             branch, sizeof(branch))) {
+        help_row(out, cols, kc, "Status", "not configured (no git.cfg in the project)");
+        return;
+    }
+    help_row(out, cols, kc, "Server", host);
+    help_row(out, cols, kc, "Repository", repo);
+    help_row(out, cols, kc, "Branch", branch);
+    git_sync_project_status_t st;
+    git_sync_project_status(dir, &st);
+    if (st.busy) {
+        help_row(out, cols, kc, "Status", "sync in progress");
+    } else if (st.error) {
+        help_row(out, cols, kc, "Status", "cannot read the repository");
+    } else if (st.never_pushed) {
+        help_row(out, cols, kc, "Status", "never synchronized");
+    } else if (st.modified == 0 && st.not_pushed == 0 && st.deleted_locally == 0) {
+        help_row(out, cols, kc, "Status", "synchronized");
+    } else {
+        help_row(out, cols, kc, "Status", "not synchronized");
+        if (st.modified) {
+            snprintf(buf, sizeof(buf), "%d file(s)", st.modified);
+            help_row(out, cols, kc, "Changed", buf);
+        }
+        if (st.not_pushed) {
+            snprintf(buf, sizeof(buf), "%d file(s) not on the server", st.not_pushed);
+            help_row(out, cols, kc, "New", buf);
+        }
+        if (st.deleted_locally) {
+            snprintf(buf, sizeof(buf), "%d file(s) deleted here", st.deleted_locally);
+            help_row(out, cols, kc, "Deleted", buf);
+        }
+    }
+}
+
 static void build_fileinfo_text(std::string &out, int cols, const char *name,
                                 const char *fmt_name, bool unsaved,
                                 const char *data, size_t len,
-                                const char *git_name)
+                                const char *project, const char *git_name)
 {
     const int kc = 15;
     char buf[64];
@@ -7029,7 +7576,9 @@ static void build_fileinfo_text(std::string &out, int cols, const char *name,
     help_row(out, cols, kc, "Characters", buf);
 
     help_heading(out, "Git sync");
-    fileinfo_git_row(out, cols, kc, git_name, data, len);
+    fileinfo_git_row(out, cols, kc, project, git_name, data, len);
+
+    if (project) build_projectinfo_text(out, cols, project);
 }
 
 static const char *fileinfo_format_name(editor_doc_format_t f)
@@ -7054,39 +7603,48 @@ static void show_editor_fileinfo(void)
     const char *path = editor_get_file_path();
     const char *name = "(untitled)";
     const char *git_name = NULL;
+    project_name_t proj = "";
     if (path) {
         const char *slash = strrchr(path, '/');
         name = slash ? slash + 1 : path;
-        const char *mp = sd_card_get_mount_point();
-        size_t mpl = strlen(mp);
-        if (slash && (size_t)(slash - path) == mpl && strncmp(path, mp, mpl) == 0)
-            git_name = name;
+        if (project_of_path(path, proj, sizeof(proj))) git_name = name;
     }
     size_t len = 0;
     const char *data = editor_get_text(&len);
     std::string text;
     build_fileinfo_text(text, help_cols(), name,
                         fileinfo_format_name(editor_get_format()),
-                        editor_is_modified(), data ? data : "", len, git_name);
+                        editor_is_modified(), data ? data : "", len,
+                        git_name ? proj : NULL, git_name);
     show_fileinfo_page(HELP_FROM_EDITOR, text);
 }
 
 /* Alt+I in either file browser: the selected file, read from the SD
- * card. */
+ * card, with its project; in the list of projects the selected
+ * project. */
 static void show_browser_fileinfo(void)
 {
     if (!s_scr_help || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
-        editor_ui_set_status("Select a file to see its information");
+    help_origin_t origin = s_inpane_browser_open ? HELP_FROM_INPANE : HELP_FROM_BROWSER;
+    const sd_card_file_entry_t *e = browser_selected_entry();
+    if (browser_at_root()) {
+        if (!e) return;
+        std::string text;
+        build_projectinfo_text(text, help_cols(), e->name);
+        show_help_page(origin, "Project information - Esc or Enter to close", text);
         return;
     }
-    const char *name = s_browser_entries[idx].name;
+    if (!e || e->is_dir) {
+        std::string text;
+        build_projectinfo_text(text, help_cols(), s_cur_project);
+        show_help_page(origin, "Project information - Esc or Enter to close", text);
+        return;
+    }
+    const char *name = e->name;
+    char dir[64];
+    project_dir(s_cur_project, dir, sizeof(dir));
     char path[320];
-    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(), name);
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
     char *data = NULL;
     size_t len = 0;
     if (sd_card_read_file(path, &data, &len) != ESP_OK) {
@@ -7097,10 +7655,9 @@ static void show_browser_fileinfo(void)
     editor_path_format(name, &fmt);
     std::string text;
     build_fileinfo_text(text, help_cols(), name, fileinfo_format_name(fmt),
-                        false, data, len, name);
+                        false, data, len, s_cur_project, name);
     free(data);
-    show_fileinfo_page(s_inpane_browser_open ? HELP_FROM_INPANE : HELP_FROM_BROWSER,
-                       text);
+    show_fileinfo_page(origin, text);
 }
 
 static void close_help(void)
@@ -7187,8 +7744,8 @@ static void help_touch_cb(lv_event_t *e)
 static bool generate_default_name(char *buf, size_t buf_size)
 {
     static const char *const exts[] = { "md", "fountain", "txt" };
-    const char *mp = sd_card_get_mount_point();
-    if (!mp) return false;
+    char mp[64];
+    if (!new_doc_dir(mp, sizeof(mp))) return false;
     const char *ext = editor_format_ext(editor_get_format());
     char path[256];
     for (int seq = 1; seq <= MAX_DRAFT_SEQ; seq++) {
@@ -7226,14 +7783,24 @@ static void refresh_save_prompt(void)
 
 static void show_save_prompt(void)
 {
-    /* Pre-fill with existing filename (bare name, no directory) */
+    /* Pre-fill with existing filename (bare name, no directory).
+     * s_rename_src holds the folder the file is saved in: the file's
+     * own, or for an untitled document its project's. */
     const char *path = editor_get_file_path();
     if (path) {
         const char *slash = strrchr(path, '/');
         const char *name = slash ? slash + 1 : path;
+        size_t dl = slash ? (size_t)(slash - path) : 0;
+        if (dl >= sizeof(s_rename_src)) dl = sizeof(s_rename_src) - 1;
+        memcpy(s_rename_src, path, dl);
+        s_rename_src[dl] = '\0';
         strncpy(s_save_buf, name, sizeof(s_save_buf) - 1);
         s_save_buf[sizeof(s_save_buf) - 1] = '\0';
     } else {
+        if (!new_doc_dir(s_rename_src, sizeof(s_rename_src))) {
+            editor_ui_set_status("Save failed: no project -- create one first");
+            return;
+        }
         if (!generate_default_name(s_save_buf, sizeof(s_save_buf))) {
             editor_ui_set_status("Save failed: too many drafts");
             return;
@@ -7241,7 +7808,7 @@ static void show_save_prompt(void)
     }
     s_save_pos = (int)strlen(s_save_buf);
     s_save_open = true;
-    s_save_is_rename = false;
+    s_save_mode = SAVE_MODE_SAVE_AS;
     lv_label_set_text(s_save_hdr_lbl, "Save as (Enter/Esc):");
     lv_obj_set_parent(s_save_panel, s_scr);
     lv_obj_remove_flag(s_save_panel, LV_OBJ_FLAG_HIDDEN);
@@ -7250,30 +7817,46 @@ static void show_save_prompt(void)
 }
 
 /* F2 / Alt+R in the file browser: ask for a new name for the selected file. */
-static void show_rename_prompt(void)
+/* The single-line name prompt (the save-as overlay) in another mode. */
+static void show_name_prompt(save_mode_t mode, const char *hdr, const char *initial)
 {
-    if (!s_save_panel || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
-        editor_ui_set_status("Only files can be renamed");
-        return;
-    }
-    const char *name = s_browser_entries[idx].name;
-    snprintf(s_rename_src, sizeof(s_rename_src), "%s/%s",
-             sd_card_get_mount_point(), name);
-    strncpy(s_save_buf, name, sizeof(s_save_buf) - 1);
-    s_save_buf[sizeof(s_save_buf) - 1] = '\0';
+    if (!s_save_panel) return;
+    strlcpy(s_save_buf, initial ? initial : "", sizeof(s_save_buf));
     s_save_pos = (int)strlen(s_save_buf);
     s_save_open = true;
-    s_save_is_rename = true;
-    lv_label_set_text(s_save_hdr_lbl, "Rename to (Enter/Esc):");
+    s_save_mode = mode;
+    s_save_from_inpane = s_inpane_browser_open;
+    lv_label_set_text(s_save_hdr_lbl, hdr);
     lv_obj_set_parent(s_save_panel, lv_scr_act());
     lv_obj_remove_flag(s_save_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_save_panel);
     refresh_save_prompt();
+}
+
+static bool save_mode_is_project_name(save_mode_t m)
+{
+    return m == SAVE_MODE_PROJECT_NEW || m == SAVE_MODE_PROJECT_FIRST ||
+           m == SAVE_MODE_PROJECT_MIGRATE || m == SAVE_MODE_PROJECT_RENAME ||
+           m == SAVE_MODE_XFER_PROJECT;
+}
+
+/* F2 / Alt+R in the file browser: ask for a new name for the selected
+ * file, or in the list of projects for the selected project. */
+static void show_rename_prompt(void)
+{
+    if (!s_save_panel || !s_browser_list) return;
+    const sd_card_file_entry_t *e = browser_selected_entry();
+    if (!e) return;
+    if (browser_at_root()) {
+        strlcpy(s_rename_src, e->name, sizeof(s_rename_src));
+        show_name_prompt(SAVE_MODE_PROJECT_RENAME, "Rename project to (Enter/Esc):", e->name);
+        return;
+    }
+    if (e->is_dir) return;
+    char dir[64];
+    project_dir(s_cur_project, dir, sizeof(dir));
+    snprintf(s_rename_src, sizeof(s_rename_src), "%s/%s", dir, e->name);
+    show_name_prompt(SAVE_MODE_RENAME, "Rename to (Enter/Esc):", e->name);
 }
 
 static void close_save_prompt(void)
@@ -7296,8 +7879,13 @@ static void rename_prompt_confirm(void)
         editor_ui_set_status("Name must end in .md, .fountain or .txt");
         return;
     }
+    if (strchr(s_save_buf, '/')) {
+        editor_ui_set_status("Name must not contain /");
+        return;
+    }
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(), s_save_buf);
+    snprintf(path, sizeof(path), "%.*s/%s", (int)(old_name - 1 - s_rename_src),
+             s_rename_src, s_save_buf);
     esp_err_t err = editor_rename_file(s_rename_src, path);
     if (err == ESP_ERR_INVALID_STATE) {
         editor_ui_set_status("Rename failed: name already exists");
@@ -7314,6 +7902,403 @@ static void rename_prompt_confirm(void)
     editor_ui_set_status(msg);
 }
 
+/* ---- Project prompts, move / copy (see save_mode_t) ---- */
+
+static void save_open_doc_cb(editor_doc_t *doc, void *ctx)
+{
+    const char *path = (const char *)ctx;
+    const char *p = editor_doc_get_path(doc);
+    if (p && strcmp(p, path) == 0 && editor_doc_is_modified(doc)) editor_doc_save(doc);
+}
+
+/* Back to the browser Alt+M / Alt+C was pressed in, same project. */
+static void xfer_return(void)
+{
+    if (s_xfer_from_inpane) {
+        editor_ui_show_editor();
+        show_inpane_browser();
+        check_project_setup();   /* editor_ui_show_file_browser() does it otherwise */
+    } else {
+        editor_ui_show_file_browser();
+    }
+}
+
+/* Move or copy the picked file into dst_project as dst_name. Returns
+ * false (with a status message) if that name is taken or it fails. */
+static bool xfer_do(const char *dst_project, const char *dst_name)
+{
+    char sdir[64], ddir[64], src[400], dst[400];
+    project_dir(s_xfer_src_project, sdir, sizeof(sdir));
+    project_dir(dst_project, ddir, sizeof(ddir));
+    snprintf(src, sizeof(src), "%s/%s", sdir, s_xfer_src_name);
+    snprintf(dst, sizeof(dst), "%s/%s", ddir, dst_name);
+    if (sd_card_file_exists(dst)) {
+        editor_ui_set_status("A file with this name exists there");
+        return false;
+    }
+    /* Unsaved edits of an open copy go along. */
+    editor_doc_foreach(save_open_doc_cb, src);
+    esp_err_t err = s_xfer_copy ? sd_card_copy_file(src, dst)
+                                : editor_rename_file(src, dst);
+    char msg[128];
+    if (err != ESP_OK) {
+        snprintf(msg, sizeof(msg), "%s failed", s_xfer_copy ? "Copy" : "Move");
+        editor_ui_set_status(msg);
+        return false;
+    }
+    bool same = strcmp(dst_project, s_xfer_src_project) == 0;
+    if (same)
+        snprintf(msg, sizeof(msg), "Copied as %.60s", dst_name);
+    else
+        snprintf(msg, sizeof(msg), "%s %.40s to %.32s", s_xfer_copy ? "Copied" : "Moved",
+                 s_xfer_src_name, dst_project);
+    /* Navigation stays in the original project. */
+    refresh_file_list(s_xfer_copy ? (same ? dst_name : s_xfer_src_name) : NULL);
+    editor_ui_set_status(msg);
+    return true;
+}
+
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+static list_touch_ctx_t s_xfer_touch_ctx;
+#endif
+static void xfer_picker_activate(int idx);
+
+static void refresh_xfer_picker_items(void)
+{
+    char buf[96];
+    if (s_xfer_migrate)
+        snprintf(buf, sizeof(buf), "Move the files outside projects to:");
+    else
+        snprintf(buf, sizeof(buf), "%s %.40s to project:", s_xfer_copy ? "Copy" : "Move",
+                 s_xfer_src_name);
+    lv_label_set_text(s_lbl_menu_hdr, buf);
+    lv_obj_clean(s_menu_list);
+    for (int i = 0; i < s_xfer_nprojects; i++) {
+        if (strcmp(s_xfer_projects[i], s_xfer_src_project) == 0)
+            snprintf(buf, sizeof(buf), "%.32s (this project, new name)", s_xfer_projects[i]);
+        else
+            snprintf(buf, sizeof(buf), "%.32s", s_xfer_projects[i]);
+        lv_list_add_btn(s_menu_list, NULL, buf);
+    }
+    lv_list_add_btn(s_menu_list, NULL, "New project...");
+    apply_list_selection_styles(s_menu_list, s_xfer_sel);
+    s_xfer_sel_prev = s_xfer_sel;
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+    s_xfer_touch_ctx.p_sel      = &s_xfer_sel;
+    s_xfer_touch_ctx.p_sel_prev = &s_xfer_sel_prev;
+    s_xfer_touch_ctx.activate   = xfer_picker_activate;
+    list_touch_attach(s_menu_list, &s_xfer_touch_ctx);
+#endif
+    sync_battery_labels();
+}
+
+static void close_xfer_picker(void)
+{
+    s_xfer_open = false;
+    s_menu_open = false;
+    lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
+    xfer_return();
+}
+
+/* Move the files found outside any project into the project (created
+ * if needed) and open it. */
+static void migrate_into_project(const char *name)
+{
+    char msg[128];
+    int moved = 0;
+    esp_err_t err = project_migrate_root(name, &moved);
+    if (!project_exists(name)) {
+        editor_ui_set_status("Cannot create the project folder");
+        return;
+    }
+    browser_enter_project(name);
+    if (err != ESP_OK)
+        snprintf(msg, sizeof(msg), "Moved %d file(s) to %.32s, some could not be moved",
+                 moved, name);
+    else
+        snprintf(msg, sizeof(msg), "Moved %d file(s) to project %.32s", moved, name);
+    set_status_with_timeout(msg, 6000);
+}
+
+/* "Files outside projects" dialog with projects on the card: pick one
+ * of them, or "New project...". Esc returns to the dialog. */
+static void show_migrate_picker(void)
+{
+    static project_name_t all[64];
+    int n = project_list(all, 64);
+    s_xfer_nprojects = 0;
+    for (int i = 0; i < n && s_xfer_nprojects < XFER_MAX_PROJECTS; i++)
+        strlcpy(s_xfer_projects[s_xfer_nprojects++], all[i], sizeof(project_name_t));
+    s_xfer_copy = false;
+    s_xfer_src_project[0] = '\0';
+    s_xfer_from_inpane = s_inpane_browser_open;
+    if (s_inpane_browser_open) close_inpane_browser();
+    show_menu();   /* clears the picker flags */
+    s_xfer_migrate = true;
+    s_xfer_open = true;
+    s_xfer_sel = 0;
+    refresh_xfer_picker_items();
+}
+
+/* Alt+M (move) / Alt+C (copy) on a file in a project. */
+static void show_xfer_picker(bool copy)
+{
+    if (browser_at_root()) {
+        editor_ui_set_status("Open a project and select a file");
+        return;
+    }
+    const sd_card_file_entry_t *e = browser_selected_entry();
+    if (!e || e->is_dir) {
+        editor_ui_set_status("Select a file first");
+        return;
+    }
+    s_xfer_copy = copy;
+    s_xfer_from_inpane = s_inpane_browser_open;
+    strlcpy(s_xfer_src_project, s_cur_project, sizeof(s_xfer_src_project));
+    strlcpy(s_xfer_src_name, e->name, sizeof(s_xfer_src_name));
+    browser_remember_selection();
+
+    static project_name_t all[64];
+    int n = project_list(all, 64);
+    s_xfer_nprojects = 0;
+    if (copy) strlcpy(s_xfer_projects[s_xfer_nprojects++], s_cur_project, sizeof(project_name_t));
+    for (int i = 0; i < n && s_xfer_nprojects < XFER_MAX_PROJECTS; i++) {
+        if (strcmp(all[i], s_cur_project) == 0) continue;
+        strlcpy(s_xfer_projects[s_xfer_nprojects++], all[i], sizeof(project_name_t));
+    }
+
+    if (s_inpane_browser_open) close_inpane_browser();
+    show_menu();
+    s_xfer_open = true;
+    s_xfer_sel = 0;
+    refresh_xfer_picker_items();
+}
+
+static void xfer_picker_activate(int idx)
+{
+    bool is_new = (idx >= s_xfer_nprojects);
+    project_name_t dst = "";
+    if (!is_new) strlcpy(dst, s_xfer_projects[idx], sizeof(dst));
+    if (s_xfer_migrate) {
+        s_xfer_migrate = false;
+        s_setup_busy = true;
+        close_xfer_picker();
+        s_setup_busy = false;
+        if (is_new) {
+            char def[PROJECT_NAME_MAX + 1];
+            default_project_name(def, sizeof(def));
+            show_name_prompt(SAVE_MODE_PROJECT_MIGRATE,
+                             "Name of the new project (Enter/Esc):", def);
+        } else {
+            migrate_into_project(dst);
+        }
+        return;
+    }
+    close_xfer_picker();   /* prompts go onto the browser's screen */
+    const char *verb = s_xfer_copy ? "Copy" : "Move";
+    char hdr[64];
+    if (is_new) {
+        snprintf(hdr, sizeof(hdr), "%s to new project (Enter/Esc):", verb);
+        char def[PROJECT_NAME_MAX + 1];
+        default_project_name(def, sizeof(def));
+        show_name_prompt(SAVE_MODE_XFER_PROJECT, hdr, def);
+        return;
+    }
+    strlcpy(s_xfer_dst_project, dst, sizeof(s_xfer_dst_project));
+    char ddir[64], free_name[256];
+    project_dir(dst, ddir, sizeof(ddir));
+    if (!project_free_file_name(ddir, s_xfer_src_name, free_name, sizeof(free_name))) {
+        editor_ui_set_status("No free file name there");
+        return;
+    }
+    if (strcmp(dst, s_xfer_src_project) == 0 || strcmp(free_name, s_xfer_src_name) != 0) {
+        /* Same project, or the name is taken there: ask for a name. */
+        snprintf(hdr, sizeof(hdr), "%s as (Enter/Esc):", verb);
+        show_name_prompt(SAVE_MODE_XFER_NAME, hdr, free_name);
+        return;
+    }
+    xfer_do(dst, s_xfer_src_name);
+}
+
+static void handle_xfer_picker_key(const kb_event_t *ev)
+{
+    int last_row = s_xfer_nprojects;   /* "New project..." */
+    switch (ev->keycode) {
+    case KB_KEY_UP:
+        if (s_xfer_sel > 0) s_xfer_sel--;
+        break;
+    case KB_KEY_DOWN:
+        if (s_xfer_sel < last_row) s_xfer_sel++;
+        break;
+    case KB_KEY_ENTER:
+        xfer_picker_activate(s_xfer_sel);
+        return;
+    case KB_KEY_ESCAPE:
+        /* From the files-outside-projects picker this lands back on its
+         * dialog (check_project_setup() runs as the browser shows). */
+        s_xfer_migrate = false;
+        close_xfer_picker();
+        restore_default_status();
+        return;
+    default:
+        return;
+    }
+    update_list_highlight(s_menu_list, s_xfer_sel, s_xfer_sel_prev);
+    s_xfer_sel_prev = s_xfer_sel;
+}
+
+/* Back to the browser a project prompt was raised from. */
+static void name_prompt_return(void)
+{
+    if (s_save_from_inpane && s_pane_count > 1 && !s_inpane_browser_open) {
+        editor_ui_show_editor();
+        show_inpane_browser();
+    }
+}
+
+/* Esc in the name prompt. */
+static void save_prompt_cancel(void)
+{
+    save_mode_t mode = s_save_mode;
+    close_save_prompt();
+    if (mode == SAVE_MODE_PROJECT_MIGRATE) {
+        /* Back to the "Files outside projects" pop-up: move or power off. */
+        check_project_setup();
+        return;
+    }
+    if (mode == SAVE_MODE_PROJECT_FIRST) {
+        /* Not asked again before the next boot. */
+        s_setup_dismissed = true;
+        editor_ui_set_status("No project yet -- N: new project");
+        return;
+    }
+    restore_default_status();
+}
+
+static bool project_name_ok_or_status(const char *name)
+{
+    const char *why = project_name_problem(name);
+    if (why) {
+        editor_ui_set_status(why);
+        return false;
+    }
+    return true;
+}
+
+static void project_prompt_confirm(void)
+{
+    char name[sizeof(s_save_buf)];
+    strlcpy(name, s_save_buf, sizeof(name));
+    char msg[128];
+
+    switch (s_save_mode) {
+    case SAVE_MODE_PROJECT_NEW:
+    case SAVE_MODE_PROJECT_FIRST: {
+        if (!project_name_ok_or_status(name)) return;
+        if (project_exists(name)) {
+            editor_ui_set_status("A project with this name exists");
+            return;
+        }
+        if (project_create(name) != ESP_OK) {
+            editor_ui_set_status("Cannot create the project folder");
+            return;
+        }
+        close_save_prompt();
+        browser_enter_project(name);
+        name_prompt_return();
+        snprintf(msg, sizeof(msg), "Created project %.32s -- N: new file", name);
+        editor_ui_set_status(msg);
+        return;
+    }
+    case SAVE_MODE_PROJECT_MIGRATE: {
+        if (!project_name_ok_or_status(name)) return;
+        if (project_exists(name)) {
+            editor_ui_set_status("A project with this name exists -- choose a new name");
+            return;
+        }
+        close_save_prompt();
+        migrate_into_project(name);
+        return;
+    }
+    case SAVE_MODE_PROJECT_RENAME: {
+        const char *old = s_rename_src;
+        if (strcmp(name, old) == 0) {
+            close_save_prompt();
+            restore_default_status();
+            return;
+        }
+        if (!project_name_ok_or_status(name)) return;
+        if (strcasecmp(name, old) != 0 && project_exists(name)) {
+            editor_ui_set_status("A project with this name exists");
+            return;
+        }
+        if (git_sync_get_state() == GIT_SYNC_IN_PROGRESS) {
+            editor_ui_set_status("Rename: wait for Git sync to finish");
+            return;
+        }
+        char od[64], nd[64];
+        project_dir(old, od, sizeof(od));
+        project_dir(name, nd, sizeof(nd));
+        esp_err_t err = editor_rename_dir(od, nd);
+        if (err != ESP_OK) {
+            editor_ui_set_status(err == ESP_ERR_INVALID_STATE
+                                     ? "A file or folder with this name exists"
+                                     : "Rename failed!");
+            return;
+        }
+        close_save_prompt();
+        if (strcmp(s_last_project, old) == 0) {
+            strlcpy(s_last_project, name, sizeof(s_last_project));
+            projects_set_last(name);
+        }
+        refresh_file_list(name);
+        name_prompt_return();
+        snprintf(msg, sizeof(msg), "Renamed project to %.32s", name);
+        editor_ui_set_status(msg);
+        return;
+    }
+    case SAVE_MODE_XFER_PROJECT: {
+        if (!project_name_ok_or_status(name)) return;
+        if (project_exists(name)) {
+            editor_ui_set_status("This project exists -- pick it from the list");
+            return;
+        }
+        if (project_create(name) != ESP_OK) {
+            editor_ui_set_status("Cannot create the project folder");
+            return;
+        }
+        close_save_prompt();
+        name_prompt_return();
+        xfer_do(name, s_xfer_src_name);
+        return;
+    }
+    case SAVE_MODE_XFER_NAME: {
+        if (strchr(name, '/')) {
+            editor_ui_set_status("Name must not contain /");
+            return;
+        }
+        if (!editor_path_format(name, NULL)) {
+            editor_ui_set_status("Name must end in .md, .fountain or .txt");
+            return;
+        }
+        char ddir[64], dst[400];
+        project_dir(s_xfer_dst_project, ddir, sizeof(ddir));
+        snprintf(dst, sizeof(dst), "%s/%s", ddir, name);
+        if (sd_card_file_exists(dst)) {
+            editor_ui_set_status("A file with this name exists there");
+            return;
+        }
+        close_save_prompt();
+        name_prompt_return();
+        xfer_do(s_xfer_dst_project, name);
+        return;
+    }
+    default:
+        close_save_prompt();
+        return;
+    }
+}
+
 static void save_prompt_confirm(void)
 {
     if (s_save_buf[0] == '\0') {
@@ -7324,17 +8309,31 @@ static void save_prompt_confirm(void)
         rename_prompt_confirm();
         return;
     }
-    const char *mp = sd_card_get_mount_point();
-    if (!mp) {
+    if (s_save_mode != SAVE_MODE_SAVE_AS) {
+        project_prompt_confirm();
+        return;
+    }
+    if (!sd_card_is_ready() || !s_rename_src[0]) {
         close_save_prompt();
         editor_ui_set_status("Save failed: SD card not ready");
         return;
     }
+    if (strchr(s_save_buf, '/')) {
+        editor_ui_set_status("Name must not contain /");
+        return;
+    }
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", mp, s_save_buf);
+    strlcpy(path, s_rename_src, sizeof(path));
+    strlcat(path, "/", sizeof(path));
+    strlcat(path, s_save_buf, sizeof(path));
     esp_err_t err = editor_save_file_as(path);
     close_save_prompt();
     if (err == ESP_OK) {
+        project_name_t pr;
+        if (project_of_path(path, pr, sizeof(pr))) {
+            strlcpy(s_last_project, pr, sizeof(s_last_project));
+            project_set_last_file(pr, s_save_buf);
+        }
         char msg[80];
         snprintf(msg, sizeof(msg), "Saved as %.40s", s_save_buf);
         editor_ui_set_status(msg);
@@ -7351,12 +8350,7 @@ static void handle_save_prompt_key(const kb_event_t *ev)
         save_prompt_confirm();
         return;
     case KB_KEY_ESCAPE:
-        close_save_prompt();
-        if (s_save_is_rename)
-            restore_default_status();
-        else
-            editor_ui_set_status(
-                "F1:Menu Ctrl+S:Save Ctrl+L:Layout Ctrl+G:Git Esc:Files");
+        save_prompt_cancel();
         return;
     case KB_KEY_LEFT:
         if (s_save_pos > 0) {
@@ -7415,6 +8409,11 @@ static void handle_save_prompt_key(const kb_event_t *ev)
             size_t cur_len = strlen(s_save_buf);
             /* Reject path separators and control chars */
             if (text[0] == '/' || text[0] == '\\' || text[0] < 0x20) break;
+            /* Project names: ASCII letters, digits, '-', '_', ' '. */
+            if (save_mode_is_project_name(s_save_mode) &&
+                (tlen != 1 || !project_name_char_ok(text[0]) ||
+                 cur_len + 1 > PROJECT_NAME_MAX))
+                break;
             if (cur_len + tlen < sizeof(s_save_buf) - 1) {
                 memmove(s_save_buf + s_save_pos + tlen,
                         s_save_buf + s_save_pos,
@@ -7557,26 +8556,96 @@ static void close_delete_prompt(void)
     if (s_del_panel) lv_obj_add_flag(s_del_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* Remember the row after (or before) the selected one, so the
+ * highlight stays in place after a deletion. */
+static void remember_neighbour_row(void)
+{
+    s_del_next_name[0] = '\0';
+    int rows = (int)lv_obj_get_child_count(s_browser_list);
+    int next = (s_browser_sel + 1 < rows) ? s_browser_sel + 1 : s_browser_sel - 1;
+    lv_obj_t *nbtn = (next >= 0) ? lv_obj_get_child(s_browser_list, next) : NULL;
+    if (nbtn) {
+        int nidx = (int)(intptr_t)lv_obj_get_user_data(nbtn);
+        if (nidx >= 0 && nidx < s_browser_count) {
+            strncpy(s_del_next_name, s_browser_entries[nidx].name, sizeof(s_del_next_name) - 1);
+            s_del_next_name[sizeof(s_del_next_name) - 1] = '\0';
+        }
+    }
+}
+
+static void open_delete_panel(const char *hdr)
+{
+    lv_label_set_text(s_del_hdr_lbl, hdr);
+    s_del_open = true;
+    s_del_sel = DELCONF_CANCEL;
+    lv_obj_set_parent(s_del_panel, lv_scr_act());
+    lv_obj_remove_flag(s_del_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_del_panel);
+    refresh_delete_prompt();
+}
+
+/* Del / Alt+D in the list of projects: a project may be deleted only
+ * when everything in it is on the Git server (or it has no files). */
+static void show_project_delete_prompt(const char *name)
+{
+    char dir[64];
+    project_dir(name, dir, sizeof(dir));
+    if (editor_dir_has_open_doc(dir)) {
+        editor_ui_set_status("A file of this project is open -- close it first");
+        return;
+    }
+    git_sync_project_status_t st;
+    git_sync_project_status(dir, &st);
+    if (st.busy) {
+        editor_ui_set_status("Delete: wait for Git sync to finish");
+        return;
+    }
+    if (st.files > 0 || st.configured) {
+        if (!st.configured) {
+            editor_ui_set_status("Project not synced with Git (no git.cfg) -- not deleted");
+            return;
+        }
+        if (st.error) {
+            editor_ui_set_status("Delete: cannot check Git status");
+            return;
+        }
+        if (st.files > 0 && (st.never_pushed || st.not_pushed || st.modified)) {
+            editor_ui_set_status("Project not synchronized -- sync first (Ctrl+G)");
+            return;
+        }
+    }
+    s_del_is_project = true;
+    strlcpy(s_del_path, dir, sizeof(s_del_path));
+    remember_neighbour_row();
+    char hdr[96];
+    if (st.files > 0)
+        snprintf(hdr, sizeof(hdr), "Delete project %.32s? (kept in Git)", name);
+    else
+        snprintf(hdr, sizeof(hdr), "Delete project %.32s?", name);
+    open_delete_panel(hdr);
+}
+
 /* Del / Alt+D in the file browser: confirm deleting the selected file,
  * provided Git sync already holds its current content. */
 static void show_delete_prompt(void)
 {
     if (!s_del_panel || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
-        editor_ui_set_status("Only files can be deleted");
+    const sd_card_file_entry_t *e = browser_selected_entry();
+    if (!e) return;
+    if (browser_at_root()) {
+        show_project_delete_prompt(e->name);
         return;
     }
-    const char *name = s_browser_entries[idx].name;
+    if (e->is_dir) return;
+    const char *name = e->name;
+    char dir[64];
+    project_dir(s_cur_project, dir, sizeof(dir));
 
-    switch (git_sync_file_status(name)) {
+    switch (git_sync_file_status(dir, name)) {
     case GIT_SYNC_FILE_PUSHED:
         break;
     case GIT_SYNC_FILE_NOT_CONFIGURED:
-        editor_ui_set_status("Delete needs Git sync (git.cfg)");
+        editor_ui_set_status("Delete needs Git sync (git.cfg in the project)");
         return;
     case GIT_SYNC_FILE_BUSY:
         editor_ui_set_status("Delete: wait for Git sync to finish");
@@ -7592,29 +8661,12 @@ static void show_delete_prompt(void)
         return;
     }
 
-    snprintf(s_del_path, sizeof(s_del_path), "%s/%s", sd_card_get_mount_point(), name);
-    /* Remember the neighbouring row so the highlight stays in place. */
-    s_del_next_name[0] = '\0';
-    int rows = (int)lv_obj_get_child_count(s_browser_list);
-    int next = (s_browser_sel + 1 < rows) ? s_browser_sel + 1 : s_browser_sel - 1;
-    lv_obj_t *nbtn = (next >= 0) ? lv_obj_get_child(s_browser_list, next) : NULL;
-    if (nbtn) {
-        int nidx = (int)(intptr_t)lv_obj_get_user_data(nbtn);
-        if (nidx >= 0 && nidx < s_browser_count) {
-            strncpy(s_del_next_name, s_browser_entries[nidx].name, sizeof(s_del_next_name) - 1);
-            s_del_next_name[sizeof(s_del_next_name) - 1] = '\0';
-        }
-    }
-
+    s_del_is_project = false;
+    snprintf(s_del_path, sizeof(s_del_path), "%s/%s", dir, name);
+    remember_neighbour_row();
     char hdr[96];
     snprintf(hdr, sizeof(hdr), "Delete %.40s? (kept in Git history)", name);
-    lv_label_set_text(s_del_hdr_lbl, hdr);
-    s_del_open = true;
-    s_del_sel = DELCONF_CANCEL;
-    lv_obj_set_parent(s_del_panel, lv_scr_act());
-    lv_obj_remove_flag(s_del_panel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(s_del_panel);
-    refresh_delete_prompt();
+    open_delete_panel(hdr);
 }
 
 static void delete_prompt_activate(void)
@@ -7627,6 +8679,31 @@ static void delete_prompt_activate(void)
     const char *slash = strrchr(s_del_path, '/');
     const char *name = slash ? slash + 1 : s_del_path;
     char msg[80];
+    if (s_del_is_project) {
+        project_name_t pname;
+        strlcpy(pname, name, sizeof(pname));
+        if (editor_dir_has_open_doc(s_del_path)) {
+            editor_ui_set_status("A file of this project is open -- close it first");
+            return;
+        }
+        esp_err_t err = project_delete(pname);
+        if (strcmp(s_last_project, pname) == 0) {
+            s_last_project[0] = '\0';
+            projects_set_last("");
+        }
+        refresh_file_list(s_del_next_name[0] ? s_del_next_name : NULL);
+        if (err != ESP_OK) {
+            editor_ui_set_status("Delete failed -- some files may remain");
+            return;
+        }
+        snprintf(msg, sizeof(msg), "Deleted project %.32s", pname);
+        editor_ui_set_status(msg);
+        project_name_t one[1];
+        if (project_list(one, 1) == 0)
+            show_name_prompt(SAVE_MODE_PROJECT_FIRST, "Create a project (Enter):",
+                             PROJECT_DEFAULT_NAME);
+        return;
+    }
     esp_err_t err = editor_delete_file(s_del_path);
     if (err == ESP_ERR_INVALID_STATE) {
         editor_ui_set_status("File is open in a pane -- close it first");
@@ -8623,27 +9700,8 @@ static void handle_editor_key(const kb_event_t *ev)
             show_search_prompt(true);
             return;
         case 'g':
-            /* Auto-save every open document (both panes when split) so
-             * the sync task picks up the latest edits (it reads from
-             * disk). editor_doc_save() leaves the active doc untouched,
-             * but rebind focus defensively. */
-            editor_doc_foreach(save_modified_doc_cb, NULL);
-            pane_bind_focus();
-            if (git_sync_is_configured() && wifi_manager_is_connected()) {
-                if (git_sync_start(GIT_SYNC_BOTH) == ESP_OK) {
-                    editor_ui_set_status("Git: syncing...");
-                } else {
-                    char sbuf[128];
-                    const char *err = git_sync_get_last_error();
-                    snprintf(sbuf, sizeof(sbuf), "Git: %s",
-                             (err && err[0]) ? err : "failed to start sync");
-                    editor_ui_set_status(sbuf);
-                }
-            } else if (!wifi_manager_is_connected()) {
-                editor_ui_set_status("Git: connect WiFi first (F1)");
-            } else {
-                editor_ui_set_status("Git: not configured");
-            }
+            /* Sync the focused document's project. */
+            start_project_sync();
             break;
         case 'w':
             if (!wifi_manager_is_connected()) {
@@ -8969,7 +10027,9 @@ static void show_inpane_browser(void)
     /* The editor screen stays active (the other pane keeps rendering);
      * keystrokes are rerouted by the s_inpane_browser_open check in
      * process_key_event. */
-    editor_ui_set_status("Open into pane: Enter  N:new  F2:rename  Esc:cancel");
+    editor_ui_set_status(browser_at_root()
+                             ? "Open into pane: Enter  N:new project  Ctrl+Tab:other pane"
+                             : "Open into pane: Enter  N:new  Esc:projects  Ctrl+Tab:other pane");
 }
 
 /* Dismiss the in-pane file selector and restore the full-screen list
@@ -9020,13 +10080,22 @@ static void browser_activate_item(int row)
     int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
     if (idx < 0 || idx >= s_browser_count) return;
     if (s_browser_entries[idx].is_dir) {
-        /* Directory navigation is not implemented yet. */
+        /* The list of projects: open the project. */
+        if (browser_at_root()) {
+            project_name_t name;
+            strlcpy(name, s_browser_entries[idx].name, sizeof(name));
+            browser_enter_project(name);
+        }
         return;
     }
+    if (browser_at_root()) return;
 
+    char dir[64];
+    project_dir(s_cur_project, dir, sizeof(dir));
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s",
-             sd_card_get_mount_point(), s_browser_entries[idx].name);
+    snprintf(path, sizeof(path), "%s/%s", dir, s_browser_entries[idx].name);
+    project_set_last_file(s_cur_project, s_browser_entries[idx].name);
+    strlcpy(s_last_project, s_cur_project, sizeof(s_last_project));
 
     if (s_pane_count <= 1) {
         editor_init();
@@ -9162,21 +10231,7 @@ static void handle_browser_key(const kb_event_t *ev)
             return;
         }
         if (ck == 'g') {
-            if (git_sync_is_configured() && wifi_manager_is_connected()) {
-                if (git_sync_start(GIT_SYNC_BOTH) == ESP_OK) {
-                    editor_ui_set_status("Git: syncing...");
-                } else {
-                    char sbuf[128];
-                    const char *err = git_sync_get_last_error();
-                    snprintf(sbuf, sizeof(sbuf), "Git: %s",
-                             (err && err[0]) ? err : "failed to start sync");
-                    editor_ui_set_status(sbuf);
-                }
-            } else if (!wifi_manager_is_connected()) {
-                editor_ui_set_status("Git: connect WiFi first (F1)");
-            } else {
-                editor_ui_set_status("Git: not configured");
-            }
+            start_project_sync();
             return;
         }
         if (ck == 'm') {
@@ -9238,8 +10293,26 @@ static void handle_browser_key(const kb_event_t *ev)
     bool alt = (ev->modifier & (KB_MOD_LALT | KB_MOD_RALT)) != 0;
 
     if (ch == 'n' && !alt) {
+        if (browser_at_root()) {
+            /* N / Ctrl+N in the list of projects: a new project. */
+            char def[PROJECT_NAME_MAX + 1];
+            default_project_name(def, sizeof(def));
+            show_name_prompt(SAVE_MODE_PROJECT_NEW, "New project (Enter/Esc):", def);
+            return;
+        }
         show_newfmt_prompt(s_inpane_browser_open ? NEWDOC_INPANE
                                                  : NEWDOC_BROWSER);
+        return;
+    }
+    if ((ch == 'm' || ch == 'c') && alt && !ctrl) {
+        /* Alt+M / Alt+C: move / copy the selected file to a project. */
+        show_xfer_picker(ch == 'c');
+        return;
+    }
+    if (ev->keycode == KB_KEY_BACKSPACE ||
+        ev->keycode == KB_KEY_ESCAPE) {
+        /* Up from a project to the list of projects. */
+        browser_go_up();
         return;
     }
     if ((ev->keycode == KB_KEY_DELETE && !ctrl && !alt) || (ch == 'd' && alt && !ctrl)) {
@@ -9292,9 +10365,10 @@ static void handle_browser_key(const kb_event_t *ev)
     s_browser_sel_prev = s_browser_sel;
 }
 
-/* Key handler for the in-pane (split-mode) file selector. Esc cancels
- * the pick (the pane keeps its current document); F1 cancels and opens
- * the menu; N creates a new untitled document in the focused pane;
+/* Key handler for the in-pane (split-mode) file selector. Esc goes up
+ * to the list of projects (no effect there); Ctrl+Tab cancels the pick
+ * (the pane keeps its current document) and focuses the other pane; F1
+ * cancels and opens the menu; N creates a new untitled document in the focused pane;
  * every other key (Up/Down/Enter, Ctrl+G/W/B) is delegated to the
  * shared browser handler, which now operates on the in-pane list and
  * loads the picked file into the focused pane via browser_activate_item
@@ -9303,11 +10377,10 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
 {
     bool ctrl = (ev->modifier & (KB_MOD_LCTRL | KB_MOD_RCTRL)) != 0;
 
-    if (ev->keycode == KB_KEY_ESCAPE) {
-        close_inpane_browser();
-        editor_ui_show_editor();
-        return;
-    }
+    /* Esc goes up to the list of projects there and does nothing in
+     * it, as in the full-screen browser (handle_browser_key()), so the
+     * pane can open a file of another project. Ctrl+Tab leaves the
+     * selector for the other pane. */
     if (ev->keycode == KB_KEY_F1) {
         close_inpane_browser();
         show_menu();
@@ -10028,13 +11101,18 @@ static void wifi_connect_picked_async(const char *ssid, const char *password)
 typedef struct {
     char site[128];
     char otp[10];
+    char dir[64];                 /* project folder */
+    project_name_t project;
 } draftbox_connect_args_t;
 
 static void draftbox_connect_task(void *arg)
 {
     draftbox_connect_args_t *args = (draftbox_connect_args_t *)arg;
     char msg[128];
-    esp_err_t ret = git_sync_draftbox_connect(args->site, args->otp, msg, sizeof(msg));
+    esp_err_t ret = git_sync_draftbox_connect(args->dir, args->site, args->otp,
+                                              msg, sizeof(msg));
+    project_name_t project;
+    strlcpy(project, args->project, sizeof(project));
     memset(args, 0, sizeof(*args));
     free(args);
 
@@ -10042,7 +11120,8 @@ static void draftbox_connect_task(void *arg)
     if (ret == ESP_OK) {
         if (msg[0] >= 'a' && msg[0] <= 'z') msg[0] = (char)(msg[0] - 'a' + 'A');
         snprintf(text, sizeof(text),
-                 "%s.\nThe repository URL and token are saved in git.cfg.", msg);
+                 "%s.\nThe repository URL and token are saved in the git.cfg "
+                 "of project %s.", msg, project);
     } else {
         snprintf(text, sizeof(text),
                  "Could not connect: %s.\ngit.cfg was not changed.", msg);
@@ -10067,6 +11146,12 @@ static void draftbox_connect_async(const char *site, const char *otp)
     }
     strlcpy(args->site, site, sizeof(args->site));
     strlcpy(args->otp, otp, sizeof(args->otp));
+    if (!context_project(args->project, sizeof(args->project))) {
+        free(args);
+        show_msg_popup("Draftbox", "Could not connect: select a project first.", false);
+        return;
+    }
+    project_dir(args->project, args->dir, sizeof(args->dir));
 
     /* esp_http_client + mbedTLS handshake need more stack than the
      * WiFi tasks. */
@@ -10209,8 +11294,12 @@ static void git_sync_cb(git_sync_state_t state, const char *message)
                  message ? message : "sync complete");
         /* If a file is currently open in the editor, reload it from disk
          * so the user sees any changes that were pulled from the remote. */
-        if (s_editor_screen_active && editor_get_file_path()) {
-            const char *path = editor_get_file_path();
+        const char *sdir = git_sync_get_project_dir();
+        size_t sdl = strlen(sdir);
+        const char *apath = editor_get_file_path();
+        if (s_editor_screen_active && apath && sdl &&
+            strncmp(apath, sdir, sdl) == 0 && apath[sdl] == '/') {
+            const char *path = apath;
             esp_err_t rerr = editor_open_file(path);
             if (rerr == ESP_ERR_NO_MEM) {
                 char msg[96];
@@ -10378,7 +11467,7 @@ static void build_screens(void)
     lv_obj_set_width(s_lbl_status, status_avail_width());
     lv_obj_set_style_text_font(s_lbl_status, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_status, theme_fg(), 0);
-    lv_label_set_text(s_lbl_status, EDITOR_DEFAULT_STATUS);
+    lv_label_set_text(s_lbl_status, "F1:Menu Esc:Files");
     update_status_visibility();
 
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)

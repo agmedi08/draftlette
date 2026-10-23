@@ -147,6 +147,14 @@ esp_err_t editor_rename_file(const char *old_path, const char *new_path);
  * open. The caller decides whether deleting is safe (the file browser
  * only allows it for files already pushed to the Git server). */
 esp_err_t editor_delete_file(const char *path);
+
+/* Rename a folder on the SD card (a project); every open document
+ * inside it follows. Fails with ESP_ERR_INVALID_STATE if new_dir
+ * already exists. */
+esp_err_t editor_rename_dir(const char *old_dir, const char *new_dir);
+
+/* True if a document backed by a file inside dir is open. */
+bool editor_dir_has_open_doc(const char *dir);
 /* Persist per-file metadata (cursor, scroll line, ...) to the
  * sidecar next to the currently-open file. No-op if no file is
  * open. Safe to call repeatedly. */
