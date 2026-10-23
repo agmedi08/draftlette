@@ -6,6 +6,8 @@ in the git log.
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-10-23
+
 ### Added
 
 - **Projects**: the SD card now holds one folder per project, and each
