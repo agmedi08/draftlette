@@ -17,7 +17,7 @@ in the git log.
   the status bar. In the list of projects, N creates a project
   (MyDrafts is proposed as its name, or MyDrafts2, MyDrafts3, ... if
   it exists), F2
-  (or Alt+R / Ctrl+R) renames one, Del (or Alt+D) deletes one -- only
+  (or Alt+R) renames one, Del (or Alt+D) deletes one -- only
   when all its files are on the Git server, after a confirmation --
   and Alt+I shows the project information: name, number of files,
   total size and sync status. Alt+I on a file shows the project

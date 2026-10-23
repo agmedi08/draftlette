@@ -741,8 +741,7 @@ server is rooted at the project folder, so Draftbridge sees the
 pre-project layout) use it. In the list of projects N / Ctrl+N creates
 (`default_project_name()`: `MyDrafts`, or `MyDrafts2`, `MyDrafts3`, ...
 when taken; also proposed by "New project..." in the Alt+M / Alt+C picker),
-F2 / Alt+R / Ctrl+R renames (Ctrl+R is the e-paper refresh everywhere
-else), Del / Alt+D deletes (`show_project_delete_prompt()`: refused while
+F2 / Alt+R renames, Del / Alt+D deletes (`show_project_delete_prompt()`: refused while
 a file of it is open, and unless `git_sync_project_status()` finds every
 document pushed or there are none) and Alt+I shows
 `build_projectinfo_text()`. Inside a project Alt+M / Alt+C open a

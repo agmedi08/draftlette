@@ -7110,7 +7110,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "Up / Down", "Select a project");
         help_row(out, cols, kc, "Enter", "Open the project");
         help_row(out, cols, kc, "N, Ctrl+N", "New project");
-        help_row(out, cols, kc, "F2, Alt+R, Ctrl+R", "Rename the project");
+        help_row(out, cols, kc, "F2, Alt+R", "Rename the project");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the project (only when synchronized with Git)");
         help_row(out, cols, kc, "Alt+I", "Project information: files, size, Git status");
         help_row(out, cols, kc, "Ctrl+G", "Git sync of the selected project");
@@ -10115,13 +10115,6 @@ static void handle_browser_key(const kb_event_t *ev)
      * instead of a raw layout translation. */
     if (ctrl) {
         char ck = kb_layout_shortcut_char(ev->keycode);
-
-        if (ck == 'r' && browser_at_root()) {
-            /* Ctrl+R in the list of projects: rename the project (like
-             * F2; the e-paper refresh stays on Ctrl+R everywhere else). */
-            show_rename_prompt();
-            return;
-        }
 
         /* Ctrl+1 / Ctrl+2 / Ctrl+3 control the split layout (HID
          * keycodes 1 = 0x1E, 2 = 0x1F, 3 = 0x20). The panes are on the

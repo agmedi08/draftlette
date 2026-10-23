@@ -196,7 +196,7 @@ In the file browser, in the list of projects:
 |----------|--------|
 | Up / Down, Enter | Select and open a project |
 | N or Ctrl+N | New project (`MyDrafts` is proposed, or `MyDrafts2`, `MyDrafts3`, ... if taken) |
-| F2, Alt+R or Ctrl+R | Rename the selected project |
+| F2 or Alt+R | Rename the selected project |
 | Del or Alt+D | Delete the selected project, after a confirmation. Only allowed when every file in it is safely on the Git server (or the project has no files) |
 | Alt+I | Project information: name, number of files, total size and Git sync status |
 | Ctrl+G | Git sync of the selected project |
