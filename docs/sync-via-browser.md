@@ -2,8 +2,10 @@
 
 F1 -> "Sync via browser" turns Draftling into a Kermit file server on
 its serial console, so a computer connected to the device's USB port
-can list, download, upload, rename and delete the files on the SD
-card. No WiFi is needed.
+can list, download, upload, rename and delete the files of the current
+project: the project of the document being edited, or the one shown or
+selected in the file browser. The client sees the project folder (its
+documents and `git.cfg`) as the top folder. No WiFi is needed.
 
 It is available only on boards whose USB port is wired straight to
 the ESP32-S3's built-in USB -- the same boards that offer "SD card via

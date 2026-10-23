@@ -694,6 +694,62 @@ proposes (`draft_NNN.<ext>`, numbers shared across all three). Because
 every pane renders its own bound document, the two panes of a split
 can show different formats.
 
+**Projects.** The SD card holds one folder per project
+(`/sdcard/<project>`); the root holds only `wifi.cfg` and the hidden
+`.projects.meta` (`last=<project>`). Filesystem logic lives in
+`projects.cpp` / `private_include/projects.h`: `project_name_problem()`
+(ASCII letters, digits, `-`, `_`, space; no leading or trailing space,
+FAT drops the latter; at most `PROJECT_NAME_MAX` = 32; "System Volume
+Information" reserved), `project_list()` (root folders with a valid
+name), `project_create()` / `project_delete()` (`sd_card_remove_tree()`,
+`.git` included), `project_of_path()`, `project_root_doc_count()`,
+`project_migrate_root()` (root documents with their `.meta` sidecars,
+then `git.cfg` and `.git` unless the project has its own; a taken name
+gets `-2`, `-3`, ... from `project_free_file_name()`), `project_stats()`
+and the per-project `.project.meta` (`last=<file>`, the last selected
+file). `editor_rename_dir()` renames a project folder and re-points
+open documents inside it; `editor_dir_has_open_doc()` guards deletion.
+
+The file browser has two levels: `s_cur_project` is the project shown
+(`""` = the list of projects, `browser_at_root()`), `s_last_project`
+the one last worked in (untitled documents are saved there,
+`new_doc_dir()`). `refresh_file_list()` lists project folders at the
+root and only documents inside a project, with a placeholder row (user
+data -1) when empty. `browser_enter_project()` / `browser_go_up()`
+(Esc or Backspace in the full-screen browser, Backspace in the in-pane
+selector, whose Esc still closes it) switch levels and persist the
+selection. The first `editor_ui_show_file_browser()` opens the last
+project; returning from the editor opens the closed document's project
+with it highlighted. `check_project_setup()` runs whenever the browser
+shows: no card -> message pop-up with `s_msg_restart` (Enter restarts),
+root documents -> `SAVE_MODE_PROJECT_MIGRATE` prompt, no project ->
+`SAVE_MODE_PROJECT_FIRST` (default name `MyDrafts`); Esc sets
+`s_setup_dismissed` until the next boot. `editor_ui_set_ble_prompt_text()`
+also mentions a missing card, since the browser only appears once a
+keyboard connects. The prompts reuse the save-as overlay with a
+`save_mode_t` (`s_save_mode`; project-name modes filter characters).
+`context_project()` is the project commands act on: the focused
+document's (an untitled one: `s_last_project`) in the editor, else the
+browsed or highlighted project; Ctrl+G / F1 Git Sync
+(`start_project_sync()`), Draftbox and Sync via browser (the Kermit
+server is rooted at the project folder, so Draftbridge sees the
+pre-project layout) use it. In the list of projects N / Ctrl+N creates,
+F2 / Alt+R / Ctrl+R renames (Ctrl+R is the e-paper refresh everywhere
+else), Del / Alt+D deletes (`show_project_delete_prompt()`: refused while
+a file of it is open, and unless `git_sync_project_status()` finds every
+document pushed or there are none) and Alt+I shows
+`build_projectinfo_text()`. Inside a project Alt+M / Alt+C open a
+project picker on the menu screen (`s_xfer_open`,
+`show_xfer_picker()` / `handle_xfer_picker_key()`; copy lists the
+current project first for a copy under a new name, both end with "New
+project..."), followed by `SAVE_MODE_XFER_NAME` when the name is taken
+or the target is the same project, or `SAVE_MODE_XFER_PROJECT`;
+`xfer_do()` saves an open modified copy first, then
+`sd_card_copy_file()` or `editor_rename_file()`, and the browser stays
+in the original project. The project name leads the default status of
+both screens (`browser_status_hint()`, `editor_default_status()`, fitted
+by `fit_status_text()`).
+
 **New file.** `Ctrl+N` in the editor and `N` / `Ctrl+N` in either file
 browser raise the format picker overlay (`s_newfmt_panel`,
 `show_newfmt_prompt()` / `handle_newfmt_prompt_key()`): Markdown,
@@ -704,7 +760,8 @@ so `newfmt_prompt_activate()` creates the untitled document in the
 right place and then applies the format.
 
 **Rename.** `F2` or `Alt+R` in either file browser opens the save-as name
-overlay in rename mode (`show_rename_prompt()`, `s_save_is_rename`).
+overlay in rename mode (`show_rename_prompt()`, `SAVE_MODE_RENAME`; in
+the list of projects it renames the project instead).
 The overlay (like the format picker) is re-parented with
 `lv_obj_set_parent()` onto the active screen each time it is shown,
 since the browser and the editor are different LVGL screens.
@@ -713,10 +770,11 @@ sidecar, refuses to overwrite an existing file (a case-only change is
 allowed), and re-points any open document with the old path at the
 new one (taking the new extension's format). The UI rejects names
 without a document extension, since the file would vanish from the
-browser. Directories cannot be renamed.
+browser.
 
 **Delete.** `Del` or `Alt+D` in either file browser deletes the
-selected file, but only when `git_sync_file_status()` reports
+selected file (in the list of projects: the project, see Projects
+above), but only when `git_sync_file_status()` reports
 `GIT_SYNC_FILE_PUSHED`: the file's current content hashes to the same
 blob as its entry in the last commit known to be on the server
 (`refs/remotes/origin/<branch>` under the `path=` sub-tree). Any other
@@ -756,7 +814,9 @@ mounted, a Git sync runs, or an untitled document has unsaved changes;
 otherwise it saves every modified document, collapses a split, closes
 every titled document (`editor_close_file()` on each, so stale buffers
 cannot be written back over files the client replaces), forces the file
-browser and calls `kermit_server_start()` (see `components/kermit/`).
+browser and calls `kermit_server_start()` (see `components/kermit/`)
+with the folder of `context_project()` as the root (refused without a
+project), so the client sees one project's documents and `git.cfg`.
 On success it shows the message pop-up with `s_msg_kermit` set and
 starts `s_kermit_usb_timer` (`kermit_usb_poll_cb()`, every 500 ms),
 which follows `kermit_server_usb_connected()` through
@@ -805,7 +865,10 @@ card) shows `build_fileinfo_text()` on the help screen, like the
 hardware information page: name, format, size in bytes, word /
 paragraph / line / character counts (`count_text()`: a word needs a
 letter or digit, a paragraph is a blank-line-separated block with a
-word) and the Git status from `git_sync_file_diff()`.
+word) and the Git status from `git_sync_file_diff()`, followed by the
+project information (`build_projectinfo_text()`: name, document count,
+total size, server / branch and `git_sync_project_status()`). In the
+list of projects it shows only the project information.
 
 **F1 menu letter keys.** `s_menu_hotkeys[]` in `editor_ui.cpp` maps
 a letter (resolved with `kb_layout_shortcut_char()`, no Ctrl / Alt /
@@ -1035,7 +1098,16 @@ the standard smart HTTP protocol (`gitprotocol-http`): `info/refs`,
 framing, packfile v2 transfer. No host-specific REST API is used, so any
 standard Git HTTP host works. Configuration (`repo_url`, `branch`,
 `token`, `username`, `path`, `author_name`, `author_email`) is read from
-`/sdcard/git.cfg`. User-facing docs: `docs/git-sync.md`.
+`<project>/git.cfg`: every project folder is synced on its own (its
+history in `<project>/.git`), and every public call takes the project
+folder (`git_sync_start(project_dir, dir)`, `git_sync_is_configured()`,
+`git_sync_file_status()`, `git_sync_file_diff()`,
+`git_sync_draftbox_connect()`). `git_sync_start()` loads the project's
+config into `s_cfg`, which the sync task reads; the other calls load a
+heap copy (`load_config()`), so they never disturb a running sync.
+`git_sync_project_status()` checks a whole project in one pass, and
+`git_sync_get_project_dir()` names the project of the running / last
+sync. User-facing docs: `docs/git-sync.md`.
 
 Source layout (all in-tree, no managed components):
 
@@ -1076,7 +1148,7 @@ things, not just on a malformed repo.
 Behaviour:
 
 - The working tree is the flat set of `*.md`, `*.fountain` and `*.txt` files
-  in the sync dir. An
+  in the project folder. An
   optional `path=` maps that set onto a sub-tree of the repository (the
   rest of the repo tree is preserved across commits).
 - First sync clones full history; later syncs send `have` lines so the
@@ -1139,7 +1211,7 @@ predates the field) is accepted and just writes no `branch=` line. It carries it
 flat-object JSON reader -- ESP-IDF v6 no longer bundles cJSON.
 `git_sync_draftbox_connect()` (blocking; the editor calls it from a
 worker task) validates the input, makes the request, and only on
-success rewrites `/sdcard/git.cfg`: `repo_url`, `token`, `username`
+success rewrites the project's `git.cfg`: `repo_url`, `token`, `username`
 and `branch` come from `cloneUrl`, `token`, `user` and `branch`
 (`username=` / `branch=` are written only when the server sends a
 non-null value -- `branch` is a newer field that older servers omit);
@@ -1344,6 +1416,11 @@ operations (mkdir, list).
 (`esp_vfs_fat_sdcard_format_cfg()`, same mount settings) and mounts it
 again; if that re-mount fails the card is released and the handle
 cleared.
+
+`sd_card_is_dir()`, `sd_card_copy_file()` (refuses an existing target)
+and `sd_card_remove_tree()` (a folder with everything in it, hidden
+files included; entries are unlinked while the folder is read) serve
+the project operations.
 
 Public API: `sd_card_init()`, `sd_card_read_file()`,
 `sd_card_write_file()`, `sd_card_list_dir()`, `sd_card_file_exists()`,

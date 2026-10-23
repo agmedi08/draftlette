@@ -429,7 +429,7 @@ static size_t transcode_utf16_to_utf8(const uint8_t *src, size_t src_len,
 {
     size_t i = 0;
     size_t out = 0;
-    /* Round odd trailing byte off — we cannot decode half a code unit. */
+    /* Round odd trailing byte off -- we cannot decode half a code unit. */
     if (src_len & 1) src_len--;
 
     while (i + 1 < src_len) {
@@ -440,7 +440,7 @@ static size_t transcode_utf16_to_utf8(const uint8_t *src, size_t src_len,
 
         uint32_t cp;
         if (u >= 0xD800 && u <= 0xDBFF && i + 1 < src_len) {
-            /* High surrogate — combine with the following low surrogate. */
+            /* High surrogate -- combine with the following low surrogate. */
             uint16_t lo = little_endian
                 ? (uint16_t)(src[i] | (src[i + 1] << 8))
                 : (uint16_t)((src[i] << 8) | src[i + 1]);
@@ -458,7 +458,7 @@ static size_t transcode_utf16_to_utf8(const uint8_t *src, size_t src_len,
         }
 
         /* Drop UTF-16 line-separator and the rare CR (U+000D) that
-         * Windows files use ahead of LF — the editor stores LF-only
+         * Windows files use ahead of LF -- the editor stores LF-only
          * lines. We leave the LF itself in place. */
         if (cp == 0x000D) continue;
 
@@ -647,6 +647,50 @@ extern "C" esp_err_t editor_rename_file(const char *old_path, const char *new_pa
         editor_path_format(new_path, &d->format);
     }
     ESP_LOGI(TAG, "Renamed: %s -> %s", old_path, new_path);
+    return ESP_OK;
+}
+
+/* True if path lies inside dir ("<dir>/..."). */
+static bool path_in_dir(const char *path, const char *dir)
+{
+    size_t n = strlen(dir);
+    return n && strncmp(path, dir, n) == 0 && path[n] == '/';
+}
+
+extern "C" bool editor_dir_has_open_doc(const char *dir)
+{
+    if (!dir || !dir[0]) return false;
+    for (int i = 0; i < EDITOR_MAX_DOCS; i++) {
+        if (s_docs[i].in_use && s_docs[i].path[0] && path_in_dir(s_docs[i].path, dir))
+            return true;
+    }
+    return false;
+}
+
+extern "C" esp_err_t editor_rename_dir(const char *old_dir, const char *new_dir)
+{
+    if (!old_dir || !new_dir || !old_dir[0] || !new_dir[0])
+        return ESP_ERR_INVALID_ARG;
+    /* Every open path must still fit after the change. */
+    size_t ol = strlen(old_dir), nl = strlen(new_dir);
+    for (int i = 0; i < EDITOR_MAX_DOCS; i++) {
+        const editor_doc_t *d = &s_docs[i];
+        if (d->in_use && path_in_dir(d->path, old_dir) &&
+            strlen(d->path) - ol + nl >= sizeof(d->path))
+            return ESP_ERR_INVALID_SIZE;
+    }
+    if (strcasecmp(old_dir, new_dir) != 0 && sd_card_file_exists(new_dir))
+        return ESP_ERR_INVALID_STATE;
+    esp_err_t err = sd_card_rename(old_dir, new_dir);
+    if (err != ESP_OK) return err;
+    for (int i = 0; i < EDITOR_MAX_DOCS; i++) {
+        editor_doc_t *d = &s_docs[i];
+        if (!d->in_use || !path_in_dir(d->path, old_dir)) continue;
+        char tail[sizeof(d->path)];
+        strlcpy(tail, d->path + ol, sizeof(tail));
+        snprintf(d->path, sizeof(d->path), "%s%s", new_dir, tail);
+    }
+    ESP_LOGI(TAG, "Renamed folder: %s -> %s", old_dir, new_dir);
     return ESP_OK;
 }
 

@@ -73,6 +73,16 @@ int sd_card_list_dir(const char *path, sd_card_file_entry_t *entries, int max_en
 long sd_card_file_size(const char *path);
 esp_err_t sd_card_rename(const char *old_path, const char *new_path);
 
+/* True if path names an existing directory. */
+bool sd_card_is_dir(const char *path);
+
+/* Copy a regular file. Fails with ESP_ERR_INVALID_STATE if dst exists. */
+esp_err_t sd_card_copy_file(const char *src, const char *dst);
+
+/* Delete a directory with everything in it, hidden files included
+ * (e.g. a project folder with its .git history). */
+esp_err_t sd_card_remove_tree(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

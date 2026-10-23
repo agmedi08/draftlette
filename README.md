@@ -61,9 +61,13 @@ load the firmware quickly without having to compile it.
 - **Plain text**: `.txt` files open with no formatting at all -- the
   text is shown and edited exactly as typed.
 
-- **File browser** to open, create and rename `.md`, `.fountain` and
-  `.txt` files on the SD card
-  (entries sorted alphabetically, directories first)
+- **Projects**: the SD card holds one folder per project, each with
+  its own documents and its own Git repository. See
+  [Projects](#projects) below.
+
+- **File browser** to open, create, rename, move and copy `.md`,
+  `.fountain` and `.txt` files in a project (entries sorted
+  alphabetically)
 
 - **Markdown rendering**: headings (H1-H4), bullet and numbered lists,
   blockquotes, code fences, horizontal rules, inline **bold**,
@@ -90,9 +94,10 @@ load the firmware quickly without having to compile it.
   local edits, fetches the remote branch, fast-forwards or rebases
   your commits on top of it, performs a three-way merge (conflicts
   are committed as-is with `<<<<<<<` / `=======` / `>>>>>>>` markers),
-  writes the result back to the SD card and pushes to the server. The
-  WiFi client and Git credentials are configured in `wifi.cfg` and
-  `git.cfg` on the SD card -- or, for WiFi, picked from an on-device
+  writes the result back to the SD card and pushes to the server. Each
+  project is synced with its own repository. The WiFi client is
+  configured in `wifi.cfg` on the SD card and the Git credentials in
+  each project's `git.cfg` -- or, for WiFi, picked from an on-device
   scan (F1 -> WiFi: New connection), which writes `wifi.cfg` for you. Public
   and private repositories on GitHub and other standard Git HTTP hosts
   are supported. See [docs/git-sync.md](docs/git-sync.md).
@@ -164,7 +169,7 @@ load the firmware quickly without having to compile it.
 | Win+Space | Cycle keyboard layout (same as Ctrl+L) |
 | Ctrl+M | Menu (same as F1) |
 | Ctrl+P | Enter deep sleep. With unsaved changes, a dialog offers Save and sleep / Sleep without saving / Cancel |
-| Ctrl+G | Git sync (commit, fetch, rebase/merge, push) |
+| Ctrl+G | Git sync of the current project (commit, fetch, rebase/merge, push) |
 | Ctrl+W | Toggle WiFi (connect / disconnect) |
 | Ctrl+F | Find |
 | Ctrl+H | Find + Replace (Tab switches field, Enter = next match, Ctrl+Enter = replace + next) |
@@ -179,23 +184,77 @@ load the firmware quickly without having to compile it.
 | Ctrl+2 | Split into two equal panes (left/right in landscape, top/bottom in portrait) |
 | Ctrl+3 | Split with the first pane at 2/3; press again to toggle the first pane to 1/3 |
 | Ctrl+Tab | Move keyboard focus to the other pane (when split) |
-| Alt+I | File information for the document: words, paragraphs, lines, characters, size in bytes and Git sync status (with the number of lines added and deleted since the last sync). Counts include unsaved changes. Esc or Enter closes it |
+| Alt+I | File information for the document: words, paragraphs, lines, characters, size in bytes and Git sync status (with the number of lines added and deleted since the last sync), followed by the project information. Counts include unsaved changes. Esc or Enter closes it |
 | Escape | Switch to file browser. With unsaved changes, a dialog offers Save and exit / Exit without saving / Cancel (Up/Down + Enter to choose) |
 
 `Ctrl+P` and `Ctrl+1` / `Ctrl+2` / `Ctrl+3` also work in the file
 browser (the split layout applies the next time you open a file).
 
-In the file browser:
+In the file browser, in the list of projects:
+
+| Shortcut | Action |
+|----------|--------|
+| Up / Down, Enter | Select and open a project |
+| N or Ctrl+N | New project |
+| F2, Alt+R or Ctrl+R | Rename the selected project |
+| Del or Alt+D | Delete the selected project, after a confirmation. Only allowed when every file in it is safely on the Git server (or the project has no files) |
+| Alt+I | Project information: name, number of files, total size and Git sync status |
+| Ctrl+G | Git sync of the selected project |
+
+In the file browser, inside a project:
 
 | Shortcut | Action |
 |----------|--------|
 | Up / Down, Enter | Select and open a file |
+| Esc or Backspace | Back to the list of projects |
 | N or Ctrl+N | New file: pick Markdown (`.md`), Fountain screenplay (`.fountain`) or plain text (`.txt`) with Up/Down + Enter, or press M / F / T |
 | F2 or Alt+R | Rename the selected file. The name must end in `.md`, `.fountain` or `.txt`; the saved cursor position (the `.meta` file) moves with it, and changing the extension changes the format |
 | Del or Alt+D | Delete the selected file, after a confirmation. Only allowed when the file is safely on the Git server: its current content must already be committed and pushed (see [Git sync](docs/git-sync.md)), so a deleted file can always be recovered from the repository history. The next sync commits the deletion |
-| Alt+I | File information for the selected file (same page as in the editor) |
+| Alt+M | Move the selected file to another project, existing or new |
+| Alt+C | Copy the selected file to a project, existing or new, or to this project under another name |
+| Alt+I | File information for the selected file and its project (same page as in the editor) |
 | F1 / Ctrl+M | Menu |
 | F10 | Help (file browser shortcuts) |
+
+## Projects
+
+Every document belongs to a project. A project is a folder in the
+root of the SD card; its name may contain letters, digits, spaces,
+`-` and `_`, and must not start with a space. The project folder holds
+the project's documents, its `git.cfg` (if it is synced) and its Git
+history (`.git`). The root folder holds only `wifi.cfg` and no
+documents.
+
+The file browser opens on the project you used last. **Esc** (or
+Backspace) goes up to the list of projects, **Enter** opens one. Each
+project remembers the file you last selected in it, and the selection
+returns to that file when you come back to the project. The current
+project's name is shown in the status bar of the file browser and the
+editor.
+
+- **A new or freshly formatted card** has no project: the device asks
+  you to name the first one (`MyDrafts` is proposed).
+- **Documents in the root folder** (from a card used before projects
+  existed, or copied there over USB) are found at boot: the device
+  asks for the name of a project (`MyDrafts` is proposed) and moves
+  them into it, together with `git.cfg` and the Git history, so the
+  project keeps syncing with the same repository. If a file of the
+  same name already exists in that project, the moved one gets a
+  `-2` (`-3`, ...) suffix.
+- **No SD card**: the device asks you to insert one and restart.
+
+Alt+M moves a file and Alt+C copies one to another project (pick it
+from the list, or choose "New project..."); Alt+C can also copy the
+file into the same project under another name. When the name is
+already taken in the target project, you are asked for another one.
+You stay in the original project afterwards.
+
+Git sync (Ctrl+G or F1 -> Git Sync), "Connect a Draftbox repository"
+and "Sync via browser" work on the current project: the project of
+the document being edited, or the project shown or selected in the
+file browser. In split-screen mode the two panes can show files from
+different projects (in the pane's file selector, Backspace goes up to
+the list of projects).
 
 
 ## Writing screenplays (Fountain)
@@ -294,7 +353,9 @@ in landscape, the top one in portrait.
 
 Each pane opens a file for itself: while split, **Ctrl+O** opens the
 file browser for the focused pane, so the picked file loads into that
-pane while the other pane keeps its document. **Ctrl+Tab** moves
+pane while the other pane keeps its document. The two files can come
+from different projects: Backspace in the pane's file selector goes up
+to the list of projects. **Ctrl+Tab** moves
 keyboard focus between the two panes; the focused pane shows the active
 cursor and receives all editing keys.
 
@@ -368,19 +429,21 @@ need to be enabled in firmware configuration.
 
 ## Formatting the SD card
 
-F1 -> "Format SD card..." erases everything on the card (documents,
-`wifi.cfg`, `git.cfg` and the local Git history) and creates a fresh
+F1 -> "Format SD card..." erases everything on the card (all
+projects with their documents, `git.cfg` files and Git histories, and
+`wifi.cfg`) and creates a fresh
 FAT file system on it. If a WiFi network is configured, you are first
 asked whether to keep its settings: if you keep them, a new
 `wifi.cfg` with the same network and password is written to the
 formatted card; if you erase them, the device also forgets the network
 it remembers in its own memory. You then confirm twice (Cancel is
 preselected both times). Unsaved changes are lost. The device restarts
-when formatting is done.
+when formatting is done and asks for the name of a new project.
 
 ## Configuration Files
 
-Place these on the SD card root:
+`wifi.cfg` goes in the SD card root; `git.cfg` goes in a project
+folder (one per project).
 
 ### WiFi (`wifi.cfg`)
 
@@ -401,7 +464,10 @@ effect on the next connect.
 
 ### Git Sync (`git.cfg`)
 
-The file consists of several `key=value` lines. `repo_url` and `token`
+Each project has its own `git.cfg`, in the project folder
+(`/<project>/git.cfg` on the card), and syncs with its own repository;
+a project without one is not synced. The file consists of several
+`key=value` lines. `repo_url` and `token`
 are required; everything else is optional. The `token` is used as the
 HTTP Basic password -- on GitHub this is a Personal Access Token (a
 classic token needs `repo` scope; a fine-grained token needs
@@ -431,13 +497,13 @@ author_email=jane@example.com
 With a [Draftbox](https://github.com/clackups/draftbox) server (such as
 `draftbox.art`) you do not have to write `git.cfg` yourself. On the
 Draftbox website, create an access token for your repository with a
-one-time password. Then choose F1 -> "Connect a Draftbox
-repository..." (if WiFi is not connected yet, the device first
+one-time password. Then, in the project to connect, choose F1 ->
+"Connect a Draftbox repository..." (if WiFi is not connected yet, the device first
 connects to the network from `wifi.cfg`, as `Ctrl+W` does): confirm or change the site name,
 press Enter, type the 8-digit password and press Enter again. The
 device exchanges the password for the token over HTTPS and writes the
-repository URL, token, user name and branch it receives into `git.cfg`
-(`repo_url`, `token`, `username`, `branch`). Any previous `path` line
+repository URL, token, user name and branch it receives into the
+project's `git.cfg` (`repo_url`, `token`, `username`, `branch`). Any previous `path` line
 is removed, so the whole repository is synced; other lines (e.g.
 `author_name`) are kept. Each password works only once. The token
 must be bound to one repository: a global token is refused with

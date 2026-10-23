@@ -595,3 +595,63 @@ extern "C" esp_err_t sd_card_rename(const char *old_path, const char *new_path)
 {
     return (rename(old_path, new_path) == 0) ? ESP_OK : ESP_FAIL;
 }
+
+extern "C" bool sd_card_is_dir(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+extern "C" esp_err_t sd_card_copy_file(const char *src, const char *dst)
+{
+    if (!s_card) return ESP_ERR_INVALID_STATE;
+    if (sd_card_file_exists(dst)) return ESP_ERR_INVALID_STATE;
+    FILE *in = fopen(src, "rb");
+    if (!in) return ESP_FAIL;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { fclose(in); return ESP_FAIL; }
+    const size_t CHUNK = 4096;
+    char *buf = (char *)malloc(CHUNK);
+    esp_err_t ret = buf ? ESP_OK : ESP_ERR_NO_MEM;
+    while (ret == ESP_OK) {
+        size_t n = fread(buf, 1, CHUNK, in);
+        if (n == 0) { if (ferror(in)) ret = ESP_FAIL; break; }
+        if (fwrite(buf, 1, n, out) != n) ret = ESP_FAIL;
+    }
+    free(buf);
+    fclose(in);
+    if (ret == ESP_OK) fsync(fileno(out));
+    fclose(out);
+    if (ret != ESP_OK) remove(dst);
+    return ret;
+}
+
+/* Entries are unlinked while the directory is being read: FatFs only
+ * marks a deleted entry free, so the read position stays valid. */
+extern "C" esp_err_t sd_card_remove_tree(const char *path)
+{
+    DIR *dir = opendir(path);
+    if (!dir) return ESP_FAIL;
+    esp_err_t ret = ESP_OK;
+    char *full = (char *)malloc(512);
+    if (!full) { closedir(dir); return ESP_ERR_NO_MEM; }
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        snprintf(full, 512, "%s/%s", path, ent->d_name);
+        bool is_dir = (ent->d_type == DT_DIR);
+        if (is_dir) {
+            if (sd_card_remove_tree(full) != ESP_OK) ret = ESP_FAIL;
+        } else if (remove(full) != 0) {
+            ESP_LOGW(TAG, "remove_tree: cannot delete %s", full);
+            ret = ESP_FAIL;
+        }
+    }
+    closedir(dir);
+    free(full);
+    if (rmdir(path) != 0) {
+        ESP_LOGW(TAG, "remove_tree: cannot remove %s", path);
+        ret = ESP_FAIL;
+    }
+    return ret;
+}
