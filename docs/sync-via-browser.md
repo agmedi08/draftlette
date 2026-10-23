@@ -18,7 +18,8 @@ that implements the protocol over the browser's Web Serial API.
 
 ## Starting and stopping
 
-1. Press F1, select "Sync via browser..." (letter B) and choose
+1. Press F1, select "Sync via browser: <project>..." (letter B; the
+   row names the project that will be served) and choose
    **Start** (or **Cancel** to go back to the menu).
 2. Draftling saves every open document, closes the editor and shows
    the "Sync via browser" dialog. If no computer is connected to the

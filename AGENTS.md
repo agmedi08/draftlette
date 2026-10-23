@@ -816,7 +816,9 @@ pointing at the deleted files (open documents, Git repository,
 
 **Sync via browser.** The F1 row `MENU_IDX_KERMIT` (letter `B`, only
 on boards with `CONFIG_DRAFTLING_HAS_KERMIT`; the rows after it shift up
-elsewhere, like after "SD card via USB"; its label is static) opens a
+elsewhere, like after "SD card via USB"; its label names
+`context_project()`, "Sync via browser: <project>...", like the Git Sync
+row) opens a
 Start / Cancel picker rendered into `s_menu_list`, with the question in
 the menu header (`s_kermit_picker_open`, `refresh_kermit_picker_items()`,
 `kermit_picker_activate()`). `kermit_start()`

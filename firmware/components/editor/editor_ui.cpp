@@ -4813,8 +4813,17 @@ static void refresh_menu_items(void)
 #endif
 
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
-    /* Sync via browser: Kermit server on the serial console */
-    lv_list_add_btn(s_menu_list, NULL, "Sync via browser...");
+    /* Sync via browser: Kermit server on the serial console, serving
+     * the project the user works in (see kermit_start()). The hotkey
+     * letter stays at index 9 ("Sync via b..."). */
+    {
+        project_name_t p;
+        if (context_project(p, sizeof(p)))
+            snprintf(buf, sizeof(buf), "Sync via browser: %s...", p);
+        else
+            snprintf(buf, sizeof(buf), "Sync via browser (no project selected)");
+    }
+    lv_list_add_btn(s_menu_list, NULL, buf);
 #endif
 
     /* Format SD card */
