@@ -32,7 +32,9 @@ in the git log.
   over USB), at boot the device lists these files that do not belong
   to any project and offers to move them to a new project (MyDrafts
   is proposed as its name). They move together with `git.cfg` and the
-  Git history, so syncing continues with the same repository. A card with
+  Git history, so syncing continues with the same repository. If you
+  are not ready to move them, Esc powers the device off; it asks again
+  the next time it starts. A card with
   no project (new, or just formatted) asks for the first project's
   name.
 - **Missing SD card**: when no SD card is found, the device says so on

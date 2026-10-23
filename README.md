@@ -240,8 +240,9 @@ editor.
   them to a new project: Enter asks for its name (`MyDrafts` is
   proposed, or `MyDrafts2`, ... if taken) and moves them there,
   together with `git.cfg` and the Git history, so the project keeps
-  syncing with the same repository. Esc leaves them alone (hidden)
-  until the next boot.
+  syncing with the same repository. If you are not ready to move them,
+  Esc powers the device off (deep sleep); it asks again the next time
+  it starts. Esc in the name prompt goes back to the dialog.
 - **No SD card**: the device asks you to insert one and press Enter to
   restart. The dialog cannot be closed otherwise.
 

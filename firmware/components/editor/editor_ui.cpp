@@ -945,8 +945,8 @@ static int  s_kermit_picker_sel_prev = -1;
 static bool s_msg_kermit             = false;
 #endif
 /* The pop-up lists documents found outside any project: Enter (or a
- * tap) asks for the name of a new project to move them to, Esc leaves
- * them until the next boot. */
+ * tap) asks for the name of a new project to move them to, Esc powers
+ * the device off (deep sleep); it asks again on the next start. */
 static bool s_msg_migrate            = false;
 /* The pop-up says the SD card is missing. It cannot be closed: the user
  * inserts a card, then Enter (or a tap) restarts the device. */
@@ -4219,7 +4219,7 @@ static void check_project_setup(void)
             text += " Their Git sync settings (git.cfg) and history go with them.";
         show_msg_popup("Files outside projects", text.c_str(), false);
         s_msg_migrate = true;
-        lv_label_set_text(s_msg_hint_lbl, "Enter: move to a new project  Esc: later");
+        lv_label_set_text(s_msg_hint_lbl, "Enter: move to a new project  Esc: power off");
         return;
     }
     project_name_t one[1];
@@ -5892,7 +5892,7 @@ static void show_name_prompt(save_mode_t mode, const char *hdr, const char *init
 static void default_project_name(char *out, size_t n);
 
 /* "Files outside projects" pop-up: Enter asks for the new project's
- * name; Esc leaves the files where they are until the next boot. */
+ * name; Esc powers off (deep sleep), the files stay where they are. */
 static void migrate_popup_accept(void)
 {
     close_msg_popup();
@@ -5901,11 +5901,11 @@ static void migrate_popup_accept(void)
     show_name_prompt(SAVE_MODE_PROJECT_MIGRATE, "Name of the new project (Enter/Esc):", def);
 }
 
-static void migrate_popup_later(void)
+static void migrate_popup_power_off(void)
 {
-    close_msg_popup();
-    s_setup_dismissed = true;
-    editor_ui_set_status("Files outside projects stay hidden until the next boot");
+    ESP_LOGI(TAG, "Files outside projects not moved: powering off");
+    standby_enter_sleep();
+    /* Only returns while sleep is inhibited: keep asking. */
 }
 
 static void handle_msg_popup_key(const kb_event_t *ev)
@@ -5920,7 +5920,7 @@ static void handle_msg_popup_key(const kb_event_t *ev)
     if (s_msg_busy) return;
     if (s_msg_migrate) {
         if (ev->keycode == KB_KEY_ENTER) migrate_popup_accept();
-        else if (ev->keycode == KB_KEY_ESCAPE) migrate_popup_later();
+        else if (ev->keycode == KB_KEY_ESCAPE) migrate_popup_power_off();
         return;
     }
     if (s_msg_restart) {
@@ -8066,12 +8066,15 @@ static void save_prompt_cancel(void)
 {
     save_mode_t mode = s_save_mode;
     close_save_prompt();
-    if (mode == SAVE_MODE_PROJECT_FIRST || mode == SAVE_MODE_PROJECT_MIGRATE) {
+    if (mode == SAVE_MODE_PROJECT_MIGRATE) {
+        /* Back to the "Files outside projects" pop-up: move or power off. */
+        check_project_setup();
+        return;
+    }
+    if (mode == SAVE_MODE_PROJECT_FIRST) {
         /* Not asked again before the next boot. */
         s_setup_dismissed = true;
-        editor_ui_set_status(mode == SAVE_MODE_PROJECT_FIRST
-                                 ? "No project yet -- N: new project"
-                                 : "Files outside projects stay hidden until the next boot");
+        editor_ui_set_status("No project yet -- N: new project");
         return;
     }
     restore_default_status();
