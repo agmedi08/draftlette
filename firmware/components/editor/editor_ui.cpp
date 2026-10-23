@@ -1072,6 +1072,12 @@ static char           s_xfer_src_name[256] = "";
 static project_name_t s_xfer_dst_project = "";
 static project_name_t s_xfer_projects[XFER_MAX_PROJECTS];
 static int            s_xfer_nprojects = 0;  /* rows before "New project..." */
+/* The picker moves the files found outside any project (see
+ * check_project_setup()) instead of one file. */
+static bool           s_xfer_migrate = false;
+/* Set while that picker hands over to the browser, so the browser does
+ * not raise the "Files outside projects" dialog again in between. */
+static bool           s_setup_busy = false;
 
 /* ---- WiFi "New connection" scan/pick flow ----
  * Selecting the F1 menu's "WiFi: New connection..." row
@@ -4183,7 +4189,7 @@ static void browser_go_up(void)
  * (a new or freshly formatted card). */
 static void check_project_setup(void)
 {
-    if (s_save_open || s_msg_open || s_menu_open) return;
+    if (s_save_open || s_msg_open || s_menu_open || s_setup_busy) return;
     if (sd_handed_off_msg()) return;
     if (!sd_card_is_ready()) {
         if (s_setup_dismissed) return;
@@ -4212,14 +4218,24 @@ static void check_project_setup(void)
             snprintf(more, sizeof(more), "  ...and %d more\n", ndocs - SHOW);
             text += more;
         }
-        text += ndocs == 1 ? "Move it to a new project?" : "Move them to a new project?";
+        project_name_t one[1];
+        bool have_projects = project_list(one, 1) > 0;
+        if (have_projects)
+            text += ndocs == 1 ? "Move it to a project?" : "Move them to a project?";
+        else
+            text += ndocs == 1 ? "Move it to a new project?" : "Move them to a new project?";
         char cfg[32];
         snprintf(cfg, sizeof(cfg), "%s/git.cfg", sd_card_get_mount_point());
         if (sd_card_file_exists(cfg))
-            text += " Their Git sync settings (git.cfg) and history go with them.";
+            text += have_projects
+                ? " Their Git sync settings (git.cfg) and history go with them, "
+                  "unless the project has its own."
+                : " Their Git sync settings (git.cfg) and history go with them.";
         show_msg_popup("Files outside projects", text.c_str(), false);
         s_msg_migrate = true;
-        lv_label_set_text(s_msg_hint_lbl, "Enter: move to a new project  Esc: power off");
+        lv_label_set_text(s_msg_hint_lbl, have_projects
+                              ? "Enter: move to a project  Esc: power off"
+                              : "Enter: move to a new project  Esc: power off");
         return;
     }
     project_name_t one[1];
@@ -4859,6 +4875,7 @@ static void show_menu(void)
     if (s_dbx_panel) lv_obj_add_flag(s_dbx_panel, LV_OBJ_FLAG_HIDDEN);
     s_fmt_step = FMT_STEP_NONE;
     s_xfer_open = false;
+    s_xfer_migrate = false;
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     s_kermit_picker_open = false;
 #endif
@@ -5893,9 +5910,17 @@ static void default_project_name(char *out, size_t n);
 
 /* "Files outside projects" pop-up: Enter asks for the new project's
  * name; Esc powers off (deep sleep), the files stay where they are. */
+static void show_migrate_picker(void);
+
 static void migrate_popup_accept(void)
 {
     close_msg_popup();
+    project_name_t one[1];
+    if (project_list(one, 1) > 0) {
+        /* Existing projects to choose from, or a new one. */
+        show_migrate_picker();
+        return;
+    }
     char def[PROJECT_NAME_MAX + 1];
     default_project_name(def, sizeof(def));
     show_name_prompt(SAVE_MODE_PROJECT_MIGRATE, "Name of the new project (Enter/Esc):", def);
@@ -7884,6 +7909,7 @@ static void xfer_return(void)
     if (s_xfer_from_inpane) {
         editor_ui_show_editor();
         show_inpane_browser();
+        check_project_setup();   /* editor_ui_show_file_browser() does it otherwise */
     } else {
         editor_ui_show_file_browser();
     }
@@ -7932,8 +7958,11 @@ static void xfer_picker_activate(int idx);
 static void refresh_xfer_picker_items(void)
 {
     char buf[96];
-    snprintf(buf, sizeof(buf), "%s %.40s to project:", s_xfer_copy ? "Copy" : "Move",
-             s_xfer_src_name);
+    if (s_xfer_migrate)
+        snprintf(buf, sizeof(buf), "Move the files outside projects to:");
+    else
+        snprintf(buf, sizeof(buf), "%s %.40s to project:", s_xfer_copy ? "Copy" : "Move",
+                 s_xfer_src_name);
     lv_label_set_text(s_lbl_menu_hdr, buf);
     lv_obj_clean(s_menu_list);
     for (int i = 0; i < s_xfer_nprojects; i++) {
@@ -7961,6 +7990,46 @@ static void close_xfer_picker(void)
     s_menu_open = false;
     lv_label_set_text(s_lbl_menu_hdr, MENU_HDR_TEXT);
     xfer_return();
+}
+
+/* Move the files found outside any project into the project (created
+ * if needed) and open it. */
+static void migrate_into_project(const char *name)
+{
+    char msg[128];
+    int moved = 0;
+    esp_err_t err = project_migrate_root(name, &moved);
+    if (!project_exists(name)) {
+        editor_ui_set_status("Cannot create the project folder");
+        return;
+    }
+    browser_enter_project(name);
+    if (err != ESP_OK)
+        snprintf(msg, sizeof(msg), "Moved %d file(s) to %.32s, some could not be moved",
+                 moved, name);
+    else
+        snprintf(msg, sizeof(msg), "Moved %d file(s) to project %.32s", moved, name);
+    set_status_with_timeout(msg, 6000);
+}
+
+/* "Files outside projects" dialog with projects on the card: pick one
+ * of them, or "New project...". Esc returns to the dialog. */
+static void show_migrate_picker(void)
+{
+    static project_name_t all[64];
+    int n = project_list(all, 64);
+    s_xfer_nprojects = 0;
+    for (int i = 0; i < n && s_xfer_nprojects < XFER_MAX_PROJECTS; i++)
+        strlcpy(s_xfer_projects[s_xfer_nprojects++], all[i], sizeof(project_name_t));
+    s_xfer_copy = false;
+    s_xfer_src_project[0] = '\0';
+    s_xfer_from_inpane = s_inpane_browser_open;
+    if (s_inpane_browser_open) close_inpane_browser();
+    show_menu();   /* clears the picker flags */
+    s_xfer_migrate = true;
+    s_xfer_open = true;
+    s_xfer_sel = 0;
+    refresh_xfer_picker_items();
 }
 
 /* Alt+M (move) / Alt+C (copy) on a file in a project. */
@@ -8002,6 +8071,21 @@ static void xfer_picker_activate(int idx)
     bool is_new = (idx >= s_xfer_nprojects);
     project_name_t dst = "";
     if (!is_new) strlcpy(dst, s_xfer_projects[idx], sizeof(dst));
+    if (s_xfer_migrate) {
+        s_xfer_migrate = false;
+        s_setup_busy = true;
+        close_xfer_picker();
+        s_setup_busy = false;
+        if (is_new) {
+            char def[PROJECT_NAME_MAX + 1];
+            default_project_name(def, sizeof(def));
+            show_name_prompt(SAVE_MODE_PROJECT_MIGRATE,
+                             "Name of the new project (Enter/Esc):", def);
+        } else {
+            migrate_into_project(dst);
+        }
+        return;
+    }
     close_xfer_picker();   /* prompts go onto the browser's screen */
     const char *verb = s_xfer_copy ? "Copy" : "Move";
     char hdr[64];
@@ -8042,6 +8126,9 @@ static void handle_xfer_picker_key(const kb_event_t *ev)
         xfer_picker_activate(s_xfer_sel);
         return;
     case KB_KEY_ESCAPE:
+        /* From the files-outside-projects picker this lands back on its
+         * dialog (check_project_setup() runs as the browser shows). */
+        s_xfer_migrate = false;
         close_xfer_picker();
         restore_default_status();
         return;
@@ -8121,20 +8208,8 @@ static void project_prompt_confirm(void)
             editor_ui_set_status("A project with this name exists -- choose a new name");
             return;
         }
-        int moved = 0;
-        esp_err_t err = project_migrate_root(name, &moved);
         close_save_prompt();
-        if (!project_exists(name)) {
-            editor_ui_set_status("Cannot create the project folder");
-            return;
-        }
-        browser_enter_project(name);
-        if (err != ESP_OK)
-            snprintf(msg, sizeof(msg), "Moved %d file(s) to %.32s, some could not be moved",
-                     moved, name);
-        else
-            snprintf(msg, sizeof(msg), "Moved %d file(s) to project %.32s", moved, name);
-        set_status_with_timeout(msg, 6000);
+        migrate_into_project(name);
         return;
     }
     case SAVE_MODE_PROJECT_RENAME: {

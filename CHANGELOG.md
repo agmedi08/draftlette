@@ -30,8 +30,8 @@ in the git log.
 - **Your existing files move into a project**: if the SD card root
   holds documents (from an earlier firmware version, or copied there
   over USB), at boot the device lists these files that do not belong
-  to any project and offers to move them to a new project (MyDrafts
-  is proposed as its name). They move together with `git.cfg` and the
+  to any project and offers to move them to one of your projects or
+  to a new one (MyDrafts is proposed as its name). They move together with `git.cfg` and the
   Git history, so syncing continues with the same repository. If you
   are not ready to move them, Esc powers the device off; it asks again
   the next time it starts. A card with

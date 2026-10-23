@@ -725,8 +725,13 @@ shows: no card -> message pop-up with `s_msg_restart` (Enter restarts;
 nothing else closes it, and `show_msg_popup()` does not replace it),
 root documents -> the "Files outside projects" pop-up (`s_msg_migrate`,
 up to six names from `project_root_doc_names()`; Enter ->
-`migrate_popup_accept()` -> `SAVE_MODE_PROJECT_MIGRATE` prompt for a new
-project, `default_project_name()`, whose Esc returns to the pop-up;
+`migrate_popup_accept()`: with projects on the card the Alt+M picker in
+`s_xfer_migrate` mode (`show_migrate_picker()`, all projects plus "New
+project...", `migrate_into_project()`; `s_setup_busy` keeps the dialog
+from reappearing while it hands over to the browser, and its Esc
+returns to the dialog), otherwise straight to the
+`SAVE_MODE_PROJECT_MIGRATE` prompt for a new project,
+`default_project_name()`, whose Esc returns to the pop-up;
 Esc -> `migrate_popup_power_off()`, `standby_enter_sleep()`), no project ->
 `SAVE_MODE_PROJECT_FIRST` (default name `MyDrafts`); Esc sets
 `s_setup_dismissed` until the next boot. `editor_ui_set_ble_prompt_text()`

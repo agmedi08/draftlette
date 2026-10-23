@@ -237,10 +237,14 @@ editor.
 - **Files that do not belong to any project** (documents in the root
   folder, from a card used before projects existed or copied there
   over USB) are found at boot. A dialog lists them and offers to move
-  them to a new project: Enter asks for its name (`MyDrafts` is
-  proposed, or `MyDrafts2`, ... if taken) and moves them there,
-  together with `git.cfg` and the Git history, so the project keeps
-  syncing with the same repository. If you are not ready to move them,
+  them to a project. Enter opens the list of projects to pick one,
+  with "New project..." at the end; with no project on the card yet
+  it goes straight to the name of a new one (`MyDrafts` is proposed,
+  or `MyDrafts2`, ... if taken). The files move there together with
+  `git.cfg` and the Git history, so the project keeps syncing with
+  the same repository; a project that already has its own `git.cfg`
+  keeps it (the root one stays where it was), and a moved file whose
+  name is taken gets a `-2` (`-3`, ...) suffix. If you are not ready to move them,
   Esc powers the device off (deep sleep); it asks again the next time
   it starts. Esc in the name prompt goes back to the dialog.
 - **No SD card**: the device asks you to insert one and press Enter to
