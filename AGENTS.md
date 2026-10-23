@@ -721,7 +721,8 @@ selector, whose Esc still closes it) switch levels and persist the
 selection. The first `editor_ui_show_file_browser()` opens the last
 project; returning from the editor opens the closed document's project
 with it highlighted. `check_project_setup()` runs whenever the browser
-shows: no card -> message pop-up with `s_msg_restart` (Enter restarts),
+shows: no card -> message pop-up with `s_msg_restart` (Enter restarts;
+nothing else closes it, and `show_msg_popup()` does not replace it),
 root documents -> `SAVE_MODE_PROJECT_MIGRATE` prompt, no project ->
 `SAVE_MODE_PROJECT_FIRST` (default name `MyDrafts`); Esc sets
 `s_setup_dismissed` until the next boot. `editor_ui_set_ble_prompt_text()`
@@ -733,7 +734,8 @@ document's (an untitled one: `s_last_project`) in the editor, else the
 browsed or highlighted project; Ctrl+G / F1 Git Sync
 (`start_project_sync()`), Draftbox and Sync via browser (the Kermit
 server is rooted at the project folder, so Draftbridge sees the
-pre-project layout) use it. In the list of projects N / Ctrl+N creates,
+pre-project layout) use it. In the list of projects N / Ctrl+N creates
+(proposing `MyDrafts`, or `MyDrafts-2`, ... when taken),
 F2 / Alt+R / Ctrl+R renames (Ctrl+R is the e-paper refresh everywhere
 else), Del / Alt+D deletes (`show_project_delete_prompt()`: refused while
 a file of it is open, and unless `git_sync_project_status()` finds every

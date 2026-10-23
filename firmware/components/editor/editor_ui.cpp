@@ -944,8 +944,8 @@ static int  s_kermit_picker_sel_prev = -1;
  * Finished (Enter or a tap), which stops the server. */
 static bool s_msg_kermit             = false;
 #endif
-/* The pop-up says the SD card is missing: Enter (or a tap) restarts
- * the device, Esc only closes it. */
+/* The pop-up says the SD card is missing. It cannot be closed: the user
+ * inserts a card, then Enter (or a tap) restarts the device. */
 static bool s_msg_restart            = false;
 
 /* Why the firmware must keep off the SD card right now -- it is handed
@@ -4179,7 +4179,7 @@ static void check_project_setup(void)
                        "The SD card is missing or cannot be read.\n"
                        "Insert a MicroSD card and restart the device.", false);
         s_msg_restart = true;
-        lv_label_set_text(s_msg_hint_lbl, "Enter: restart  Esc: close");
+        lv_label_set_text(s_msg_hint_lbl, "Enter: restart");
         return;
     }
     if (s_setup_dismissed) return;
@@ -5820,6 +5820,7 @@ static void show_msg_popup(const char *title, const char *text, bool busy)
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
     if (s_msg_kermit) return;   /* the Sync via browser dialog stays up */
 #endif
+    if (s_msg_restart) return;  /* so does the missing SD card one */
     lv_label_set_text(s_msg_title_lbl, title);
     lv_label_set_text(s_msg_text_lbl, text);
     if (busy) lv_obj_add_flag(s_msg_hint_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -5864,9 +5865,13 @@ static void handle_msg_popup_key(const kb_event_t *ev)
     }
 #endif
     if (s_msg_busy) return;
-    if (s_msg_restart && ev->keycode == KB_KEY_ENTER) {
-        ESP_LOGI(TAG, "Restarting to look for the SD card again");
-        esp_restart();
+    if (s_msg_restart) {
+        /* No way out but a restart with a card inserted. */
+        if (ev->keycode == KB_KEY_ENTER) {
+            ESP_LOGI(TAG, "Restarting to look for the SD card again");
+            esp_restart();
+        }
+        return;
     }
     if (ev->keycode == KB_KEY_ENTER || ev->keycode == KB_KEY_ESCAPE)
         close_msg_popup();
@@ -10143,7 +10148,12 @@ static void handle_browser_key(const kb_event_t *ev)
     if (ch == 'n' && !alt) {
         if (browser_at_root()) {
             /* N / Ctrl+N in the list of projects: a new project. */
-            show_name_prompt(SAVE_MODE_PROJECT_NEW, "New project (Enter/Esc):", "");
+            /* MyDrafts, or MyDrafts-2, -3, ... if that one exists. */
+            char def[PROJECT_NAME_MAX + 1];
+            strlcpy(def, PROJECT_DEFAULT_NAME, sizeof(def));
+            for (int i = 2; i < 100 && project_exists(def); i++)
+                snprintf(def, sizeof(def), "%s-%d", PROJECT_DEFAULT_NAME, i);
+            show_name_prompt(SAVE_MODE_PROJECT_NEW, "New project (Enter/Esc):", def);
             return;
         }
         show_newfmt_prompt(s_inpane_browser_open ? NEWDOC_INPANE

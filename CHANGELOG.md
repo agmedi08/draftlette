@@ -14,7 +14,8 @@ in the git log.
   different repositories. The file browser first lists the projects;
   Enter opens one and Esc goes back. Each project remembers the file
   you last selected in it, and the current project's name is shown in
-  the status bar. In the list of projects, N creates a project, F2
+  the status bar. In the list of projects, N creates a project
+  (MyDrafts is proposed as its name), F2
   (or Alt+R / Ctrl+R) renames one, Del (or Alt+D) deletes one -- only
   when all its files are on the Git server, after a confirmation --
   and Alt+I shows the project information: name, number of files,
@@ -33,8 +34,8 @@ in the git log.
   no project (new, or just formatted) asks for the first project's
   name.
 - **Missing SD card**: when no SD card is found, the device says so on
-  the start screen and asks you to insert a card and restart (Enter
-  restarts).
+  the start screen and asks you to insert a card; Enter then restarts
+  the device. The dialog cannot be closed otherwise.
 
 ### Changed
 
