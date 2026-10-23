@@ -716,9 +716,9 @@ the one last worked in (untitled documents are saved there,
 `new_doc_dir()`). `refresh_file_list()` lists project folders at the
 root and only documents inside a project, with a placeholder row (user
 data -1) when empty. `browser_enter_project()` / `browser_go_up()`
-(Esc or Backspace in the full-screen browser, Backspace in the in-pane
-selector, whose Esc still closes it) switch levels and persist the
-selection. The first `editor_ui_show_file_browser()` opens the last
+(Esc or Backspace, in both browsers; Esc does nothing in the list of
+projects, and the in-pane selector is left with Ctrl+Tab or by opening
+a file) switch levels and persist the selection. The first `editor_ui_show_file_browser()` opens the last
 project; returning from the editor opens the closed document's project
 with it highlighted. `check_project_setup()` runs whenever the browser
 shows: no card -> message pop-up with `s_msg_restart` (Enter restarts;

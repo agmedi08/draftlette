@@ -7149,15 +7149,12 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "Alt+I", "Project information: files, size, Git status");
         help_row(out, cols, kc, "Ctrl+G", "Git sync of the selected project");
         if (origin == HELP_FROM_INPANE)
-            help_row(out, cols, kc, "Esc", "Back to the editor");
+            help_row(out, cols, kc, "Ctrl+Tab", "Back to the editor, in the other pane");
 
         help_heading(out, "Files of a project");
         help_row(out, cols, kc, "Up / Down", "Select a file");
         help_row(out, cols, kc, "Enter", "Open the file");
-        help_row(out, cols, kc, origin == HELP_FROM_INPANE ? "Backspace" : "Esc, Backspace",
-                 "Back to the list of projects");
-        if (origin == HELP_FROM_INPANE)
-            help_row(out, cols, kc, "Esc", "Back to the editor");
+        help_row(out, cols, kc, "Esc, Backspace", "Back to the list of projects");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
         help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file (only once it is pushed with Git sync)");
@@ -10029,8 +10026,8 @@ static void show_inpane_browser(void)
      * keystrokes are rerouted by the s_inpane_browser_open check in
      * process_key_event. */
     editor_ui_set_status(browser_at_root()
-                             ? "Open into pane: Enter  N:new project  Esc:cancel"
-                             : "Open into pane: Enter  N:new  Bksp:projects  Esc:cancel");
+                             ? "Open into pane: Enter  N:new project  Ctrl+Tab:other pane"
+                             : "Open into pane: Enter  N:new  Esc:projects  Ctrl+Tab:other pane");
 }
 
 /* Dismiss the in-pane file selector and restore the full-screen list
@@ -10311,7 +10308,7 @@ static void handle_browser_key(const kb_event_t *ev)
         return;
     }
     if (ev->keycode == KB_KEY_BACKSPACE ||
-        (ev->keycode == KB_KEY_ESCAPE && !s_inpane_browser_open)) {
+        ev->keycode == KB_KEY_ESCAPE) {
         /* Up from a project to the list of projects. */
         browser_go_up();
         return;
@@ -10366,9 +10363,10 @@ static void handle_browser_key(const kb_event_t *ev)
     s_browser_sel_prev = s_browser_sel;
 }
 
-/* Key handler for the in-pane (split-mode) file selector. Esc cancels
- * the pick (the pane keeps its current document); F1 cancels and opens
- * the menu; N creates a new untitled document in the focused pane;
+/* Key handler for the in-pane (split-mode) file selector. Esc goes up
+ * to the list of projects (no effect there); Ctrl+Tab cancels the pick
+ * (the pane keeps its current document) and focuses the other pane; F1
+ * cancels and opens the menu; N creates a new untitled document in the focused pane;
  * every other key (Up/Down/Enter, Ctrl+G/W/B) is delegated to the
  * shared browser handler, which now operates on the in-pane list and
  * loads the picked file into the focused pane via browser_activate_item
@@ -10377,11 +10375,10 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
 {
     bool ctrl = (ev->modifier & (KB_MOD_LCTRL | KB_MOD_RCTRL)) != 0;
 
-    if (ev->keycode == KB_KEY_ESCAPE) {
-        close_inpane_browser();
-        editor_ui_show_editor();
-        return;
-    }
+    /* Esc goes up to the list of projects there and does nothing in
+     * it, as in the full-screen browser (handle_browser_key()), so the
+     * pane can open a file of another project. Ctrl+Tab leaves the
+     * selector for the other pane. */
     if (ev->keycode == KB_KEY_F1) {
         close_inpane_browser();
         show_menu();

@@ -261,8 +261,8 @@ Git sync (Ctrl+G or F1 -> Git Sync), "Connect a Draftbox repository"
 and "Sync via browser" work on the current project: the project of
 the document being edited, or the project shown or selected in the
 file browser. In split-screen mode the two panes can show files from
-different projects (in the pane's file selector, Backspace goes up to
-the list of projects).
+different projects (in the pane's file selector, Esc goes up to the
+list of projects).
 
 
 ## Writing screenplays (Fountain)
@@ -362,8 +362,9 @@ in landscape, the top one in portrait.
 Each pane opens a file for itself: while split, **Ctrl+O** opens the
 file browser for the focused pane, so the picked file loads into that
 pane while the other pane keeps its document. The two files can come
-from different projects: Backspace in the pane's file selector goes up
-to the list of projects. **Ctrl+Tab** moves
+from different projects: Esc in the pane's file selector goes up to
+the list of projects (and does nothing there); Ctrl+Tab leaves the
+selector without opening a file. **Ctrl+Tab** moves
 keyboard focus between the two panes; the focused pane shows the active
 cursor and receives all editing keys.
 
