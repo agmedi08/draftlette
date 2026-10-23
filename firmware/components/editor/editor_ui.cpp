@@ -944,6 +944,10 @@ static int  s_kermit_picker_sel_prev = -1;
  * Finished (Enter or a tap), which stops the server. */
 static bool s_msg_kermit             = false;
 #endif
+/* The pop-up lists documents found outside any project: Enter (or a
+ * tap) asks for the name of a new project to move them to, Esc leaves
+ * them until the next boot. */
+static bool s_msg_migrate            = false;
 /* The pop-up says the SD card is missing. It cannot be closed: the user
  * inserts a card, then Enter (or a tap) restarts the device. */
 static bool s_msg_restart            = false;
@@ -4192,11 +4196,30 @@ static void check_project_setup(void)
         return;
     }
     if (s_setup_dismissed) return;
-    if (project_root_doc_count() > 0) {
-        char def[PROJECT_NAME_MAX + 1] = PROJECT_DEFAULT_NAME;
-        if (s_last_project[0]) strlcpy(def, s_last_project, sizeof(def));
-        show_name_prompt(SAVE_MODE_PROJECT_MIGRATE, "Move the root files to project:", def);
-        set_status_with_timeout("Files belong in a project. Name it and press Enter", 0);
+    const int SHOW = 6;
+    project_file_name_t names[SHOW];
+    int ndocs = project_root_doc_names(names, SHOW);
+    if (ndocs > 0) {
+        std::string text = ndocs == 1 ? "This file does not belong to any project:\n"
+                                      : "These files do not belong to any project:\n";
+        for (int i = 0; i < ndocs && i < SHOW; i++) {
+            text += "  ";
+            text += names[i];
+            text += '\n';
+        }
+        if (ndocs > SHOW) {
+            char more[48];
+            snprintf(more, sizeof(more), "  ...and %d more\n", ndocs - SHOW);
+            text += more;
+        }
+        text += ndocs == 1 ? "Move it to a new project?" : "Move them to a new project?";
+        char cfg[32];
+        snprintf(cfg, sizeof(cfg), "%s/git.cfg", sd_card_get_mount_point());
+        if (sd_card_file_exists(cfg))
+            text += " Their Git sync settings (git.cfg) and history go with them.";
+        show_msg_popup("Files outside projects", text.c_str(), false);
+        s_msg_migrate = true;
+        lv_label_set_text(s_msg_hint_lbl, "Enter: move to a new project  Esc: later");
         return;
     }
     project_name_t one[1];
@@ -5847,8 +5870,9 @@ static void close_msg_popup(void)
 {
     s_msg_open = false;
     s_msg_busy = false;
-    if (s_msg_restart) {
+    if (s_msg_restart || s_msg_migrate) {
         s_msg_restart = false;
+        s_msg_migrate = false;
         lv_label_set_text(s_msg_hint_lbl, "Enter / Esc: close");
     }
     if (s_msg_panel) lv_obj_add_flag(s_msg_panel, LV_OBJ_FLAG_HIDDEN);
@@ -5864,6 +5888,26 @@ static void close_msg_popup(void)
 static void kermit_finish(void);
 #endif
 
+static void show_name_prompt(save_mode_t mode, const char *hdr, const char *initial);
+static void default_project_name(char *out, size_t n);
+
+/* "Files outside projects" pop-up: Enter asks for the new project's
+ * name; Esc leaves the files where they are until the next boot. */
+static void migrate_popup_accept(void)
+{
+    close_msg_popup();
+    char def[PROJECT_NAME_MAX + 1];
+    default_project_name(def, sizeof(def));
+    show_name_prompt(SAVE_MODE_PROJECT_MIGRATE, "Name of the new project (Enter/Esc):", def);
+}
+
+static void migrate_popup_later(void)
+{
+    close_msg_popup();
+    s_setup_dismissed = true;
+    editor_ui_set_status("Files outside projects stay hidden until the next boot");
+}
+
 static void handle_msg_popup_key(const kb_event_t *ev)
 {
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
@@ -5874,6 +5918,11 @@ static void handle_msg_popup_key(const kb_event_t *ev)
     }
 #endif
     if (s_msg_busy) return;
+    if (s_msg_migrate) {
+        if (ev->keycode == KB_KEY_ENTER) migrate_popup_accept();
+        else if (ev->keycode == KB_KEY_ESCAPE) migrate_popup_later();
+        return;
+    }
     if (s_msg_restart) {
         /* No way out but a restart with a card inserted. */
         if (ev->keycode == KB_KEY_ENTER) {
@@ -5897,6 +5946,10 @@ static void msg_popup_touch_cb(lv_event_t *e)
     }
 #endif
     if (s_msg_restart) esp_restart();
+    if (s_msg_migrate) {
+        migrate_popup_accept();
+        return;
+    }
     if (!s_msg_busy) close_msg_popup();
 }
 #endif
@@ -8018,7 +8071,7 @@ static void save_prompt_cancel(void)
         s_setup_dismissed = true;
         editor_ui_set_status(mode == SAVE_MODE_PROJECT_FIRST
                                  ? "No project yet -- N: new project"
-                                 : "Root files stay hidden until they are moved (next boot)");
+                                 : "Files outside projects stay hidden until the next boot");
         return;
     }
     restore_default_status();
@@ -8061,6 +8114,10 @@ static void project_prompt_confirm(void)
     }
     case SAVE_MODE_PROJECT_MIGRATE: {
         if (!project_name_ok_or_status(name)) return;
+        if (project_exists(name)) {
+            editor_ui_set_status("A project with this name exists -- choose a new name");
+            return;
+        }
         int moved = 0;
         esp_err_t err = project_migrate_root(name, &moved);
         close_save_prompt();

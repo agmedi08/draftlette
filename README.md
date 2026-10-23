@@ -234,13 +234,14 @@ editor.
 
 - **A new or freshly formatted card** has no project: the device asks
   you to name the first one (`MyDrafts` is proposed).
-- **Documents in the root folder** (from a card used before projects
-  existed, or copied there over USB) are found at boot: the device
-  asks for the name of a project (`MyDrafts` is proposed) and moves
-  them into it, together with `git.cfg` and the Git history, so the
-  project keeps syncing with the same repository. If a file of the
-  same name already exists in that project, the moved one gets a
-  `-2` (`-3`, ...) suffix.
+- **Files that do not belong to any project** (documents in the root
+  folder, from a card used before projects existed or copied there
+  over USB) are found at boot. A dialog lists them and offers to move
+  them to a new project: Enter asks for its name (`MyDrafts` is
+  proposed, or `MyDrafts2`, ... if taken) and moves them there,
+  together with `git.cfg` and the Git history, so the project keeps
+  syncing with the same repository. Esc leaves them alone (hidden)
+  until the next boot.
 - **No SD card**: the device asks you to insert one and press Enter to
   restart. The dialog cannot be closed otherwise.
 

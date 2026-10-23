@@ -29,9 +29,10 @@ in the git log.
   two panes can show files from different projects.
 - **Your existing files move into a project**: if the SD card root
   holds documents (from an earlier firmware version, or copied there
-  over USB), the device asks at boot for a project name (MyDrafts is
-  proposed) and moves them there, together with `git.cfg` and the Git
-  history, so syncing continues with the same repository. A card with
+  over USB), at boot the device lists these files that do not belong
+  to any project and offers to move them to a new project (MyDrafts
+  is proposed as its name). They move together with `git.cfg` and the
+  Git history, so syncing continues with the same repository. A card with
   no project (new, or just formatted) asks for the first project's
   name.
 - **Missing SD card**: when no SD card is found, the device says so on

@@ -125,17 +125,24 @@ extern "C" bool project_of_path(const char *path, char *out, size_t out_sz)
     return project_name_problem(out) == NULL;
 }
 
-extern "C" int project_root_doc_count(void)
+extern "C" int project_root_doc_names(project_file_name_t *names, int max)
 {
     int count = 0;
     sd_card_file_entry_t *e = scan_dir(mount(), &count);
     if (!e) return 0;
     int n = 0;
     for (int i = 0; i < count; i++) {
-        if (!e[i].is_dir && editor_path_format(e[i].name, NULL)) n++;
+        if (e[i].is_dir || !editor_path_format(e[i].name, NULL)) continue;
+        if (names && n < max) strlcpy(names[n], e[i].name, sizeof(project_file_name_t));
+        n++;
     }
     heap_caps_free(e);
     return n;
+}
+
+extern "C" int project_root_doc_count(void)
+{
+    return project_root_doc_names(NULL, 0);
 }
 
 extern "C" bool project_free_file_name(const char *dir, const char *name,

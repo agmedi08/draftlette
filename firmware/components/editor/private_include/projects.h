@@ -48,6 +48,11 @@ bool project_of_path(const char *path, char *out, size_t out_sz);
 /* Documents (*.md, *.fountain, *.txt) in the root folder. */
 int project_root_doc_count(void);
 
+/* Like project_root_doc_count(), and also stores the first max names
+ * (sorted, cut to fit) in names. */
+typedef char project_file_name_t[64];
+int project_root_doc_names(project_file_name_t *names, int max);
+
 /* Move the root folder's documents (with their metadata sidecars),
  * git.cfg and .git history into the project, creating it if needed.
  * A document whose name is taken in the project gets a "-2", "-3", ...

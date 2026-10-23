@@ -723,7 +723,10 @@ project; returning from the editor opens the closed document's project
 with it highlighted. `check_project_setup()` runs whenever the browser
 shows: no card -> message pop-up with `s_msg_restart` (Enter restarts;
 nothing else closes it, and `show_msg_popup()` does not replace it),
-root documents -> `SAVE_MODE_PROJECT_MIGRATE` prompt, no project ->
+root documents -> the "Files outside projects" pop-up (`s_msg_migrate`,
+up to six names from `project_root_doc_names()`; Enter ->
+`migrate_popup_accept()` -> `SAVE_MODE_PROJECT_MIGRATE` prompt for a new
+project, `default_project_name()`; Esc -> `migrate_popup_later()`), no project ->
 `SAVE_MODE_PROJECT_FIRST` (default name `MyDrafts`); Esc sets
 `s_setup_dismissed` until the next boot. `editor_ui_set_ble_prompt_text()`
 also mentions a missing card, since the browser only appears once a
