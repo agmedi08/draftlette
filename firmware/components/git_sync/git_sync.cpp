@@ -120,6 +120,24 @@ static void remote_host_of(const char *url, char *out, size_t osz)
     out[n] = '\0';
 }
 
+/* Repository name: the URL path after the host, without the leading
+ * '/', a query or fragment, trailing '/' and ".git". */
+static void repo_name_of(const char *url, char *out, size_t osz)
+{
+    const char *p = url;
+    const char *sch = strstr(p, "://");
+    if (sch) p = sch + 3;
+    p += strcspn(p, "/?#");
+    while (*p == '/') p++;
+    size_t n = strcspn(p, "?#");
+    while (n && p[n - 1] == '/') n--;
+    if (n >= 4 && strncmp(p + n - 4, ".git", 4) == 0) n -= 4;
+    if (n == 0) { strlcpy(out, "(server root)", osz); return; }
+    if (n >= osz) n = osz - 1;
+    memcpy(out, p, n);
+    out[n] = '\0';
+}
+
 static void remote_host(char *out, size_t osz)
 {
     remote_host_of(s_cfg.repo_url, out, osz);
@@ -1244,9 +1262,11 @@ extern "C" bool git_sync_is_configured(const char *project_dir)
 }
 
 extern "C" bool git_sync_get_remote(const char *project_dir, char *host, size_t host_sz,
+                                    char *repo, size_t repo_sz,
                                     char *branch, size_t branch_sz)
 {
     if (host_sz) host[0] = '\0';
+    if (repo_sz) repo[0] = '\0';
     if (branch_sz) branch[0] = '\0';
     if (!project_dir || !project_dir[0]) return false;
     git_cfg_t *c = (git_cfg_t *)calloc(1, sizeof(git_cfg_t));
@@ -1254,6 +1274,7 @@ extern "C" bool git_sync_get_remote(const char *project_dir, char *host, size_t 
     bool ok = load_config(c, project_dir);
     if (ok) {
         remote_host_of(c->repo_url, host, host_sz);
+        repo_name_of(c->repo_url, repo, repo_sz);
         strlcpy(branch, c->branch, branch_sz);
     }
     memset(c, 0, sizeof(*c));

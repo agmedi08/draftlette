@@ -51,9 +51,11 @@ git_sync_state_t git_sync_get_state(void);
 void git_sync_set_callback(git_sync_callback_t callback);
 /* True if <project_dir>/git.cfg names a repository. */
 bool git_sync_is_configured(const char *project_dir);
-/* Host name of the project's repository and its branch; false if the
- * project is not configured. */
+/* Host name of the project's repository, the repository's name (the
+ * repo_url path without ".git", e.g. "user/notes") and the branch;
+ * false if the project is not configured. */
 bool git_sync_get_remote(const char *project_dir, char *host, size_t host_sz,
+                         char *repo, size_t repo_sz,
                          char *branch, size_t branch_sz);
 /* Folder of the project the running (or last) sync works on. */
 const char *git_sync_get_project_dir(void);

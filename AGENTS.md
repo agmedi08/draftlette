@@ -880,7 +880,8 @@ paragraph / line / character counts (`count_text()`: a word needs a
 letter or digit, a paragraph is a blank-line-separated block with a
 word) and the Git status from `git_sync_file_diff()`, followed by the
 project information (`build_projectinfo_text()`: name, document count,
-total size, server / branch and `git_sync_project_status()`). In the
+total size, server / repository (`git_sync_get_remote()`: the
+`repo_url` path without `.git`) / branch and `git_sync_project_status()`). In the
 list of projects it shows only the project information.
 
 **F1 menu letter keys.** `s_menu_hotkeys[]` in `editor_ui.cpp` maps

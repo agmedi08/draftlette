@@ -7512,12 +7512,14 @@ static void build_projectinfo_text(std::string &out, int cols, const char *name)
     help_row(out, cols, kc, "Total size", buf);
 
     help_heading(out, "Project sync");
-    char host[96], branch[64];
-    if (!git_sync_get_remote(dir, host, sizeof(host), branch, sizeof(branch))) {
+    char host[96], repo[160], branch[64];
+    if (!git_sync_get_remote(dir, host, sizeof(host), repo, sizeof(repo),
+                             branch, sizeof(branch))) {
         help_row(out, cols, kc, "Status", "not configured (no git.cfg in the project)");
         return;
     }
     help_row(out, cols, kc, "Server", host);
+    help_row(out, cols, kc, "Repository", repo);
     help_row(out, cols, kc, "Branch", branch);
     git_sync_project_status_t st;
     git_sync_project_status(dir, &st);
