@@ -3900,6 +3900,15 @@ static void ble_prompt_forget_btn_cb(lv_event_t *e)
 
 static bool browser_at_root(void) { return s_cur_project[0] == '\0'; }
 
+/* Proposed name for a new project: MyDrafts, or MyDrafts2, MyDrafts3,
+ * ... when that one exists. */
+static void default_project_name(char *out, size_t n)
+{
+    strlcpy(out, PROJECT_DEFAULT_NAME, n);
+    for (int i = 2; i < 100 && project_exists(out); i++)
+        snprintf(out, n, "%s%d", PROJECT_DEFAULT_NAME, i);
+}
+
 /* The browser's highlighted entry, or NULL (an empty list's
  * placeholder row has no entry). */
 static const sd_card_file_entry_t *browser_selected_entry(void)
@@ -7945,7 +7954,9 @@ static void xfer_picker_activate(int idx)
     char hdr[64];
     if (is_new) {
         snprintf(hdr, sizeof(hdr), "%s to new project (Enter/Esc):", verb);
-        show_name_prompt(SAVE_MODE_XFER_PROJECT, hdr, "");
+        char def[PROJECT_NAME_MAX + 1];
+        default_project_name(def, sizeof(def));
+        show_name_prompt(SAVE_MODE_XFER_PROJECT, hdr, def);
         return;
     }
     strlcpy(s_xfer_dst_project, dst, sizeof(s_xfer_dst_project));
@@ -10148,11 +10159,8 @@ static void handle_browser_key(const kb_event_t *ev)
     if (ch == 'n' && !alt) {
         if (browser_at_root()) {
             /* N / Ctrl+N in the list of projects: a new project. */
-            /* MyDrafts, or MyDrafts-2, -3, ... if that one exists. */
             char def[PROJECT_NAME_MAX + 1];
-            strlcpy(def, PROJECT_DEFAULT_NAME, sizeof(def));
-            for (int i = 2; i < 100 && project_exists(def); i++)
-                snprintf(def, sizeof(def), "%s-%d", PROJECT_DEFAULT_NAME, i);
+            default_project_name(def, sizeof(def));
             show_name_prompt(SAVE_MODE_PROJECT_NEW, "New project (Enter/Esc):", def);
             return;
         }

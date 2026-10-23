@@ -195,7 +195,7 @@ In the file browser, in the list of projects:
 | Shortcut | Action |
 |----------|--------|
 | Up / Down, Enter | Select and open a project |
-| N or Ctrl+N | New project (`MyDrafts` is proposed, or `MyDrafts-2`, ... if taken) |
+| N or Ctrl+N | New project (`MyDrafts` is proposed, or `MyDrafts2`, `MyDrafts3`, ... if taken) |
 | F2, Alt+R or Ctrl+R | Rename the selected project |
 | Del or Alt+D | Delete the selected project, after a confirmation. Only allowed when every file in it is safely on the Git server (or the project has no files) |
 | Alt+I | Project information: name, number of files, total size and Git sync status |
@@ -245,7 +245,8 @@ editor.
   restart. The dialog cannot be closed otherwise.
 
 Alt+M moves a file and Alt+C copies one to another project (pick it
-from the list, or choose "New project..."); Alt+C can also copy the
+from the list, or choose "New project...", which proposes the same
+name as N); Alt+C can also copy the
 file into the same project under another name. When the name is
 already taken in the target project, you are asked for another one.
 You stay in the original project afterwards.

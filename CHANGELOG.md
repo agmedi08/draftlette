@@ -15,7 +15,8 @@ in the git log.
   Enter opens one and Esc goes back. Each project remembers the file
   you last selected in it, and the current project's name is shown in
   the status bar. In the list of projects, N creates a project
-  (MyDrafts is proposed as its name), F2
+  (MyDrafts is proposed as its name, or MyDrafts2, MyDrafts3, ... if
+  it exists), F2
   (or Alt+R / Ctrl+R) renames one, Del (or Alt+D) deletes one -- only
   when all its files are on the Git server, after a confirmation --
   and Alt+I shows the project information: name, number of files,
