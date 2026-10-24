@@ -170,6 +170,32 @@ development boards with 16-bit parallel RGB565 interface and a GT911
 capacitive touch controller.
 
 
+## Elecrow CrowPanel ESP32 HMI 5.0"
+
+[Elecrow CrowPanel ESP32 HMI 5.0-inch
+Display](https://www.elecrow.com/wiki/esp32-display-502727-intelligent-touch-screen-wi-fi26ble-800480-hmi-display.html)
+-- ESP32-S3-WROOM-1-N4R8 (4 MB flash, 8 MB PSRAM) with a 5" 800x480
+TN color LCD on the 16-bit parallel RGB interface, GT911 capacitive
+touch, a MicroSD slot on SPI, a speaker output and a PH2.0 battery
+connector with a charging circuit. Build preset: `elecrow_crowpanel_50`.
+
+**Not yet tested on physical hardware.** Pins and panel timings come
+from Elecrow's wiki and their example code for Hardware Version 3.0
+([CrowPanel-5.0-HMI-ESP32-Display-800x480](https://github.com/Elecrow-RD/CrowPanel-5.0-HMI-ESP32-Display-800x480)).
+On V3.0 boards the touch controller is reset through a PCA9557 IO
+expander, as in Elecrow's example; on earlier versions that step is
+skipped.
+
+Things to know:
+
+- The BOOT button's GPIO0 is the panel's pixel clock while the editor
+  runs, so there is no wake button: after the device goes to sleep,
+  press RESET to wake it.
+- USB-C goes through a USB-to-serial bridge, so "SD card via USB" and
+  "Sync via browser" are not available.
+- There is no battery gauge, so the battery indicator is hidden.
+- TN panel: colors and contrast shift when viewed off-angle.
+
 ## Waveshare ESP32-S3-Touch-LCD-7
 
 [Waveshare

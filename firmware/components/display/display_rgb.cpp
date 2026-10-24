@@ -7,6 +7,8 @@
  * Used by:
  *   - Sunton ESP32-8048S070C (7", 800x480, 16-bit parallel RGB)
  *   - Sunton ESP32-8048S043C (4.3", 800x480, ST7262, 16-bit RGB)
+ *   - Elecrow CrowPanel ESP32 HMI 5.0" (800x480, ILI6122 / ILI5960,
+ *     16-bit RGB; CONFIG_DRAFTLING_RGB_BOARD_CROWPANEL_50 below)
  *   - Waveshare ESP32-S3-Touch-LCD-7 (7", 800x480, ST7262, 16-bit
  *     RGB; LCD reset and backlight sit behind a CH422G I2C
  *     IO-expander instead of direct GPIOs -- see
@@ -169,6 +171,35 @@ static const int kDataGpios[16] = {
     14, 38, 18, 17, 10,     /* B0-B4 */
     39, 0, 45, 48, 47, 21,  /* G0-G5 */
     1, 2, 42, 41, 40        /* R0-R4 */
+};
+
+#elif defined(CONFIG_DRAFTLING_RGB_BOARD_CROWPANEL_50)
+/* ---- Elecrow CrowPanel ESP32 HMI 5.0" (ILI6122 / ILI5960) ----
+ * Pins and timings from Elecrow's LovyanGFX config for this board
+ * (CrowPanel-5.0-HMI-ESP32-Display-800x480, Hardware Version 3.0).
+ * The data lines are wired like the Sunton 4.3" below; PCLK is on
+ * GPIO0, the BOOT button. Untested on physical hardware. */
+#define RGB_BL_GPIO         2
+#define RGB_PCLK_HZ         (15 * 1000 * 1000)   /* 15 MHz */
+#define RGB_HSYNC_GPIO      39
+#define RGB_VSYNC_GPIO      41
+#define RGB_DE_GPIO         40
+#define RGB_PCLK_GPIO       0
+#define RGB_HSYNC_PULSE     4
+#define RGB_HSYNC_BACK      43
+#define RGB_HSYNC_FRONT     8
+#define RGB_VSYNC_PULSE     4
+#define RGB_VSYNC_BACK      12
+#define RGB_VSYNC_FRONT     8
+#define RGB_PCLK_ACTIVE_NEG 1
+#define RGB_PCLK_IDLE_HIGH  0
+
+/* Elecrow lists pin_d0..d15 as B0-B4, G0-G5, R0-R4; d0 is the
+ * RGB565 LSB, as for data_gpio_nums[0]. */
+static const int kDataGpios[16] = {
+    8, 3, 46, 9, 1,       /* B0-B4 */
+    5, 6, 7, 15, 16, 4,   /* G0-G5 */
+    45, 48, 47, 21, 14    /* R0-R4 */
 };
 
 #elif defined(CONFIG_DRAFTLING_RGB_BOARD_S043)
@@ -746,6 +777,8 @@ const char *display_controller_name(void)
     return "ST7701 (RGB)";
 #elif defined(CONFIG_DRAFTLING_HAS_CH422G) || defined(CONFIG_DRAFTLING_RGB_BOARD_S043)
     return "ST7262 (RGB)";
+#elif defined(CONFIG_DRAFTLING_RGB_BOARD_CROWPANEL_50)
+    return "ILI6122 / ILI5960 (RGB)";
 #else
     return "RGB parallel TFT";
 #endif

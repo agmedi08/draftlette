@@ -1,0 +1,9 @@
+# Variant of partitions.csv sized for 4 MB flash instead of 16 MB --
+# used by the Elecrow CrowPanel ESP32 HMI 5.0in Display
+# (ESP32-S3-WROOM-1-N4R8: 4 MB flash, 8 MB PSRAM). factory is sized
+# to 0x3E0000 (3.875 MB), clear of the current ~2.3 MB firmware image.
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        0x3E0000,
+nvs_keys, data, nvs_keys,,        0x1000,

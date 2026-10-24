@@ -15,6 +15,11 @@ in the git log.
   removes it. This keeps the file from being read on the device only:
   the file itself is not encrypted, so anyone with the SD card can still
   read it on a computer.
+- **Elecrow CrowPanel ESP32 HMI 5.0" support**: a new build preset,
+  `elecrow_crowpanel_50`, for Elecrow's 5" 800x480 color touch screen
+  with an ESP32-S3, a MicroSD slot and a battery connector. Wake the
+  device from sleep with RESET (the BOOT button drives the screen).
+  Not yet tested on physical hardware. See HARDWARE.md.
 
 ### Changed
 

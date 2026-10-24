@@ -20,7 +20,8 @@
     defined(CONFIG_DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY) || \
     defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO) || \
     defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_LCD_316) || \
-    defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
+    defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42) || \
+    defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
 #include <driver/i2c_master.h>
 #endif
 #if defined(CONFIG_DRAFTLING_DISPLAY_MIPI_DSI)
@@ -885,6 +886,61 @@ static void pre_sleep_crowpanel_579_deinit(void)
     display_deep_sleep_prepare();
 }
 #endif /* CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_579 */
+
+#if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50) && defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+/* Elecrow CrowPanel 5.0" Hardware Version 3.0: the GT911's RST and INT
+ * lines are PCA9557 outputs IO0 and IO1, not ESP32 GPIOs. Run
+ * Elecrow's reset sequence (their crowpanel-esp32-5.0-3.0 example):
+ * both low, 20 ms, RST high (INT still low selects address 0x5D),
+ * 100 ms, then INT back to an input. The touch driver opens its own
+ * bus afterwards, so this one is only kept for these writes. On
+ * earlier board versions nothing answers at the expander's address
+ * and the touch controller is left as it is. */
+static esp_err_t crowpanel50_pca9557_write(i2c_master_dev_handle_t dev,
+                                           uint8_t reg, uint8_t val)
+{
+    const uint8_t buf[2] = { reg, val };
+    return i2c_master_transmit(dev, buf, sizeof(buf), 50);
+}
+
+static void crowpanel50_touch_reset(void)
+{
+    i2c_master_bus_handle_t bus = NULL;
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.i2c_port          = -1;
+    bus_cfg.sda_io_num        = (gpio_num_t)I2C_SDA_PIN;
+    bus_cfg.scl_io_num        = (gpio_num_t)I2C_SCL_PIN;
+    bus_cfg.clk_source        = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = true;
+    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
+        ESP_LOGW(TAG, "CrowPanel 5.0: I2C bus init failed; touch not reset");
+        return;
+    }
+    if (i2c_master_probe(bus, CROWPANEL50_PCA9557_ADDR, 50) != ESP_OK) {
+        ESP_LOGI(TAG, "CrowPanel 5.0: no PCA9557 (board before V3.0)");
+        i2c_del_master_bus(bus);
+        return;
+    }
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address  = CROWPANEL50_PCA9557_ADDR;
+    dev_cfg.scl_speed_hz    = 100000;
+    i2c_master_dev_handle_t dev = NULL;
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &dev) == ESP_OK) {
+        /* Registers: 1 = output port, 3 = configuration (1 = input). */
+        esp_err_t err = crowpanel50_pca9557_write(dev, 0x01, 0x00);   /* RST, INT low */
+        if (err == ESP_OK) err = crowpanel50_pca9557_write(dev, 0x03, 0xFC);  /* IO0, IO1 out */
+        vTaskDelay(pdMS_TO_TICKS(20));
+        if (err == ESP_OK) err = crowpanel50_pca9557_write(dev, 0x01, 0x01);  /* RST high */
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (err == ESP_OK) err = crowpanel50_pca9557_write(dev, 0x03, 0xFE);  /* INT input */
+        ESP_LOGI(TAG, "CrowPanel 5.0: GT911 reset via PCA9557: %s", esp_err_to_name(err));
+        i2c_master_bus_rm_device(dev);
+    }
+    i2c_del_master_bus(bus);
+}
+#endif
 
 #if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
 /* Waveshare ESP32-S3-RLCD-4.2: everything on the board is on the
@@ -2595,8 +2651,9 @@ extern "C" void app_main(void)
      * by this backend. */
     display_init(-1, -1, -1, -1, -1, -1, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 #elif defined(CONFIG_DRAFTLING_DISPLAY_RGB)
-    /* Parallel RGB565 color LCD (Sunton ESP32-8048S0xx, Waveshare
-     * Touch-LCD-7 / LCD-3.16). All panel data / control / backlight
+    /* Parallel RGB565 color LCD (Sunton ESP32-8048S0xx, Elecrow
+     * CrowPanel 5.0", Waveshare Touch-LCD-7 / LCD-3.16). All panel
+     * data / control / backlight
      * GPIOs are owned by the RGB backend
      * (components/display/display_rgb.cpp); pin parameters are
      * ignored, only width/height are used. On the LCD-3.16 this also
@@ -3353,6 +3410,9 @@ extern "C" void app_main(void)
      * tcfg.i2c_bus; on every other board tcfg.i2c_bus stays NULL
      * and the component creates its own bus from sda/scl as before. */
     ESP_LOGI(TAG, "Initializing touchscreen...");
+#if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
+    crowpanel50_touch_reset();
+#endif
     /* Note: on the Xteink X4 Pro the GT911 was fully power-cycled and
      * hardware-reset (with the datasheet address-select timing) far
      * above, before the shared I2C bus was created -- see the comment
