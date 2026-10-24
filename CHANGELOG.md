@@ -15,6 +15,11 @@ in the git log.
   ST7789 (Rev 5.1) settings by itself, so there is no need to know which
   panel the device has. F1 -> Hardware information shows the detected
   controller. Not yet tested on physical hardware.
+- **Delete files without Git sync**: `Del` / `Alt+D` in the file
+  browser now deletes the selected file on a device without Git sync
+  too, after the usual confirmation (Cancel is preselected), which
+  warns that the deletion cannot be undone. With Git sync set up,
+  deleting still requires the file to be synced first.
 
 ## [1.0.17] - 2026-10-18
 

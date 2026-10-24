@@ -192,7 +192,7 @@ In the file browser:
 | Up / Down, Enter | Select and open a file |
 | N or Ctrl+N | New file: pick Markdown (`.md`), Fountain screenplay (`.fountain`) or plain text (`.txt`) with Up/Down + Enter, or press M / F / T |
 | F2 or Alt+R | Rename the selected file. The name must end in `.md`, `.fountain` or `.txt`; the saved cursor position (the `.meta` file) moves with it, and changing the extension changes the format |
-| Del or Alt+D | Delete the selected file, after a confirmation. Only allowed when the file is safely on the Git server: its current content must already be committed and pushed (see [Git sync](docs/git-sync.md)), so a deleted file can always be recovered from the repository history. The next sync commits the deletion |
+| Del or Alt+D | Delete the selected file, after a confirmation. Without Git sync the deletion cannot be undone. With Git sync configured, it is only allowed when the file is safely on the Git server: its current content must already be committed and pushed (see [Git sync](docs/git-sync.md)), so a deleted file can always be recovered from the repository history. The next sync commits the deletion |
 | Alt+I | File information for the selected file (same page as in the editor) |
 | F1 / Ctrl+M | Menu |
 | F10 | Help (file browser shortcuts) |

@@ -716,14 +716,16 @@ without a document extension, since the file would vanish from the
 browser. Directories cannot be renamed.
 
 **Delete.** `Del` or `Alt+D` in either file browser deletes the
-selected file, but only when `git_sync_file_status()` reports
+selected file. Without Git sync (`GIT_SYNC_FILE_NOT_CONFIGURED`) any
+file may be deleted and the prompt says it cannot be undone. With Git
+sync configured, only when `git_sync_file_status()` reports
 `GIT_SYNC_FILE_PUSHED`: the file's current content hashes to the same
 blob as its entry in the last commit known to be on the server
 (`refs/remotes/origin/<branch>` under the `path=` sub-tree). Any other
-status (Git sync not configured, a sync running, file new or modified
-since the last push) only puts the reason in the status bar, so a
-deleted file can always be recovered from the repository history. A
-safe file gets a Delete / Cancel overlay (`s_del_panel`,
+status (a sync running, file new or modified since the last push) only
+puts the reason in the status bar, so a deleted file can always be
+recovered from the repository history. A
+deletable file gets a Delete / Cancel overlay (`s_del_panel`,
 `show_delete_prompt()` / `handle_delete_prompt_key()`, Cancel
 preselected, re-parented onto the active screen like the rename
 overlay); `editor_delete_file()` then removes the file and its

@@ -1181,11 +1181,12 @@ static const char *const NEWFMT_LABELS[NEWFMT_COUNT] = {
 };
 
 /* ---- Delete-file confirmation ----
- * Del or Alt+D in the file browser. Only offered for a file whose
- * current content is already on the Git server (git_sync_file_status()),
- * so a deletion can always be undone from the repository history. The
- * overlay is moved onto the active screen when shown, like the format
- * picker above. */
+ * Del or Alt+D in the file browser. With Git sync configured, only
+ * offered for a file whose current content is already on the Git server
+ * (git_sync_file_status()), so a deletion can be undone from the
+ * repository history; without Git sync any file may be deleted, and the
+ * prompt says it cannot be undone. The overlay is moved onto the active
+ * screen when shown, like the format picker above. */
 #define DELCONF_DELETE 0
 #define DELCONF_CANCEL 1
 #define DELCONF_COUNT  2
@@ -7557,8 +7558,10 @@ static void close_delete_prompt(void)
     if (s_del_panel) lv_obj_add_flag(s_del_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* Del / Alt+D in the file browser: confirm deleting the selected file,
- * provided Git sync already holds its current content. */
+/* Del / Alt+D in the file browser: confirm deleting the selected file.
+ * With Git sync configured, only a file whose current content is
+ * already on the server may go (it stays in the history); without Git
+ * sync the confirmation itself is the only safeguard. */
 static void show_delete_prompt(void)
 {
     if (!s_del_panel || !s_browser_list) return;
@@ -7572,12 +7575,13 @@ static void show_delete_prompt(void)
     }
     const char *name = s_browser_entries[idx].name;
 
+    bool in_git = false;
     switch (git_sync_file_status(name)) {
     case GIT_SYNC_FILE_PUSHED:
+        in_git = true;
         break;
     case GIT_SYNC_FILE_NOT_CONFIGURED:
-        editor_ui_set_status("Delete needs Git sync (git.cfg)");
-        return;
+        break;
     case GIT_SYNC_FILE_BUSY:
         editor_ui_set_status("Delete: wait for Git sync to finish");
         return;
@@ -7607,7 +7611,8 @@ static void show_delete_prompt(void)
     }
 
     char hdr[96];
-    snprintf(hdr, sizeof(hdr), "Delete %.40s? (kept in Git history)", name);
+    snprintf(hdr, sizeof(hdr), "Delete %.40s? %s", name,
+             in_git ? "(kept in Git history)" : "Cannot be undone.");
     lv_label_set_text(s_del_hdr_lbl, hdr);
     s_del_open = true;
     s_del_sel = DELCONF_CANCEL;
