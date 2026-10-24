@@ -6676,7 +6676,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
             help_row(out, cols, kc, "Esc", "Back to the editor");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
         help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
-        help_row(out, cols, kc, "Del, Alt+D", "Delete the file (only once it is pushed with Git sync)");
+        help_row(out, cols, kc, "Del, Alt+D", "Delete the file (with Git sync: only once it is pushed)");
         help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Ctrl+Tab", "Switch to the other pane");
