@@ -16,6 +16,13 @@ in the git log.
   panel the device has. F1 -> Hardware information shows the detected
   controller. Not yet tested on physical hardware.
 
+### Fixed
+
+- **Smoother screen updates on the Waveshare ESP32-S3-RLCD-4.2**: the
+  screen now redraws only the part that changed instead of converting
+  the whole picture on every update, so typing and moving through
+  lists and menus no longer skip frames.
+
 ## [1.0.17] - 2026-10-18
 
 ### Added
