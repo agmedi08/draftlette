@@ -381,7 +381,7 @@ Per-board display backends behind a single C API:
   STH/CKH/STV/CKV/XLE/D0-D7. Grayscale UI is still TODO.
 - **lvgl_port.cpp** -- creates the LVGL display object, sets up a
   flush callback that first tries `display_push_rgb565()` (used by
-  the epdiy and AXS15231B backends) and otherwise converts LVGL's
+  every backend except the SSD1683 one) and otherwise converts LVGL's
   RGB565 output to the backend's 1-bpp pixel format via
   `display_set_pixel()`, and runs the LVGL tick/task timer. Thread
   safety is provided by a mutex exposed as `lvgl_port_lock()` /

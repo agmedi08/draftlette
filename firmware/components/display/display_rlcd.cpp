@@ -257,12 +257,35 @@ extern "C" int display_get_buffer_size(void)
     return s_disp_len;
 }
 
-extern "C" bool display_push_rgb565(int /*x*/, int /*y*/, int /*w*/, int /*h*/,
-                                    const void * /*color_map*/)
+extern "C" bool display_push_rgb565(int x, int y, int w, int h,
+                                    const void *color_map)
 {
-    /* No fast path on RLCD - lvgl_port.cpp falls back to the
-     * per-pixel display_set_pixel conversion. */
-    return false;
+    /* Convert one LVGL tile straight into the 1-bpp framebuffer. Same
+     * pixel layout and black threshold as display_set_pixel() and
+     * init_landscape_lut(), but the byte index and bit are computed
+     * inline instead of read from the two PSRAM lookup tables, and
+     * there is no function call per pixel. display_flush() (called by
+     * lvgl_port.cpp after the last tile of a frame) sends the result. */
+    if (!s_disp_buf || !color_map || w <= 0 || h <= 0) return false;
+    const uint16_t *src = (const uint16_t *)color_map;
+    int ox = x + display_margin_left();
+    int oy = y + display_margin_top();
+    int h4 = s_height / 4;
+    for (int sy = 0; sy < h; sy++) {
+        int inv_y   = s_height - 1 - (oy + sy);
+        int block_y = inv_y / 4;
+        int shift   = 7 - (inv_y % 4) * 2;
+        for (int sx = 0; sx < w; sx++) {
+            int px = ox + sx;
+            int idx = (px / 2) * h4 + block_y;
+            uint8_t mask = (uint8_t)(1 << (shift - (px % 2)));
+            if (*src++ < 0x7FFF)
+                s_disp_buf[idx] &= ~mask;
+            else
+                s_disp_buf[idx] |= mask;
+        }
+    }
+    return true;
 }
 
 extern "C" void display_set_partial_clip(int /*x*/, int /*y*/,

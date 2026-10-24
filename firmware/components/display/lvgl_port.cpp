@@ -207,9 +207,9 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *color_m
 
     /* Fast path: if the backend supports it, push the LVGL RGB565
      * framebuffer directly to the panel without going through our
-     * per-pixel 1-bpp conversion. The epdiy and color LCD backends
-     * use this; the RLCD backend returns false and we fall back to
-     * the legacy per-pixel path below. */
+     * per-pixel 1-bpp conversion. Most backends use this; one that
+     * returns false (the SSD1683 backend) falls back to the legacy
+     * per-pixel path below. */
     if (display_push_rgb565(phys_x, phys_y, phys_w, phys_h, push_buf)) {
         /* LVGL may slice a single dirty region into multiple
          * draw-buffer-sized chunks (in PARTIAL render mode) or invalidate
@@ -319,8 +319,9 @@ extern "C" void draftling_lvgl_port_init(int width, int height, int rotate_deg)
     lv_display_set_rotation(disp, lvgl_rotation_for_port_deg(s_rotate_deg));
 
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD) || \
-    defined(CONFIG_DRAFTLING_DISPLAY_COLOR)
-    /* E-paper / colour LCD path: use PARTIAL render mode so flush_cb is
+    defined(CONFIG_DRAFTLING_DISPLAY_COLOR) || \
+    defined(CONFIG_DRAFTLING_DISPLAY_RLCD)
+    /* E-paper / colour LCD / RLCD path: use PARTIAL render mode so flush_cb is
      * called once per invalidated rectangle with a tightly-packed
      * pixel buffer. This lets the display backend issue a partial
      * e-paper refresh of just the changed region (typically the
@@ -332,6 +333,12 @@ extern "C" void draftling_lvgl_port_init(int width, int height, int rotate_deg)
      * keeps an RGB565 framebuffer in PSRAM and streams just the
      * dirty rectangle over QSPI on every flush, avoiding a full
      * panel repaint per keystroke.
+     *
+     * The RLCD converts just the dirty rectangle into its 1-bpp
+     * framebuffer in display_push_rgb565() and resends the whole
+     * (15 KB) framebuffer once per frame. In FULL mode it used to
+     * convert all 120,000 pixels one display_set_pixel() call at a
+     * time on every frame, which visibly dropped frames at 80 MHz.
      *
      * A draw buffer sized to ~1/8 of the screen is enough to hold any
      * single LVGL invalidated region the editor produces (status bar,
@@ -402,7 +409,8 @@ extern "C" bool draftling_lvgl_port_get_flip180(void)
  * layout change (e.g. a base-font-size change that resizes every
  * widget on every screen).
  *
- * On the reflective-LCD path LVGL runs in LV_DISPLAY_RENDER_MODE_FULL
+ * In LV_DISPLAY_RENDER_MODE_FULL (no current board; the RLCD used it
+ * before it gained the display_push_rgb565() path) LVGL runs
  * with two screen-sized buffers that it alternates between frames. When
  * only part of a screen is invalidated, LVGL renders the dirty region
  * into the back buffer and reuses the rest of that buffer's previous

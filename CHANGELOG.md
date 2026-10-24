@@ -21,6 +21,13 @@ in the git log.
   warns that the deletion cannot be undone. With Git sync set up,
   deleting still requires the file to be synced first.
 
+### Fixed
+
+- **Smoother screen updates on the Waveshare ESP32-S3-RLCD-4.2**: the
+  screen now redraws only the part that changed instead of converting
+  the whole picture on every update, so typing and moving through
+  lists and menus no longer skip frames.
+
 ## [1.0.17] - 2026-10-18
 
 ### Added
