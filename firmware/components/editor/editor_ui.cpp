@@ -1199,6 +1199,34 @@ static char      s_del_path[512] = "";
 /* Row to select after the deletion (the neighbouring file). */
 static char      s_del_next_name[256] = "";
 
+/* ---- File password prompt ----
+ * Alt+L in the file browser sets (typed twice) or removes a file's
+ * password; opening or deleting a file that has one asks for it first
+ * (see editor_file_is_locked()). Same header / value / cursor layout
+ * as the WiFi password overlay, with the value shown as asterisks, and
+ * moved onto the active screen when shown like the delete overlay. */
+typedef enum {
+    PW_OPEN,          /* opening the file */
+    PW_DELETE,        /* deleting the file */
+    PW_REMOVE,        /* removing its password */
+    PW_SET,           /* new password, first entry */
+    PW_SET_CONFIRM,   /* new password, typed again */
+} pw_purpose_t;
+static lv_obj_t     *s_pw_panel   = NULL;
+static lv_obj_t     *s_pw_hdr_lbl = NULL;
+static lv_obj_t     *s_pw_val_lbl = NULL;
+static lv_obj_t     *s_pw_cur     = NULL;
+static bool          s_pw_open    = false;
+static pw_purpose_t  s_pw_purpose = PW_OPEN;
+static int           s_pw_row     = -1;         /* browser row for PW_OPEN */
+static char          s_pw_path[512] = "";
+static char          s_pw_buf[33]   = "";
+static int           s_pw_pos       = 0;
+static char          s_pw_first[33] = "";       /* PW_SET entry, to compare */
+/* Set once the right password was typed, so the open / delete it was
+ * asked for goes ahead without asking again. */
+static bool          s_pw_ok        = false;
+
 /* ---- Help screen ----
  * F10 (or F1 -> Help) shows a scrollable page with the shortcuts of the
  * current mode -- the editor or the file browser -- and, in the editor,
@@ -1543,6 +1571,8 @@ static bool      s_inpane_browser_open = false;
 static void show_inpane_browser(void);
 static void close_inpane_browser(void);
 static editor_doc_t *open_into_pane(int target, const char *path);
+static void show_pw_prompt(pw_purpose_t purpose, const char *path, int row);
+static void browser_activate_item(int row);
 
 /* Alias the historical per-document globals onto the current pane. */
 #define s_cont_edit              (s_rp->cont)
@@ -3904,9 +3934,13 @@ static void refresh_file_list(const char *select_name = NULL)
         bool show = s_browser_entries[i].is_dir;
         if (!show) show = editor_path_format(name, NULL);
         if (show) {
-            char label[sizeof(s_browser_entries[0].name) + 8];
+            char label[sizeof(s_browser_entries[0].name) + 16];
+            char fpath[320];
+            snprintf(fpath, sizeof(fpath), "%s/%.255s", mp, name);
             if (s_browser_entries[i].is_dir)
                 snprintf(label, sizeof(label), "[DIR] %.255s", name);
+            else if (editor_file_is_locked(fpath))
+                snprintf(label, sizeof(label), "  %.255s  (locked)", name);
             else
                 snprintf(label, sizeof(label), "  %.255s", name);
             lv_obj_t *btn = lv_list_add_btn(s_browser_list, NULL, label);
@@ -6677,6 +6711,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
         help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file (with Git sync: only once it is pushed)");
+        help_row(out, cols, kc, "Alt+L", "Set or remove a password for opening the file");
         help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Ctrl+Tab", "Switch to the other pane");
@@ -7575,6 +7610,13 @@ static void show_delete_prompt(void)
     }
     const char *name = s_browser_entries[idx].name;
 
+    snprintf(s_del_path, sizeof(s_del_path), "%s/%s", sd_card_get_mount_point(), name);
+    if (!s_pw_ok && editor_file_is_locked(s_del_path)) {
+        show_pw_prompt(PW_DELETE, s_del_path, s_browser_sel);
+        return;
+    }
+    s_pw_ok = false;
+
     bool in_git = false;
     switch (git_sync_file_status(name)) {
     case GIT_SYNC_FILE_PUSHED:
@@ -7596,7 +7638,6 @@ static void show_delete_prompt(void)
         return;
     }
 
-    snprintf(s_del_path, sizeof(s_del_path), "%s/%s", sd_card_get_mount_point(), name);
     /* Remember the neighbouring row so the highlight stays in place. */
     s_del_next_name[0] = '\0';
     int rows = (int)lv_obj_get_child_count(s_browser_list);
@@ -7664,6 +7705,156 @@ static void handle_delete_prompt_key(const kb_event_t *ev)
     default:
         return;
     }
+}
+
+/* ---- File password prompt logic (see s_pw_panel) ---- */
+
+static void refresh_pw_prompt(void)
+{
+    if (!s_pw_panel) return;
+    char stars[sizeof(s_pw_buf)];
+    int chars = 0, before = 0;
+    for (int i = 0; s_pw_buf[i]; i++) {
+        if ((s_pw_buf[i] & 0xC0) == 0x80) continue;
+        if (i < s_pw_pos) before++;
+        stars[chars++] = '*';
+    }
+    stars[chars] = '\0';
+    lv_label_set_text(s_pw_val_lbl, stars);
+    lv_obj_set_pos(s_pw_cur, before * char_width_for_font(FONT_11), overlay_row_y());
+    lv_obj_remove_flag(s_pw_cur, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void set_pw_header(const char *what)
+{
+    const char *slash = strrchr(s_pw_path, '/');
+    char hdr[96];
+    snprintf(hdr, sizeof(hdr), "%s %.40s (Enter/Esc):", what, slash ? slash + 1 : s_pw_path);
+    lv_label_set_text(s_pw_hdr_lbl, hdr);
+}
+
+static void clear_pw_field(void)
+{
+    memset(s_pw_buf, 0, sizeof(s_pw_buf));
+    s_pw_pos = 0;
+}
+
+static void show_pw_prompt(pw_purpose_t purpose, const char *path, int row)
+{
+    if (!s_pw_panel) return;
+    s_pw_purpose = purpose;
+    s_pw_row = row;
+    strncpy(s_pw_path, path, sizeof(s_pw_path) - 1);
+    s_pw_path[sizeof(s_pw_path) - 1] = '\0';
+    clear_pw_field();
+    set_pw_header(purpose == PW_SET    ? "New password for" :
+                  purpose == PW_REMOVE ? "Remove password of" : "Password for");
+    s_pw_open = true;
+    lv_obj_set_parent(s_pw_panel, lv_scr_act());
+    lv_obj_remove_flag(s_pw_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_pw_panel);
+    refresh_pw_prompt();
+}
+
+static void close_pw_prompt(void)
+{
+    s_pw_open = false;
+    clear_pw_field();
+    memset(s_pw_first, 0, sizeof(s_pw_first));
+    if (s_pw_panel) lv_obj_add_flag(s_pw_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Alt+L in the file browser: set a password on the selected file, or
+ * remove the one it has. */
+static void show_lock_prompt(void)
+{
+    if (!s_browser_list) return;
+    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
+    if (!btn) return;
+    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    if (idx < 0 || idx >= s_browser_count) return;
+    if (s_browser_entries[idx].is_dir) {
+        editor_ui_set_status("Only files can have a password");
+        return;
+    }
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(),
+             s_browser_entries[idx].name);
+    show_pw_prompt(editor_file_is_locked(path) ? PW_REMOVE : PW_SET, path, s_browser_sel);
+}
+
+static void pw_prompt_confirm(void)
+{
+    if (s_pw_buf[0] == '\0') return;   /* empty -- keep typing */
+
+    if (s_pw_purpose == PW_SET) {
+        memcpy(s_pw_first, s_pw_buf, sizeof(s_pw_first));
+        s_pw_purpose = PW_SET_CONFIRM;
+        clear_pw_field();
+        set_pw_header("Repeat the password for");
+        refresh_pw_prompt();
+        return;
+    }
+    if (s_pw_purpose == PW_SET_CONFIRM) {
+        if (strcmp(s_pw_first, s_pw_buf) != 0) {
+            s_pw_purpose = PW_SET;
+            clear_pw_field();
+            set_pw_header("No match. New password for");
+            refresh_pw_prompt();
+            return;
+        }
+        esp_err_t err = editor_file_set_password(s_pw_path, s_pw_buf);
+        close_pw_prompt();
+        refresh_file_list();
+        editor_ui_set_status(err == ESP_OK ? "Password set" : "Could not save the password!");
+        return;
+    }
+
+    if (!editor_file_check_password(s_pw_path, s_pw_buf)) {
+        clear_pw_field();
+        set_pw_header("Wrong password for");
+        refresh_pw_prompt();
+        return;
+    }
+    pw_purpose_t purpose = s_pw_purpose;
+    int row = s_pw_row;
+    close_pw_prompt();
+    switch (purpose) {
+    case PW_OPEN:
+        s_pw_ok = true;
+        browser_activate_item(row);
+        break;
+    case PW_DELETE:
+        s_pw_ok = true;
+        show_delete_prompt();
+        break;
+    case PW_REMOVE: {
+        esp_err_t err = editor_file_set_password(s_pw_path, NULL);
+        refresh_file_list();
+        editor_ui_set_status(err == ESP_OK ? "Password removed" : "Could not remove the password!");
+        break;
+    }
+    default:
+        break;
+    }
+    s_pw_ok = false;
+}
+
+static void handle_pw_prompt_key(const kb_event_t *ev)
+{
+    switch (ev->keycode) {
+    case KB_KEY_ENTER:
+        pw_prompt_confirm();
+        return;
+    case KB_KEY_ESCAPE:
+        close_pw_prompt();
+        restore_default_status();
+        return;
+    default:
+        text_field_key(s_pw_buf, sizeof(s_pw_buf), &s_pw_pos, ev);
+        break;
+    }
+    refresh_pw_prompt();
 }
 
 /* ---- Exit / sleep prompt overlay ----
@@ -9033,6 +9224,13 @@ static void browser_activate_item(int row)
     snprintf(path, sizeof(path), "%s/%s",
              sd_card_get_mount_point(), s_browser_entries[idx].name);
 
+    /* A file with a password asks for it every time it is opened. */
+    if (!s_pw_ok && editor_file_is_locked(path)) {
+        show_pw_prompt(PW_OPEN, path, row);
+        return;
+    }
+    s_pw_ok = false;
+
     if (s_pane_count <= 1) {
         editor_init();
         esp_err_t oerr = editor_open_file(path);
@@ -9253,6 +9451,11 @@ static void handle_browser_key(const kb_event_t *ev)
         show_delete_prompt();
         return;
     }
+    if (ch == 'l' && alt && !ctrl) {
+        /* Alt+L: set or remove the selected file's password. */
+        show_lock_prompt();
+        return;
+    }
     if (ch == 'i' && alt && !ctrl) {
         /* Alt+I: file information for the selected file. */
         show_browser_fileinfo();
@@ -9401,6 +9604,8 @@ static void process_key_event(const kb_event_t *ev)
         handle_newfmt_prompt_key(e);
     } else if (s_del_open) {
         handle_delete_prompt_key(e);
+    } else if (s_pw_open) {
+        handle_pw_prompt_key(e);
     } else if (s_exit_open) {
         handle_exit_prompt_key(e);
     } else if (s_search_open) {
@@ -9648,7 +9853,7 @@ static void apply_pending_sleep_request(void)
         !s_dbx_open && !s_help_open && !menu_picker) {
         close_menu();
     }
-    if (s_msg_open || s_save_open || s_newfmt_open || s_del_open ||
+    if (s_msg_open || s_save_open || s_newfmt_open || s_del_open || s_pw_open ||
         s_search_open || s_settings_open || s_wifi_pw_open || s_dbx_open ||
         s_help_open || s_menu_open || s_inpane_browser_open) {
         if (!s_msg_open) {
@@ -11085,6 +11290,49 @@ static void build_screens(void)
         }
     }
 
+    /* ---- File password overlay (moved onto the active screen when
+     * shown). Same layout as the WiFi password overlay. ---- */
+    {
+        int pw_row_y   = overlay_row_y();
+        int pw_line_h  = lv_font_get_line_height(FONT_11);
+        int pw_panel_h = pw_row_y + pw_line_h + 2 * OVERLAY_PAD;
+        s_pw_panel = lv_obj_create(s_scr);
+        lv_obj_set_size(s_pw_panel, SCR_W - 20, pw_panel_h);
+        lv_obj_set_pos(s_pw_panel, 10, (SCR_H - pw_panel_h) / 2);
+        lv_obj_set_style_bg_color(s_pw_panel, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(s_pw_panel, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(s_pw_panel, theme_fg(), 0);
+        lv_obj_set_style_border_width(s_pw_panel, 2, 0);
+        lv_obj_set_style_radius(s_pw_panel, 4, 0);
+        lv_obj_set_style_pad_all(s_pw_panel, OVERLAY_PAD, 0);
+        lv_obj_remove_flag(s_pw_panel, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(s_pw_panel, LV_OBJ_FLAG_HIDDEN);
+
+        s_pw_hdr_lbl = lv_label_create(s_pw_panel);
+        lv_obj_set_style_text_font(s_pw_hdr_lbl, FONT_11, 0);
+        lv_obj_set_style_text_color(s_pw_hdr_lbl, theme_fg(), 0);
+        lv_label_set_long_mode(s_pw_hdr_lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_width(s_pw_hdr_lbl, SCR_W - 20 - 12);
+        lv_label_set_text(s_pw_hdr_lbl, "");
+        lv_obj_set_pos(s_pw_hdr_lbl, 0, 0);
+
+        s_pw_val_lbl = lv_label_create(s_pw_panel);
+        lv_obj_set_style_text_font(s_pw_val_lbl, FONT_11, 0);
+        lv_obj_set_style_text_color(s_pw_val_lbl, theme_fg(), 0);
+        lv_obj_set_width(s_pw_val_lbl, SCR_W - 20 - 12);
+        lv_label_set_text(s_pw_val_lbl, "");
+        lv_obj_set_pos(s_pw_val_lbl, 0, pw_row_y);
+
+        s_pw_cur = lv_obj_create(s_pw_panel);
+        lv_obj_set_size(s_pw_cur, 2, pw_line_h);
+        lv_obj_set_style_bg_color(s_pw_cur, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(s_pw_cur, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(s_pw_cur, 0, 0);
+        lv_obj_set_style_radius(s_pw_cur, 0, 0);
+        lv_obj_set_style_pad_all(s_pw_cur, 0, 0);
+        lv_obj_add_flag(s_pw_cur, LV_OBJ_FLAG_HIDDEN);
+    }
+
     /* ---- Search / Replace overlay (shown on the editor screen) ---- */
     int srch_find_y = search_find_row_y();
     int srch_repl_y = search_repl_row_y();
@@ -11249,6 +11497,7 @@ static void teardown_screens(void)
     s_newfmt_opt_lbl[0] = s_newfmt_opt_lbl[1] = s_newfmt_opt_lbl[2] = NULL;
     s_del_panel = s_del_hdr_lbl = NULL;
     s_del_opt_lbl[0] = s_del_opt_lbl[1] = NULL;
+    s_pw_panel = s_pw_hdr_lbl = s_pw_val_lbl = s_pw_cur = NULL;
     s_search_panel = s_search_hdr_lbl = NULL;
     s_search_find_hdr = s_search_find_lbl = NULL;
     s_search_repl_hdr = s_search_repl_lbl = NULL;
@@ -11280,6 +11529,7 @@ static void teardown_screens(void)
     s_exit_open               = false;
     s_newfmt_open             = false;
     s_del_open                = false;
+    s_pw_open                 = false;
     s_search_open             = false;
     s_search_replace_mode     = false;
 

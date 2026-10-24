@@ -6,6 +6,7 @@
 #include <strings.h>
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <psa/crypto.h>
 
 #include "editor.h"
 #include "sd_card.h"
@@ -361,6 +362,50 @@ static void editor_load_meta(void)
     }
 }
 
+/* "lock=<64 hex digits>" in the sidecar: the SHA-256 of a fixed prefix
+ * plus the password (see editor_file_set_password()). out gets the hex
+ * string; returns false if the sidecar has no lock line. */
+#define META_LOCK_HEX 64
+static bool meta_read_lock(const char *meta, char out[META_LOCK_HEX + 1])
+{
+    if (!meta[0] || !sd_card_file_exists(meta)) return false;
+    char *data = NULL;
+    size_t len = 0;
+    if (sd_card_read_file(meta, &data, &len) != ESP_OK || !data) return false;
+    bool found = false;
+    for (size_t i = 0; i + 5 + META_LOCK_HEX <= len; ) {
+        if ((i == 0 || data[i - 1] == '\n') && memcmp(data + i, "lock=", 5) == 0) {
+            memcpy(out, data + i + 5, META_LOCK_HEX);
+            out[META_LOCK_HEX] = '\0';
+            found = true;
+            break;
+        }
+        while (i < len && data[i] != '\n') i++;
+        i++;
+    }
+    free(data);
+    return found;
+}
+
+static bool password_hash_hex(const char *password, char out[META_LOCK_HEX + 1])
+{
+    static const char prefix[] = "draftling-file-lock:";
+    unsigned char digest[32] = {0};
+    size_t digest_len = 0;
+    psa_hash_operation_t op = PSA_HASH_OPERATION_INIT;
+    /* psa_crypto_init() may be called any number of times. */
+    if (psa_crypto_init() != PSA_SUCCESS ||
+        psa_hash_setup(&op, PSA_ALG_SHA_256) != PSA_SUCCESS ||
+        psa_hash_update(&op, (const uint8_t *)prefix, sizeof(prefix) - 1) != PSA_SUCCESS ||
+        psa_hash_update(&op, (const uint8_t *)password, strlen(password)) != PSA_SUCCESS ||
+        psa_hash_finish(&op, digest, sizeof(digest), &digest_len) != PSA_SUCCESS) {
+        psa_hash_abort(&op);
+        return false;
+    }
+    for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", digest[i]);
+    return true;
+}
+
 extern "C" void editor_save_meta(void)
 {
     if (s_path[0] == '\0') return;
@@ -368,13 +413,76 @@ extern "C" void editor_save_meta(void)
     meta_path_for(s_path, meta, sizeof(meta));
     if (meta[0] == '\0') return;
 
-    char body[96];
+    /* The sidecar is rewritten whole; carry an existing lock over. */
+    char lock[META_LOCK_HEX + 1];
+    bool locked = meta_read_lock(meta, lock);
+
+    char body[176];
     int n = snprintf(body, sizeof(body),
                      "cursor=%zu\nscroll=%d\n",
                      s_gap_start, s_scroll_line);
     if (n <= 0) return;
+    if (locked && (size_t)n < sizeof(body))
+        n += snprintf(body + n, sizeof(body) - n, "lock=%s\n", lock);
     if ((size_t)n >= sizeof(body)) n = (int)sizeof(body) - 1;
     sd_card_write_file(meta, body, (size_t)n);
+}
+
+extern "C" bool editor_file_is_locked(const char *path)
+{
+    char meta[320], lock[META_LOCK_HEX + 1];
+    meta_path_for(path, meta, sizeof(meta));
+    return meta_read_lock(meta, lock);
+}
+
+extern "C" bool editor_file_check_password(const char *path, const char *password)
+{
+    char meta[320], lock[META_LOCK_HEX + 1], hash[META_LOCK_HEX + 1];
+    meta_path_for(path, meta, sizeof(meta));
+    if (!meta_read_lock(meta, lock)) return true;   /* not locked */
+    if (!password_hash_hex(password ? password : "", hash)) return false;
+    return strcmp(lock, hash) == 0;
+}
+
+extern "C" esp_err_t editor_file_set_password(const char *path, const char *password)
+{
+    char meta[320];
+    meta_path_for(path, meta, sizeof(meta));
+    if (meta[0] == '\0') return ESP_ERR_INVALID_ARG;
+
+    /* Keep every other line of the sidecar (cursor, scroll, ...). */
+    char body[256];
+    size_t n = 0;
+    char *data = NULL;
+    size_t len = 0;
+    if (sd_card_file_exists(meta) &&
+        sd_card_read_file(meta, &data, &len) == ESP_OK && data) {
+        for (size_t i = 0; i < len; ) {
+            size_t end = i;
+            while (end < len && data[end] != '\n') end++;
+            size_t line = end - i;
+            bool is_lock = line >= 5 && memcmp(data + i, "lock=", 5) == 0;
+            if (line && !is_lock && n + line + 1 < sizeof(body)) {
+                memcpy(body + n, data + i, line);
+                n += line;
+                body[n++] = '\n';
+            }
+            i = end + 1;
+        }
+        free(data);
+    }
+    if (password && password[0]) {
+        char hash[META_LOCK_HEX + 1];
+        if (!password_hash_hex(password, hash)) return ESP_FAIL;
+        int w = snprintf(body + n, sizeof(body) - n, "lock=%s\n", hash);
+        if (w <= 0 || (size_t)w >= sizeof(body) - n) return ESP_ERR_NO_MEM;
+        n += (size_t)w;
+    }
+    if (n == 0) {
+        if (sd_card_file_exists(meta)) return sd_card_delete_file(meta);
+        return ESP_OK;
+    }
+    return sd_card_write_file(meta, body, n);
 }
 
 /* Append one Unicode codepoint as UTF-8 into dst[*dpos..dst_cap).

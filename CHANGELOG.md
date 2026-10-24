@@ -6,6 +6,16 @@ in the git log.
 
 ## [Unreleased]
 
+### Added
+
+- **Password for a file**: select a file in the file browser and press
+  `Alt+L` to give it a password (typed twice). From then on the file
+  asks for its password every time it is opened or deleted, and shows
+  "(locked)" in the file list. `Alt+L` again (with the password)
+  removes it. This keeps the file from being read on the device only:
+  the file itself is not encrypted, so anyone with the SD card can still
+  read it on a computer.
+
 ### Changed
 
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the
