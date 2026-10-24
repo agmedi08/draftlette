@@ -147,6 +147,17 @@ esp_err_t editor_rename_file(const char *old_path, const char *new_path);
  * open. The caller decides whether deleting is safe (the file browser
  * only allows it for files already pushed to the Git server). */
 esp_err_t editor_delete_file(const char *path);
+
+/* Optional per-file password. It only makes the file browser ask for
+ * it before opening (or deleting) the file; the file itself stays
+ * plain text on the SD card. A SHA-256 of the password is kept in the
+ * file's metadata sidecar, so it follows renames and goes with the
+ * file on delete. editor_file_set_password() with NULL or "" removes
+ * it. */
+bool editor_file_is_locked(const char *path);
+bool editor_file_check_password(const char *path, const char *password);
+esp_err_t editor_file_set_password(const char *path, const char *password);
+
 /* Persist per-file metadata (cursor, scroll line, ...) to the
  * sidecar next to the currently-open file. No-op if no file is
  * open. Safe to call repeatedly. */

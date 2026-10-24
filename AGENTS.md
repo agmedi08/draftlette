@@ -703,6 +703,18 @@ raised (full-screen browser, split-mode in-pane selector, or editor)
 so `newfmt_prompt_activate()` creates the untitled document in the
 right place and then applies the format.
 
+**File password.** `Alt+L` in either file browser sets a password on
+the selected file (typed twice) or, after asking for it, removes it
+(`show_lock_prompt()`, `s_pw_panel`, `pw_purpose_t`). The password is
+only a device-side lock, not encryption: `editor_file_set_password()`
+stores `lock=<SHA-256 hex of a fixed prefix + password>` in the file's
+`.meta` sidecar (so it follows `editor_rename_file()` and goes with
+`editor_delete_file()`), and `editor_save_meta()` carries that line over
+when it rewrites the sidecar. `browser_activate_item()` and
+`show_delete_prompt()` ask for it every time (`editor_file_is_locked()`
+/ `editor_file_check_password()`, `s_pw_ok` lets the confirmed action
+through once), and `refresh_file_list()` marks such files "(locked)".
+
 **Rename.** `F2` or `Alt+R` in either file browser opens the save-as name
 overlay in rename mode (`show_rename_prompt()`, `s_save_is_rename`).
 The overlay (like the format picker) is re-parented with
