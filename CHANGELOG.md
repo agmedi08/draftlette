@@ -6,6 +6,14 @@ in the git log.
 
 ## [Unreleased]
 
+### Added
+
+- **Elecrow CrowPanel ESP32 HMI 5.0" support**: a new build preset,
+  `elecrow_crowpanel_50`, for Elecrow's 5" 800x480 color touch screen
+  with an ESP32-S3, a MicroSD slot and a battery connector. Wake the
+  device from sleep with RESET (the BOOT button drives the screen).
+  Not yet tested on physical hardware. See HARDWARE.md.
+
 ### Changed
 
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the

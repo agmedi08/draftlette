@@ -111,6 +111,21 @@ config DRAFTLING_MODEL_SUNTON_8048S043
         Backlight on GPIO2. Keyboard-driven (USB / BLE) like every
         other Draftling board.
 
+config DRAFTLING_MODEL_ELECROW_CROWPANEL_50
+    bool "Elecrow CrowPanel ESP32 HMI 5.0\" (ESP32-S3, 5\" RGB color LCD, 800x480)"
+    depends on IDF_TARGET_ESP32S3
+    help
+        Elecrow CrowPanel ESP32 HMI 5.0-inch Display (DIS07050H): 5" TN
+        color LCD, 800x480, ILI6122 / ILI5960 drivers on a 16-bit
+        parallel RGB565 interface driven by the ESP32-S3 LCD RGB
+        peripheral (esp_lcd_new_rgb_panel). ESP32-S3-WROOM-1-N4R8
+        (4 MB flash, 8 MB octal PSRAM). Same data-line wiring as the
+        Sunton ESP32-8048S043C, but PCLK is on GPIO0 (the BOOT
+        button) and the panel timings differ. GT911 touch on I2C
+        (on V3.0 boards reset through a PCA9557 IO expander), MicroSD
+        on SPI, backlight on GPIO2, USB-C through a UART bridge.
+        Untested on physical hardware.
+
 config DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     bool "Waveshare ESP32-S3-Touch-LCD-7 (ESP32-S3, 7\" RGB color LCD, 800x480, CH422G expander)"
     depends on IDF_TARGET_ESP32S3
@@ -415,6 +430,7 @@ config DRAFTLING_DISPLAY_COLOR
     default y if DRAFTLING_MODEL_M5STACK_TAB5
     default y if DRAFTLING_MODEL_SUNTON_8048S070
     default y if DRAFTLING_MODEL_SUNTON_8048S043
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default y if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     default y if DRAFTLING_MODEL_WAVESHARE_LCD_316
     default y if DRAFTLING_MODEL_FREENOVE_FNK0104A
@@ -478,6 +494,7 @@ config DRAFTLING_DISPLAY_RGB
     bool
     default y if DRAFTLING_MODEL_SUNTON_8048S070
     default y if DRAFTLING_MODEL_SUNTON_8048S043
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default y if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     default y if DRAFTLING_MODEL_WAVESHARE_LCD_316
     default n
@@ -491,6 +508,13 @@ config DRAFTLING_DISPLAY_RGB
 config DRAFTLING_RGB_PANEL_ST7701
     bool
     default y if DRAFTLING_MODEL_WAVESHARE_LCD_316
+    default n
+
+# DRAFTLING_RGB_BOARD_CROWPANEL_50 switches components/display/display_rgb.cpp
+# to the Elecrow CrowPanel 5.0" pin map and timings.
+config DRAFTLING_RGB_BOARD_CROWPANEL_50
+    bool
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default n
 
 # DRAFTLING_RGB_BOARD_S043 switches components/display/display_rgb.cpp
@@ -1283,6 +1307,9 @@ config DRAFTLING_WAKEUP_GPIO
     default 0  if DRAFTLING_MODEL_M5STACK_TAB5
     default 0  if DRAFTLING_MODEL_SUNTON_8048S070
     default 0  if DRAFTLING_MODEL_SUNTON_8048S043
+    # Elecrow CrowPanel 5.0": GPIO0 (BOOT) carries the panel PCLK, so
+    # there is no wake / forget-keyboards button; RESET wakes the device.
+    default -1 if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default 0  if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     # Waveshare ESP32-S3-LCD-3.16: BOOT button on GPIO0 (also the
     # ST7701's SPI chip-select during display init).
@@ -1435,6 +1462,7 @@ config DRAFTLING_TOUCH_GT911
     default y if DRAFTLING_MODEL_M5STACK_TAB5
     default y if DRAFTLING_MODEL_SUNTON_8048S070
     default y if DRAFTLING_MODEL_SUNTON_8048S043
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default y if DRAFTLING_MODEL_XTEINK_X4_PRO
     default y if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     default y if DRAFTLING_MODEL_SEEED_RETERMINAL_STICKY
@@ -1650,6 +1678,7 @@ config DRAFTLING_DISPLAY_WIDTH
     default 720 if DRAFTLING_MODEL_M5STACK_TAB5
     default 800 if DRAFTLING_MODEL_SUNTON_8048S070
     default 800 if DRAFTLING_MODEL_SUNTON_8048S043
+    default 800 if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default 800 if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     # Waveshare ESP32-S3-LCD-3.16: native 320x820 portrait panel; the
     # 270-degree base rotation (DRAFTLING_DISPLAY_ROTATE) renders the
@@ -1694,6 +1723,7 @@ config DRAFTLING_DISPLAY_HEIGHT
     default 1280 if DRAFTLING_MODEL_M5STACK_TAB5
     default 480 if DRAFTLING_MODEL_SUNTON_8048S070
     default 480 if DRAFTLING_MODEL_SUNTON_8048S043
+    default 480 if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default 480 if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     default 820 if DRAFTLING_MODEL_WAVESHARE_LCD_316
     default 240 if DRAFTLING_MODEL_FREENOVE_FNK0104A
@@ -1777,6 +1807,7 @@ config DRAFTLING_DISPLAY_HIDPI
     default y if DRAFTLING_MODEL_M5STACK_TAB5
     default y if DRAFTLING_MODEL_SUNTON_8048S070
     default y if DRAFTLING_MODEL_SUNTON_8048S043
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default y if DRAFTLING_MODEL_XTEINK_X4
     default y if DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     # Waveshare ESP32-S3-LCD-3.16: 320x820 on a 3.16" panel is ~280

@@ -73,6 +73,7 @@ card).
 | Waveshare ESP32-S3-RLCD-4.2 | 4.2-inch reflective LCD, 400x300 |
 | M5Stack PaperS3 | 4.7-inch e-paper (ED047TC1), 540x960 |
 | Waveshare ESP32-S3-LCD-3.16 | 3.16-inch ST7701 RGB color LCD, 320x820 portrait rendered landscape at 820x320, no touch |
+| Elecrow CrowPanel ESP32 HMI 5.0" | 5.0-inch ILI6122 / ILI5960 RGB color LCD (TN), 800x480, GT911 touch (untested on hardware) |
 | Freenove FNK0104A | 2.8-inch ILI9341 color LCD, 320x240, no touch |
 | Freenove FNK0104B | 2.8-inch ILI9341 color LCD, 320x240, FT6336U touch |
 | Freenove FNK0104N | 3.5-inch ST77922 QSPI color LCD, 480x320, ST77922 built-in touch |
@@ -134,7 +135,8 @@ CMakeLists.txt              Top-level CMake project file
 CMakePresets.json           Per-board build presets (idf.py --preset <board>)
 partitions.csv              Custom partition table (16 MB flash, single
                             "factory" app) -- used by every board except
-                            the four below
+                            the five below
+partitions_4mb.csv          4 MB-flash variant (Elecrow CrowPanel 5.0")
 partitions_8mb.csv          8 MB-flash variant (Elecrow CrowPanel 5.79")
 partitions_xteink_x4_pro.csv Dual-OTA layout (otadata + ota_0/ota_1) so
                             the Xteink X4 Pro can be re-flashed with the
@@ -1999,6 +2001,25 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   main.cpp suppresses the Page Up/Down on a long hold. Tested on
   physical hardware; see HARDWARE.md.
   *Requires ESP32-S3.*
+- **DRAFTLING_MODEL_ELECROW_CROWPANEL_50** -- Elecrow CrowPanel ESP32
+  HMI 5.0-inch Display (DIS07050H): ESP32-S3-WROOM-1-N4R8 (4 MB flash,
+  8 MB octal PSRAM; `partitions_4mb.csv`), 5" TN 800x480 panel with
+  ILI6122 / ILI5960 drivers on the 16-bit RGB interface
+  (`display_rgb.cpp`, `CONFIG_DRAFTLING_RGB_BOARD_CROWPANEL_50`): the
+  Sunton 4.3" data wiring with PCLK on GPIO0 and Elecrow's timings
+  (15 MHz, hsync 4/43/8, vsync 4/12/8). Backlight PWM on GPIO2, MicroSD
+  on SPI (CS=10, MOSI=11, CLK=12, MISO=13), GT911 touch on I2C (SDA=19,
+  SCL=20). On Hardware Version 3.0 the GT911's RST / INT are PCA9557
+  (0x18) outputs IO0 / IO1, so main.cpp's `crowpanel50_touch_reset()`
+  runs Elecrow's reset sequence through the expander before
+  `touchscreen_init()` (skipped when no PCA9557 answers); the driver
+  polls (no INT GPIO), at 0x5D with 0x14 as the alternate. GPIO0 being
+  PCLK, there is no wake / forget-keyboards button
+  (`DRAFTLING_WAKEUP_GPIO` -1, RESET wakes). USB-C goes through a UART
+  bridge, so no SD card via USB / Sync via browser. The BAT connector
+  (PH2.0-2P) has a charger but no voltage sense. Pins and timings from
+  Elecrow's wiki and CrowPanel-5.0-HMI-ESP32-Display-800x480 example;
+  not yet tested on physical hardware. *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_WAVESHARE_LCD_316** -- Waveshare ESP32-S3-LCD-3.16:
   3.16" 320x820 portrait ST7701 color LCD on the 16-bit RGB
   interface (`display_rgb.cpp`, `CONFIG_DRAFTLING_RGB_PANEL_ST7701`),
@@ -2043,12 +2064,12 @@ The hardware-model selection drives two non-prompted `int` symbols
 consumed in `main/app_config.h` as `DISPLAY_WIDTH` / `DISPLAY_HEIGHT`:
 
 - **DRAFTLING_DISPLAY_WIDTH** -- 400 (RLCD), 960 (PaperS3), 320
-  (FNK0104A/B, FNK0104N, Waveshare LCD-3.16, MicroJournal Rev 5, NiceMCU C5 2.8IPS), 480 (FNK0104S), 800 (Xteink X4 Pro / X4 Classic,
+  (FNK0104A/B, FNK0104N, Waveshare LCD-3.16, MicroJournal Rev 5, NiceMCU C5 2.8IPS), 480 (FNK0104S), 800 (Elecrow CrowPanel 5.0", Xteink X4 Pro / X4 Classic,
   Waveshare ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono),
   792 (Elecrow CrowPanel 5.79").
 - **DRAFTLING_DISPLAY_HEIGHT** -- 300 (RLCD), 540 (PaperS3), 820
   (Waveshare LCD-3.16, FNK0104N), 240
-  (FNK0104A/B, MicroJournal Rev 5, NiceMCU C5 2.8IPS), 320 (FNK0104S), 480 (Xteink X4 Pro / X4 Classic,
+  (FNK0104A/B, MicroJournal Rev 5, NiceMCU C5 2.8IPS), 320 (FNK0104S), 480 (Elecrow CrowPanel 5.0", Xteink X4 Pro / X4 Classic,
   Waveshare ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono),
   272 (Elecrow CrowPanel 5.79").
 
@@ -2219,7 +2240,8 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_SPI_TFT_AUTODETECT | Compiles both the ILI9341 and the ST7789 init sequences into `display_ili9341.cpp` and picks one at boot from a bit-banged controller-ID read (needs the panel's SDO on MISO, or a bidirectional SDA); ILI9341 if nothing answers | MicroJournal Rev 5 |
 | DRAFTLING_LCD_BUS_PARLIO          | `display_ili9341.cpp` sends its SPI traffic through PARLIO TX in 1-bit mode (`esp_lcd_new_panel_io_parl()`) instead of a GP-SPI host, leaving the C5's only GP-SPI controller to the SD card | NiceMCU-C5E-DEV_2.8IPS |
 | DRAFTLING_DISPLAY_MIPI_DSI        | Selects `display_mipi_dsi.cpp` (delegates to `espressif/m5stack_tab5` BSP) | M5Stack Tab5 |
-| DRAFTLING_DISPLAY_RGB             | Selects `display_rgb.cpp` (parallel RGB565 via `esp_lcd_new_rgb_panel`) | Sunton 8048S070 / 8048S043, Waveshare Touch-LCD-7, Waveshare LCD-3.16 |
+| DRAFTLING_DISPLAY_RGB             | Selects `display_rgb.cpp` (parallel RGB565 via `esp_lcd_new_rgb_panel`) | Sunton 8048S070 / 8048S043, Elecrow CrowPanel 5.0", Waveshare Touch-LCD-7, Waveshare LCD-3.16 |
+| DRAFTLING_RGB_BOARD_CROWPANEL_50  | Switches `display_rgb.cpp` to the CrowPanel 5.0" pin map and timings (PCLK on GPIO0, 15 MHz, the Sunton 4.3" data-line order) | Elecrow CrowPanel 5.0" |
 | DRAFTLING_RGB_PANEL_ST7701        | Switches `display_rgb.cpp` to the ST7701 branch: own pins / timings, direct-GPIO reset, active-low PWM backlight, and the vendor init sequence over a bit-banged 3-wire SPI bus (CS=0/BOOT, SCK=2, SDA=1) that is released afterwards for the BOOT button and the SDMMC slot | Waveshare LCD-3.16 |
 | DRAFTLING_HAS_CH422G              | Enables the `io_expander` component (CH422G I2C IO-expander) and switches `display_rgb.cpp` to the CH422G-based backlight / LCD-reset path instead of a direct GPIO | Waveshare Touch-LCD-7 |
 | DRAFTLING_HAS_M5IOE1              | Compiles in the M5IOE1 IO-expander driver in the `io_expander` component (stubs otherwise) | M5Stack PaperMono |
@@ -2337,7 +2359,7 @@ PSRAM) are not supported.
 `firmware/` ships a `CMakePresets.json` with one preset per supported
 board (`waveshare_rlcd42`, `m5stack_papers3`, `lilygo_t5_epd_s3_pro`,
 `lilygo_t5_epd_s3_pro_h752`, `waveshare_touch_lcd_349`, `m5stack_tab5`,
-`jc3248w535`, `sunton_8048s070`, `sunton_8048s043`,
+`jc3248w535`, `sunton_8048s070`, `sunton_8048s043`, `elecrow_crowpanel_50`,
 `waveshare_touch_lcd_7`, `waveshare_lcd_316`, `freenove_fnk0104a`, `freenove_fnk0104b`,
 `freenove_fnk0104s`, `freenove_fnk0104n`, `microjournal_rev5`,
 `viewe_uedx24320028_ueed035hv`, `xteink_x4_pro`, `xteink_x4_classic`,
