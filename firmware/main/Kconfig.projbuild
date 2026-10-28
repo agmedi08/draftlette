@@ -124,7 +124,7 @@ config DRAFTLING_MODEL_ELECROW_CROWPANEL_50
         button) and the panel timings differ. GT911 touch on I2C
         (on V3.0 boards reset through a PCA9557 IO expander), MicroSD
         on SPI, backlight on GPIO2, USB-C through a UART bridge.
-        Untested on physical hardware.
+        Tested on physical hardware (Hardware Version 3.0).
 
 config DRAFTLING_MODEL_WAVESHARE_TOUCH_LCD_7
     bool "Waveshare ESP32-S3-Touch-LCD-7 (ESP32-S3, 7\" RGB color LCD, 800x480, CH422G expander)"

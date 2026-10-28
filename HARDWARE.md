@@ -179,7 +179,9 @@ TN color LCD on the 16-bit parallel RGB interface, GT911 capacitive
 touch, a MicroSD slot on SPI, a speaker output and a PH2.0 battery
 connector with a charging circuit. Build preset: `elecrow_crowpanel_50`.
 
-**Not yet tested on physical hardware.** Pins and panel timings come
+Tested on physical hardware (Hardware Version 3.0): display,
+backlight, MicroSD card, touch and a BLE keyboard work. WiFi and Git
+sync have not been tried on this board yet. Pins and panel timings come
 from Elecrow's wiki and their example code for Hardware Version 3.0
 ([CrowPanel-5.0-HMI-ESP32-Display-800x480](https://github.com/Elecrow-RD/CrowPanel-5.0-HMI-ESP32-Display-800x480)).
 On V3.0 boards the touch controller is reset through a PCA9557 IO

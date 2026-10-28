@@ -17,7 +17,8 @@
  *
  * Values from Elecrow's own example for this board (LovyanGFX config
  * in CrowPanel-5.0-HMI-ESP32-Display-800x480, Hardware Version 3.0)
- * and the Elecrow wiki. Not yet tested on physical hardware.
+ * and the Elecrow wiki. Tested on physical hardware (V3.0): display,
+ * backlight, SD card, touch and BLE keyboard.
  *
  * GPIO0 (the BOOT button) is the panel's PCLK while Draftling runs,
  * so it cannot serve as a wake / forget-keyboards button:

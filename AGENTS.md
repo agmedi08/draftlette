@@ -73,7 +73,7 @@ card).
 | Waveshare ESP32-S3-RLCD-4.2 | 4.2-inch reflective LCD, 400x300 |
 | M5Stack PaperS3 | 4.7-inch e-paper (ED047TC1), 540x960 |
 | Waveshare ESP32-S3-LCD-3.16 | 3.16-inch ST7701 RGB color LCD, 320x820 portrait rendered landscape at 820x320, no touch |
-| Elecrow CrowPanel ESP32 HMI 5.0" | 5.0-inch ILI6122 / ILI5960 RGB color LCD (TN), 800x480, GT911 touch (untested on hardware) |
+| Elecrow CrowPanel ESP32 HMI 5.0" | 5.0-inch ILI6122 / ILI5960 RGB color LCD (TN), 800x480, GT911 touch |
 | Freenove FNK0104A | 2.8-inch ILI9341 color LCD, 320x240, no touch |
 | Freenove FNK0104B | 2.8-inch ILI9341 color LCD, 320x240, FT6336U touch |
 | Freenove FNK0104N | 3.5-inch ST77922 QSPI color LCD, 480x320, ST77922 built-in touch |
@@ -2033,7 +2033,7 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   bridge, so no SD card via USB / Sync via browser. The BAT connector
   (PH2.0-2P) has a charger but no voltage sense. Pins and timings from
   Elecrow's wiki and CrowPanel-5.0-HMI-ESP32-Display-800x480 example;
-  not yet tested on physical hardware. *Requires ESP32-S3.*
+  tested on physical hardware (V3.0). *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_WAVESHARE_LCD_316** -- Waveshare ESP32-S3-LCD-3.16:
   3.16" 320x820 portrait ST7701 color LCD on the 16-bit RGB
   interface (`display_rgb.cpp`, `CONFIG_DRAFTLING_RGB_PANEL_ST7701`),

@@ -19,7 +19,7 @@ in the git log.
   `elecrow_crowpanel_50`, for Elecrow's 5" 800x480 color touch screen
   with an ESP32-S3, a MicroSD slot and a battery connector. Wake the
   device from sleep with RESET (the BOOT button drives the screen).
-  Not yet tested on physical hardware. See HARDWARE.md.
+  Tested on a Hardware Version 3.0 board. See HARDWARE.md.
 
 ### Changed
 
