@@ -5343,8 +5343,9 @@ static void handle_settings_key(const kb_event_t *ev)
     }
 
     switch (ev->keycode) {
-    case KB_KEY_UP:
-        if (s_settings_sel > 0) s_settings_sel--;
+    case KB_KEY_UP:     /* wraps from the first row to the last */
+        s_settings_sel = (s_settings_sel > 0) ? s_settings_sel - 1
+                                              : SETTINGS_ITEM_COUNT - 1;
         if (s_factory_reset_confirm) {
             /* Cancelling confirmation changes the item label, so we
              * need a full rebuild; otherwise just move the highlight. */
@@ -5354,8 +5355,9 @@ static void handle_settings_key(const kb_event_t *ev)
             update_settings_highlight();
         }
         break;
-    case KB_KEY_DOWN:
-        if (s_settings_sel < SETTINGS_ITEM_COUNT - 1) s_settings_sel++;
+    case KB_KEY_DOWN:   /* wraps from the last row to the first */
+        s_settings_sel = (s_settings_sel < SETTINGS_ITEM_COUNT - 1)
+                         ? s_settings_sel + 1 : 0;
         if (s_factory_reset_confirm) {
             s_factory_reset_confirm = false;
             refresh_settings_items();
@@ -6564,12 +6566,12 @@ static void handle_menu_key(const kb_event_t *ev)
 #endif
 
     switch (ev->keycode) {
-    case KB_KEY_UP:
-        if (s_menu_sel > 0) s_menu_sel--;
+    case KB_KEY_UP:     /* wraps from the first row to the last */
+        s_menu_sel = (s_menu_sel > 0) ? s_menu_sel - 1 : MENU_ITEM_COUNT - 1;
         update_menu_highlight();
         break;
-    case KB_KEY_DOWN:
-        if (s_menu_sel < MENU_ITEM_COUNT - 1) s_menu_sel++;
+    case KB_KEY_DOWN:   /* wraps from the last row to the first */
+        s_menu_sel = (s_menu_sel < MENU_ITEM_COUNT - 1) ? s_menu_sel + 1 : 0;
         update_menu_highlight();
         break;
     case KB_KEY_ENTER:
@@ -9472,8 +9474,9 @@ static void handle_browser_key(const kb_event_t *ev)
     if (child_count == 0) return;
 
     switch (ev->keycode) {
-    case KB_KEY_UP:
-        if (s_browser_sel > 0) s_browser_sel--;
+    case KB_KEY_UP:     /* wraps from the first item to the last */
+        s_browser_sel = (s_browser_sel > 0) ? s_browser_sel - 1
+                                            : (int)child_count - 1;
         /* Selecting a different file is one of the two conditions
          * that clears a transient status message (e.g. the
          * "File too large" error left over from a previous open
@@ -9481,8 +9484,9 @@ static void handle_browser_key(const kb_event_t *ev)
          * text we just restored is not overwritten 3 seconds later. */
         cancel_status_clear_and_restore();
         break;
-    case KB_KEY_DOWN:
-        if (s_browser_sel < (int)child_count - 1) s_browser_sel++;
+    case KB_KEY_DOWN:   /* wraps from the last item to the first */
+        s_browser_sel = (s_browser_sel < (int)child_count - 1)
+                        ? s_browser_sel + 1 : 0;
         cancel_status_clear_and_restore();
         break;
     case KB_KEY_ENTER: {

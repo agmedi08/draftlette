@@ -23,6 +23,10 @@ in the git log.
 
 ### Changed
 
+- **Menus and the file browser wrap around**: in the F1 menu, its
+  Settings list and the file browser, pressing Up on the first item
+  jumps to the last one, and Down on the last item jumps back to the
+  first.
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the
   `microjournal_rev5_0` and `microjournal_rev5_1` build presets are
   replaced by a single `microjournal_rev5` preset. At boot the firmware
