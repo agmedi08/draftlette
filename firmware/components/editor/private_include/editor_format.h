@@ -31,6 +31,8 @@ enum {
     DECO_BULLET = 0x10,   /* list-marker cell: draw a bullet dot */
     DECO_UNDER  = 0x20,   /* Fountain _underline_ */
     DECO_BREAK  = 0x40,   /* hard line-break marker cell: draw a return arrow */
+    DECO_PAD    = 0x80,   /* hanging-indent cell: not in the raw line, the
+                           * cursor never rests here, nothing is drawn */
 };
 
 /* State threaded through a document's lines from the top. */
@@ -55,6 +57,7 @@ typedef struct {
                              * the focused cursor line (reveal), else -1 */
     bool     hr;            /* draw a horizontal rule */
     uint8_t  bullet_level;  /* list nesting, picks the bullet shape */
+    bool     hang;          /* wrapped rows line up with the content */
 } fmt_marks_t;
 
 /* One row of a format's cheat sheet on the help screen (Ctrl+H):

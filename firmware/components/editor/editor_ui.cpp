@@ -2288,6 +2288,74 @@ static size_t utf8_byte_of_char(const char *s, size_t len, int n)
  * Tabs are expanded to four spaces, since the bundled fonts have no
  * tab glyph. An all-hidden line (e.g. a rule) displays as a single
  * space so the label keeps one row of height. */
+/* Wrap a view by hand so that every row after the first starts at
+ * display column indent: a label has no hanging indent of its own. The
+ * fonts are monospace, so rows are counted in cells, and each row stops
+ * after the last space that fits (or mid-word if there is none). The
+ * inserted newline and indent cells map to the last raw byte of the row
+ * above, which keeps d2r sorted and leaves that byte's own cell as the
+ * one view_raw_to_disp() finds. Text with RTL characters is left to the
+ * label, since bidi reordering works on the rows it wraps itself. */
+static void apply_hanging_indent(std::string &text, line_view_t *v,
+                                 size_t indent, size_t cols)
+{
+    size_t n = v->d2r.size();
+    if (n <= cols || indent == 0 || indent * 2 > cols) return;
+
+    static std::vector<uint32_t> offs;      /* display char -> byte in text */
+    offs.clear();
+    const char *txt = text.c_str();
+    size_t len = text.size();
+    for (size_t b = 0; b < len;) {
+        offs.push_back((uint32_t)b);
+        if (cp_strong_dir(utf8_decode(txt, len, &b)) < 0) return;
+    }
+    if (offs.size() != n) return;
+    offs.push_back((uint32_t)len);
+
+    static std::string out;
+    static std::vector<uint32_t> d2r;
+    static std::vector<uint8_t> flags;
+    out.clear();
+    d2r.clear();
+    flags.clear();
+    size_t i = 0;
+    bool first = true;
+    while (i < n) {
+        size_t limit = first ? cols : cols - indent;
+        size_t brk = n;
+        if (n - i > limit) {
+            /* On the first row the marker's own space is no break point. */
+            size_t floor_i = first ? indent : 0;
+            brk = i + limit;
+            for (size_t k = i + limit; k > i + floor_i; k--) {
+                if (txt[offs[k - 1]] == ' ') {
+                    brk = k;
+                    break;
+                }
+            }
+        }
+        out.append(txt + offs[i], offs[brk] - offs[i]);
+        d2r.insert(d2r.end(), v->d2r.begin() + i, v->d2r.begin() + brk);
+        flags.insert(flags.end(), v->flags.begin() + i, v->flags.begin() + brk);
+        i = brk;
+        first = false;
+        if (i >= n) break;
+        uint32_t row_end = v->d2r[i - 1];
+        out.push_back('\n');
+        d2r.push_back(row_end);
+        flags.push_back(0);
+        out.append(indent, ' ');
+        d2r.insert(d2r.end(), indent, row_end);
+        flags.insert(flags.end(), indent, DECO_PAD);
+    }
+    text = out;
+    v->d2r = d2r;
+    v->flags = flags;
+}
+
+static int view_raw_to_disp(const line_view_t *v, size_t rb);
+
 static void build_line_view(const editor_format_t *fmt, const char *lt, size_t ll,
                             const md_line_info_t *mi, bool reveal, long cursor,
                             std::string &text, line_view_t *v)
@@ -2303,7 +2371,7 @@ static void build_line_view(const editor_format_t *fmt, const char *lt, size_t l
     if (content_end > ll) content_end = ll;
 
     fmt_marks_t marks = { hide.data(), rflags.data(), ll, content_off, content_end,
-                          reveal ? cursor : -1, false, 0 };
+                          reveal ? cursor : -1, false, 0, false };
     fmt->mark_line(mi, reveal, &marks);
     v->hr = marks.hr;
     v->bullet_level = marks.bullet_level;
@@ -2346,6 +2414,10 @@ static void build_line_view(const editor_format_t *fmt, const char *lt, size_t l
         v->flags.push_back(rflags[start]);
     }
     v->raw_len = ll;
+    if (marks.hang && s_char_w > 0) {
+        apply_hanging_indent(text, v, (size_t)view_raw_to_disp(v, content_off),
+                             (size_t)((s_rp->w - 4) / s_char_w));
+    }
     if (text.empty()) text = " ";
 }
 
@@ -2359,10 +2431,12 @@ static int view_raw_to_disp(const line_view_t *v, size_t rb)
 }
 
 /* Raw byte offset for display character index d (past the end -> end
- * of the raw line, i.e. after any hidden closing marker). */
+ * of the raw line, i.e. after any hidden closing marker). A hanging
+ * indent cell gives the first real character of its row. */
 static size_t view_disp_to_raw(const line_view_t *v, int d)
 {
     if (d < 0) d = 0;
+    while ((size_t)d < v->flags.size() && (v->flags[(size_t)d] & DECO_PAD)) d++;
     if ((size_t)d >= v->d2r.size()) return v->raw_len;
     return v->d2r[(size_t)d];
 }
@@ -2443,7 +2517,7 @@ static void layout_line_decorations(lv_obj_t *label, const std::string &text,
     v->segs.clear();
     size_t n = v->flags.size();
     bool any = false;
-    for (size_t i = 0; i < n && !any; i++) any = v->flags[i] != 0;
+    for (size_t i = 0; i < n && !any; i++) any = (v->flags[i] & ~DECO_PAD) != 0;
     if (!any) return;
 
     const lv_font_t *font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
@@ -2463,7 +2537,7 @@ static void layout_line_decorations(lv_obj_t *label, const std::string &text,
             (void)utf8_decode(txt, len, &jb);
             j++;
         }
-        if (f) {
+        if (f & ~DECO_PAD) {
             layout_deco_range(label, font, txt, len, line_rtl, has_rtl, v,
                               i, j, (uint32_t)b, f);
         }

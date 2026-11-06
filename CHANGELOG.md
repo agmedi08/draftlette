@@ -30,6 +30,11 @@ in the git log.
 
 ### Changed
 
+- **Long list items stay indented**: in Markdown files, when a numbered
+  or bullet list item wraps onto more rows, those rows now line up with
+  the item's text instead of starting under the number or bullet. This
+  only changes how the item is shown, not the file.
+
 - **Menus and the file browser wrap around**: in the F1 menu, its
   Settings list and the file browser, pressing Up on the first item
   jumps to the last one, and Down on the last item jumps back to the

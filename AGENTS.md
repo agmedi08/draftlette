@@ -924,6 +924,17 @@ typing fast path (`capture_typing_pre_state()`) only applies to lines
 with no styling at all (the format's `line_is_plain` hook), because typing a
 closing marker restyles characters left of the cursor.
 
+**Hanging indent.** A label cannot indent only its later rows, so a
+format that sets `fmt_marks_t::hang` (Markdown bullet and numbered
+lines) gets its view wrapped by hand: `apply_hanging_indent()`, at the
+end of `build_line_view()`, breaks the display text at word boundaries
+by cell count (the fonts are monospace) and inserts a newline plus
+indent spaces. Those cells map in `d2r` to the last raw byte of the row
+above, so `d2r` stays sorted. The indent cells carry `DECO_PAD`, which
+`view_disp_to_raw()` skips, so a tap or an Up / Down move into the
+indent lands on the row's first real character. Text with RTL
+characters is left to the label's own wrapping.
+
 The editor stores text as **UTF-8** internally. `editor_open_file()`
 inspects the leading bytes of each file for a Unicode BOM and
 transcodes on the fly so that files saved from desktop editors render

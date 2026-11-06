@@ -78,6 +78,8 @@ static void md_mark(const md_line_info_t *mi, bool reveal, fmt_marks_t *m)
         if (cell >= 0) m->rflags[cell] |= DECO_BREAK;
     }
 
+    m->hang = mi->type == MD_LINE_BULLET || mi->type == MD_LINE_NUMBERED;
+
     switch (mi->type) {
     case MD_LINE_H1: case MD_LINE_H2: case MD_LINE_H3: case MD_LINE_H4:
         if (!reveal) hide_range(m, 0, m->content_off);
