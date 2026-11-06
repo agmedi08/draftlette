@@ -8,6 +8,13 @@ in the git log.
 
 ### Added
 
+- **Folders in the file browser**: `Alt+N` makes a new folder, Enter
+  opens it, and the ".." row or Backspace goes back up. New files and
+  "Save as" go into the folder you are in. Move a file with `Ctrl+X`,
+  open the folder it should go to, then `Ctrl+V` (Esc cancels). `F2`
+  renames a folder and `Del` deletes it once it is empty. Git sync
+  still only syncs the files at the top level of the card.
+
 - **Password for a file**: select a file in the file browser and press
   `Alt+L` to give it a password (typed twice). From then on the file
   asks for its password every time it is opened or deleted, and shows

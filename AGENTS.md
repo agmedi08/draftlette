@@ -727,10 +727,36 @@ sidecar, refuses to overwrite an existing file (a case-only change is
 allowed), and re-points any open document with the old path at the
 new one (taking the new extension's format). The UI rejects names
 without a document extension, since the file would vanish from the
-browser. Directories cannot be renamed.
+browser. On a folder (`s_rename_is_dir`) the name only has to pass
+`valid_folder_name()` (1-40 characters, no leading '.') and the rename
+is a plain `sd_card_rename()`, refused while `doc_open_under()` finds
+an open document inside it.
+
+**Folders.** Both browsers show the folder in `s_browser_rel` (relative
+to the mount point, "" = top level, kept for the session, at most 120
+characters). Every browser action builds its paths with
+`browser_dir_path()` / `browser_entry_path()`, never from the mount
+point directly, and a joined path must stay under 256 bytes (the
+document path size). Below the top level, row 0 is the ".." row, whose
+user_data is `BROWSER_UP_ROW` (-1); handlers resolve rows through
+`browser_row_index()` and ignore it. Enter on a folder calls
+`browser_enter_dir()`, and the ".." row or Backspace `browser_go_up()`;
+`update_browser_titles()` shows the folder in the browser title and
+the in-pane header. `Alt+N` reuses the save-as overlay in mkdir mode
+(`show_mkdir_prompt()`, `s_save_is_mkdir`, `mkdir_prompt_confirm()`).
+"Save as" writes into `s_save_dir`: the document's own folder, or the
+browser's folder for an untitled document. `Ctrl+X` stores the
+selected file in `s_move_src` (Esc clears it) and `Ctrl+V`
+(`browser_paste_file()`) moves it into the shown folder with
+`editor_rename_file()`, so the `.meta` sidecar (password, resume
+position) and any open document follow. Git sync only covers the top
+level, so files in folders skip the Git check on delete and show no
+Git status in Alt+I.
 
 **Delete.** `Del` or `Alt+D` in either file browser deletes the
-selected file. Without Git sync (`GIT_SYNC_FILE_NOT_CONFIGURED`) any
+selected file, or a folder with no visible entries (`s_del_is_dir`,
+`sd_card_rmdir()`, which also removes leftover hidden sidecars).
+Without Git sync (`GIT_SYNC_FILE_NOT_CONFIGURED`) any
 file may be deleted and the prompt says it cannot be undone. With Git
 sync configured, only when `git_sync_file_status()` reports
 `GIT_SYNC_FILE_PUSHED`: the file's current content hashes to the same
@@ -1363,6 +1389,7 @@ cleared.
 
 Public API: `sd_card_init()`, `sd_card_read_file()`,
 `sd_card_write_file()`, `sd_card_list_dir()`, `sd_card_file_exists()`,
+`sd_card_mkdir()`, `sd_card_rmdir()` (empty folders only),
 `sd_card_format()`, `sd_card_get_fs_space()`, and others.
 
 ### components/standby/
