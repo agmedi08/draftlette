@@ -37,6 +37,12 @@ typedef enum {
  * Returns NULL if the keycode does not produce a character. */
 const char *kb_layout_translate(uint8_t keycode, uint8_t modifier);
 
+/* Caps Lock. While on, kb_layout_translate() flips Shift for Latin letters
+ * only, so Shift + letter gives lowercase. Numbers, symbols and Ctrl
+ * shortcuts are not affected. Off at every boot. */
+bool kb_layout_toggle_caps(void);   /* returns the new state */
+bool kb_layout_caps(void);
+
 /* Set the active keyboard layout */
 void kb_layout_set(kb_layout_id_t layout);
 

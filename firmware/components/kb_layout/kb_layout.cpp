@@ -18,6 +18,7 @@
 #define MOD_RALT   0x40  /* AltGr on international keyboards */
 
 static kb_layout_id_t s_layout = (kb_layout_id_t)0;
+static bool s_caps = false;
 
 /* Default "Active language layouts" set: US and UA when compiled in,
  * else the first compiled-in layout so the set is never empty. */
@@ -669,6 +670,17 @@ extern "C" bool kb_layout_is_rtl(void)
 #endif
 }
 
+extern "C" bool kb_layout_toggle_caps(void)
+{
+    s_caps = !s_caps;
+    return s_caps;
+}
+
+extern "C" bool kb_layout_caps(void)
+{
+    return s_caps;
+}
+
 extern "C" const char *kb_layout_translate(uint8_t keycode, uint8_t modifier)
 {
     if (keycode < 0x04) return NULL;
@@ -686,7 +698,11 @@ extern "C" const char *kb_layout_translate(uint8_t keycode, uint8_t modifier)
         result = lt->altgr[idx];
     }
     if (!result) {
-        result = shift ? lt->shift[idx] : lt->normal[idx];
+        const char *base = lt->normal[idx];
+        if (s_caps && base && base[0] >= 'a' && base[0] <= 'z' && !base[1]) {
+            shift = !shift;
+        }
+        result = shift ? lt->shift[idx] : base;
     }
 
     return result;

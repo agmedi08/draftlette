@@ -8,6 +8,8 @@ in the git log.
 
 ### Added
 
+- **Caps Lock**: the Caps Lock key now works. It flips Shift for letters
+  only, and `CAPS` shows in the Notes status bar and the Today title.
 - **Clock keeps the date through power-off**: on the Waveshare
   ESP32-S3-RLCD-4.2 the device now reads its battery-backed clock chip
   at startup, so the date and time are right even after the power was
@@ -52,6 +54,9 @@ in the git log.
 
 ### Changed
 
+- **Menus and the file browser wrap around**: in the F1 menu, its Settings
+  list and the file browser, Up on the first item jumps to the last one and
+  Down on the last item jumps back to the first.
 - **Rename a file with R**: in the file browser, rename moved from F2
   to R, because F2 now opens Today. Alt+R still works.
 

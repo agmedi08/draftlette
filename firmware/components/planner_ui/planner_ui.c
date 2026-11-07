@@ -261,7 +261,9 @@ static void render_today(void)
     struct tm t;
     char title[40];
     date_to_tm(&t, s_day->year, s_day->month, s_day->day);
-    strftime(title, sizeof(title), "Today  %a %Y-%m-%d", &t);
+    strftime(title, sizeof(title),
+             kb_layout_caps() ? "Today  %a %Y-%m-%d  CAPS"
+                              : "Today  %a %Y-%m-%d", &t);
     lv_label_set_text(s_lbl_title, title);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
 
