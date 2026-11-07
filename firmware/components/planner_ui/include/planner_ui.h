@@ -12,6 +12,8 @@ extern "C" {
 #include <stdbool.h>
 #include <lvgl.h>
 
+#include "ble_keyboard.h"
+
 typedef enum {
     PLANNER_VIEW_TODAY,
     PLANNER_VIEW_WEEK,
@@ -39,6 +41,14 @@ planner_view_t planner_ui_current(void);
 
 /* The display went to another view. Does not load anything. */
 void planner_ui_deactivate(void);
+
+/* A key for the planner screen on display. Touches LVGL, so call it
+ * from the LVGL task. */
+void planner_ui_handle_key(const kb_event_t *ev);
+
+/* Save a bullet still being typed and leave any prompt. Call before
+ * something else takes over the display or the device sleeps. */
+void planner_ui_commit_pending(void);
 
 #ifdef __cplusplus
 }

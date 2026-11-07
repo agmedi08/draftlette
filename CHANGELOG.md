@@ -25,7 +25,14 @@ in the git log.
 - **Views**: F2, F3, F4 and F5 switch to Today, Week, Month and Notes
   from any screen, and the F1 menu lists them too. Your open file,
   cursor and unsaved text are kept while you are away from Notes.
-  Today, Week and Month are placeholders for now.
+  Week and Month are placeholders for now.
+- **Today bullet log**: a planner page for each day, with no file to
+  create or name. Each day is saved as Markdown in
+  `/journal/YYYY/MM/YYYY-MM-DD.md` as soon as you change it. Up/Down
+  move between bullets, and Down past the last one adds a new bullet.
+  Enter edits, Space marks a task done, Tab changes the type (task,
+  event, note, tracker), Backspace closes out a bullet (cancel, or
+  migrate it to another day), and Del deletes it.
 - **Local time zone**: a new build option, `DRAFTLING_TIMEZONE`, sets
   the time zone for dates shown on the device (UTC unless the board
   preset changes it). Git commits still use UTC.

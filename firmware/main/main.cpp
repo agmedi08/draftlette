@@ -49,6 +49,7 @@
 #include "git_sync.h"
 #include "standby.h"
 #include "time_sync.h"
+#include "planner_ui.h"
 #include "battery.h"
 #include "touchscreen.h"
 #include "power.h"
@@ -220,6 +221,7 @@ static void pre_sleep_autosave(void)
      * active one. Each callback saves the body if modified and always
      * writes the cursor/scroll sidecar so reopening resumes in place. */
     editor_doc_foreach(pre_sleep_save_doc_cb, NULL);
+    planner_ui_commit_pending();
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
     /* E-paper retains its image without power. Wipe the panel to a
      * clean white frame so the user does not see the editor frozen on

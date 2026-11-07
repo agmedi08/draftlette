@@ -9925,6 +9925,7 @@ static bool handle_view_key(const kb_event_t *ev)
 #endif
     if (s_settings_open && settings_sub) return true;
 
+    planner_ui_commit_pending();
     bool on_notes = !planner_ui_is_active() && !s_menu_open &&
                     !s_settings_open && !s_help_open;
     s_menu_open = false;
@@ -9942,10 +9943,14 @@ static bool handle_view_key(const kb_event_t *ev)
     return true;
 }
 
-/* Planner screens only know F1 so far; F2-F5 are handled above. */
 static void handle_planner_key(const kb_event_t *ev)
 {
-    if (ev->keycode == KB_KEY_F1) show_menu();
+    if (ev->keycode == KB_KEY_F1) {
+        planner_ui_commit_pending();
+        show_menu();
+    } else {
+        planner_ui_handle_key(ev);
+    }
 }
 
 static void process_key_event(const kb_event_t *ev)
