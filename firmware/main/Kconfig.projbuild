@@ -1635,6 +1635,15 @@ config DRAFTLING_TOUCH_DEBUG_LOG
 # less power than keeping the MCU running). When neither is set the
 # behavior is the existing BOOT-button EXT0 wake.
 #
+config DRAFTLING_TIMEZONE
+    string "Local time zone (POSIX TZ string)"
+    default "UTC0"
+    help
+        Time zone used for dates and times shown to the user, such as
+        the journal's "today". A POSIX TZ string, e.g.
+        "CST6CDT,M3.2.0,M11.1.0" for US Central time with daylight
+        saving. Git commits always use UTC.
+
 # On the Guition JC3248W535 (no user buttons) we default to deep
 # sleep + wake-on-touch.
 config DRAFTLING_STANDBY_DISPLAY_OFF

@@ -8,6 +8,24 @@ in the git log.
 
 ### Added
 
+- **Clock keeps the date through power-off**: on the Waveshare
+  ESP32-S3-RLCD-4.2 the device now reads its battery-backed clock chip
+  at startup, so the date and time are right even after the power was
+  fully off. Whenever the time is fetched from the internet, the clock
+  chip is updated too.
+- **Internet time on every WiFi connect**: the clock is now set from the
+  internet (SNTP) each time WiFi connects, not only during a Git sync.
+- **Set date and time**: F1 -> Settings -> "Date and time" sets the
+  clock by hand, for when there is no WiFi. Up/Down pick the year,
+  month, day, hour or minute, Left/Right change it, and Enter saves.
+  "Sync time now" fetches the time over the saved WiFi network
+  (connecting and disconnecting again if WiFi was off), and a status
+  line shows whether the clock chip is working and when the time was
+  last fetched.
+- **Local time zone**: a new build option, `DRAFTLING_TIMEZONE`, sets
+  the time zone for dates shown on the device (UTC unless the board
+  preset changes it). Git commits still use UTC.
+
 - **Password for a file**: select a file in the file browser and press
   `Alt+L` to give it a password (typed twice). From then on the file
   asks for its password every time it is opened or deleted, and shows

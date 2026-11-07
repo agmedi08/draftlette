@@ -49,6 +49,7 @@
 #include "display_orientation.h"
 #include "display_flip.h"
 #include "standby.h"
+#include "time_sync.h"
 #include "greybeard.h"
 #include "battery.h"
 #include "wifi_icon.h"
@@ -1002,6 +1003,14 @@ static int  s_theme_picker_sel_prev  = -1;
 static bool s_layouts_picker_open      = false;
 static int  s_layouts_picker_sel       = 0;
 static int  s_layouts_picker_sel_prev  = -1;
+
+/* Date-and-time picker sub-list (Settings -> Date and time). Edits a
+ * local-time copy; only "Save" applies it to the system clock and the
+ * battery-backed RTC. */
+static bool      s_datetime_picker_open     = false;
+static int       s_datetime_picker_sel      = 0;
+static int       s_datetime_picker_sel_prev = -1;
+static struct tm s_datetime_edit;
 
 /* Passkey overlay objects */
 static lv_obj_t *s_passkey_panel = NULL;
@@ -4715,9 +4724,10 @@ static int find_timeout_option(uint32_t sec)
 #define SETTINGS_IDX_MARGIN_TOP    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 2)
 #define SETTINGS_IDX_MARGIN_BOTTOM (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 3)
 /* "Sleep now" used to live here; it now lives in the F1 menu. */
-#define SETTINGS_IDX_RESET    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 4)
-#define SETTINGS_IDX_BACK     (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 5)
-#define SETTINGS_ITEM_COUNT   (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 6)
+#define SETTINGS_IDX_DATETIME (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 4)
+#define SETTINGS_IDX_RESET    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 5)
+#define SETTINGS_IDX_BACK     (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 6)
+#define SETTINGS_ITEM_COUNT   (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 7)
 
 static void refresh_settings_items(void)
 {
@@ -4829,6 +4839,16 @@ static void refresh_settings_items(void)
     snprintf(buf, sizeof(buf), "Margin bottom: %dpx (restart to apply)", s_margin_bottom);
     lv_list_add_btn(s_settings_list, NULL, buf);
 
+    /* Date and time (local time zone) */
+    {
+        time_t now = time(NULL);
+        struct tm lt;
+        localtime_r(&now, &lt);
+        snprintf(buf, sizeof(buf), "Date and time: %04d-%02d-%02d %02d:%02d (Enter to set)",
+                 lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+        lv_list_add_btn(s_settings_list, NULL, buf);
+    }
+
     /* Factory reset */
     if (s_factory_reset_confirm) {
         lv_list_add_btn(s_settings_list, NULL,
@@ -4937,6 +4957,204 @@ static void close_layouts_picker(void)
     refresh_settings_items();
 }
 
+/* ---- Date-and-time picker ----
+ * Same reused-list pattern as the layouts picker: Up/Down pick a row,
+ * Left/Right change the highlighted field, Enter on "Save" applies.
+ * Rows: Year, Month, Day, Hour, Minute, Save, Sync time now, Cancel,
+ * then a status line (clock chip, last internet sync) that cannot be
+ * selected. */
+#define DT_ROW_YEAR   0
+#define DT_ROW_MONTH  1
+#define DT_ROW_DAY    2
+#define DT_ROW_HOUR   3
+#define DT_ROW_MINUTE 4
+#define DT_ROW_SAVE   5
+#define DT_ROW_SYNC   6
+#define DT_ROW_CANCEL 7
+#define DT_ROW_COUNT  8   /* selectable rows; the status line follows */
+
+/* Result of the last "Sync time now", shown in the status line. */
+static char s_datetime_sync_msg[48];
+static volatile bool s_datetime_sync_running = false;
+
+static int datetime_days_in_month(int year, int mon0)
+{
+    static const int days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    return days[mon0] + ((mon0 == 1 && leap) ? 1 : 0);
+}
+
+static void refresh_datetime_picker_items(void)
+{
+    lv_obj_clean(s_settings_list);
+    char buf[48];
+    const struct tm *t = &s_datetime_edit;
+    snprintf(buf, sizeof(buf), "Year: %04d", t->tm_year + 1900);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Month: %02d", t->tm_mon + 1);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Day: %02d", t->tm_mday);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Hour: %02d", t->tm_hour);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Minute: %02d", t->tm_min);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    lv_list_add_btn(s_settings_list, NULL, "  Save (Enter)");
+    lv_list_add_btn(s_settings_list, NULL, "  Sync time now (WiFi)");
+    lv_list_add_btn(s_settings_list, NULL, "  Cancel (Esc)");
+
+    const char *chip = "none";
+    switch (time_sync_rtc_status()) {
+    case TIME_SYNC_RTC_OK:          chip = "OK"; break;
+    case TIME_SYNC_RTC_TIME_LOST:   chip = "time was lost"; break;
+    case TIME_SYNC_RTC_NO_RESPONSE: chip = "not responding"; break;
+    default: break;
+    }
+    char status[128];
+    if (s_datetime_sync_msg[0]) {
+        snprintf(status, sizeof(status), "Clock chip: %s. %s", chip,
+                 s_datetime_sync_msg);
+    } else {
+        time_t last = time_sync_last_sntp();
+        if (last) {
+            struct tm lt;
+            localtime_r(&last, &lt);
+            snprintf(status, sizeof(status),
+                     "Clock chip: %s. Internet sync: %02d-%02d %02d:%02d",
+                     chip, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+        } else {
+            snprintf(status, sizeof(status),
+                     "Clock chip: %s. No internet sync since boot", chip);
+        }
+    }
+    lv_list_add_btn(s_settings_list, NULL, status);
+    apply_list_selection_styles(s_settings_list, s_datetime_picker_sel);
+    s_datetime_picker_sel_prev = s_datetime_picker_sel;
+
+    sync_battery_labels();
+}
+
+static void update_datetime_picker_highlight(void)
+{
+    update_list_highlight(s_settings_list, s_datetime_picker_sel,
+                          s_datetime_picker_sel_prev);
+    s_datetime_picker_sel_prev = s_datetime_picker_sel;
+}
+
+static void load_datetime_edit_from_clock(void)
+{
+    time_t now = time(NULL);
+    localtime_r(&now, &s_datetime_edit);
+    if (s_datetime_edit.tm_year + 1900 < 2025) {
+        /* Clock never set: start from a sensible date, not 1970. */
+        s_datetime_edit = {};
+        s_datetime_edit.tm_year = 2026 - 1900;
+        s_datetime_edit.tm_mday = 1;
+    }
+    s_datetime_edit.tm_sec = 0;
+}
+
+static void open_datetime_picker(void)
+{
+    load_datetime_edit_from_clock();
+    if (!s_datetime_sync_running) s_datetime_sync_msg[0] = '\0';
+    s_datetime_picker_sel = 0;
+    s_datetime_picker_open = true;
+    refresh_datetime_picker_items();
+}
+
+static void close_datetime_picker(void)
+{
+    s_datetime_picker_open = false;
+    refresh_settings_items();
+}
+
+/* Step the highlighted field by dir (+1 / -1), wrapping within range. */
+static void datetime_adjust(int dir)
+{
+    struct tm *t = &s_datetime_edit;
+    switch (s_datetime_picker_sel) {
+    case DT_ROW_YEAR:
+        t->tm_year += dir;
+        if (t->tm_year < 2025 - 1900) t->tm_year = 2099 - 1900;
+        if (t->tm_year > 2099 - 1900) t->tm_year = 2025 - 1900;
+        break;
+    case DT_ROW_MONTH:
+        t->tm_mon = (t->tm_mon + dir + 12) % 12;
+        break;
+    case DT_ROW_DAY: {
+        int n = datetime_days_in_month(t->tm_year + 1900, t->tm_mon);
+        t->tm_mday = ((t->tm_mday - 1 + dir + n) % n) + 1;
+        break;
+    }
+    case DT_ROW_HOUR:
+        t->tm_hour = (t->tm_hour + dir + 24) % 24;
+        break;
+    case DT_ROW_MINUTE:
+        t->tm_min = (t->tm_min + dir + 60) % 60;
+        break;
+    default:
+        return;
+    }
+    /* Changing month/year can leave the day past the month's end. */
+    int n = datetime_days_in_month(t->tm_year + 1900, t->tm_mon);
+    if (t->tm_mday > n) t->tm_mday = n;
+    refresh_datetime_picker_items();
+}
+
+static void save_datetime_picker(void)
+{
+    struct tm t = s_datetime_edit;
+    t.tm_isdst = -1;   /* let mktime decide from the TZ rules */
+    time_t utc = mktime(&t);
+    esp_err_t err = time_sync_set(utc);
+    ESP_LOGI(TAG, "Date and time set from Settings: %s", esp_err_to_name(err));
+    close_datetime_picker();
+}
+
+/* "Sync time now": connecting to WiFi blocks for up to ~30 s, so it
+ * runs on its own task, like wifi_connect_task(). */
+static void datetime_sync_task(void *arg)
+{
+    (void)arg;
+    esp_err_t err = time_sync_with_saved_wifi(10000);
+    if (draftling_lvgl_port_lock(2000)) {
+        if (err == ESP_OK) {
+            s_datetime_sync_msg[0] = '\0';   /* status shows the sync time */
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                     "Sync failed: no saved WiFi");
+        } else {
+            snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                     "Sync failed: %s", esp_err_to_name(err));
+        }
+        s_datetime_sync_running = false;
+        if (s_datetime_picker_open) {
+            load_datetime_edit_from_clock();
+            refresh_datetime_picker_items();
+        }
+        draftling_lvgl_port_unlock();
+    } else {
+        s_datetime_sync_running = false;
+    }
+    vTaskDelete(NULL);
+}
+
+static void start_datetime_sync(void)
+{
+    if (s_datetime_sync_running) return;
+    s_datetime_sync_running = true;
+    snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+             "Syncing over WiFi...");
+    if (xTaskCreatePinnedToCore(datetime_sync_task, "time_sync_ui",
+                                4 * 1024, NULL, 3, NULL, 0) != pdPASS) {
+        s_datetime_sync_running = false;
+        snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                 "Sync failed: no memory");
+    }
+    refresh_datetime_picker_items();
+}
+
 /* ---- Restart-to-apply prompt ----
  * Renders into the same s_settings_list widget while
  * s_restart_confirm_open is true -- same reused-list pattern as the
@@ -4991,6 +5209,7 @@ static void show_settings(void)
     s_theme_picker_open = false;
 #endif
     s_layouts_picker_open = false;
+    s_datetime_picker_open = false;
     refresh_settings_items();
     sync_battery_labels();
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
@@ -5008,6 +5227,7 @@ static void close_settings(void)
     s_theme_picker_open = false;
 #endif
     s_layouts_picker_open = false;
+    s_datetime_picker_open = false;
     show_menu();
 }
 
@@ -5184,6 +5404,8 @@ static void settings_activate_item(int idx)
     } else if (idx == SETTINGS_IDX_MAXFILE) {
         /* Read-only display of the dynamically-sized editor buffer.
          * Enter is a no-op; the value is fixed at editor_init() time. */
+    } else if (idx == SETTINGS_IDX_DATETIME) {
+        open_datetime_picker();
     } else if (idx == SETTINGS_IDX_LAYOUTS) {
         /* Open the active-layouts checklist sub-list. Each row toggles
          * immediately on Enter (applied + persisted on the spot); Esc
@@ -5219,6 +5441,41 @@ static void settings_activate_item(int idx)
 
 static void handle_settings_key(const kb_event_t *ev)
 {
+    if (s_datetime_picker_open) {
+        switch (ev->keycode) {
+        case KB_KEY_UP:
+            if (s_datetime_picker_sel > 0) s_datetime_picker_sel--;
+            update_datetime_picker_highlight();
+            break;
+        case KB_KEY_DOWN:
+            if (s_datetime_picker_sel < DT_ROW_COUNT - 1) s_datetime_picker_sel++;
+            update_datetime_picker_highlight();
+            break;
+        case KB_KEY_LEFT:
+            datetime_adjust(-1);
+            break;
+        case KB_KEY_RIGHT:
+            datetime_adjust(1);
+            break;
+        case KB_KEY_ENTER:
+            if (s_datetime_picker_sel == DT_ROW_CANCEL) {
+                close_datetime_picker();
+            } else if (s_datetime_picker_sel == DT_ROW_SYNC) {
+                start_datetime_sync();
+            } else {
+                /* Enter on any field also saves: fewer key presses. */
+                save_datetime_picker();
+            }
+            break;
+        case KB_KEY_ESCAPE:
+            close_datetime_picker();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
     if (s_restart_confirm_open) {
         switch (ev->keycode) {
         case KB_KEY_UP:
