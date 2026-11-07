@@ -22,6 +22,10 @@ in the git log.
   (connecting and disconnecting again if WiFi was off), and a status
   line shows whether the clock chip is working and when the time was
   last fetched.
+- **Views**: F2, F3, F4 and F5 switch to Today, Week, Month and Notes
+  from any screen, and the F1 menu lists them too. Your open file,
+  cursor and unsaved text are kept while you are away from Notes.
+  Today, Week and Month are placeholders for now.
 - **Local time zone**: a new build option, `DRAFTLING_TIMEZONE`, sets
   the time zone for dates shown on the device (UTC unless the board
   preset changes it). Git commits still use UTC.
@@ -40,6 +44,9 @@ in the git log.
   Tested on a Hardware Version 3.0 board. See HARDWARE.md.
 
 ### Changed
+
+- **Rename a file with R**: in the file browser, rename moved from F2
+  to R, because F2 now opens Today. Alt+R still works.
 
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the
   `microjournal_rev5_0` and `microjournal_rev5_1` build presets are

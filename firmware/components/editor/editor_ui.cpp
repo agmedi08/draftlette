@@ -50,6 +50,7 @@
 #include "display_flip.h"
 #include "standby.h"
 #include "time_sync.h"
+#include "planner_ui.h"
 #include "greybeard.h"
 #include "battery.h"
 #include "wifi_icon.h"
@@ -844,20 +845,24 @@ static bool      s_menu_open    = false;
  * Use the MENU_IDX_* constants instead of bare integers everywhere
  * downstream so the two layouts stay in lock-step (mirrors the
  * SETTINGS_IDX_* convention used by the Settings submenu below). */
-#define MENU_IDX_SETTINGS        0
-#define MENU_IDX_BLE_STATUS      1
-#define MENU_IDX_BLE_SCAN        2
-#define MENU_IDX_WIFI_CONNECT    3
-#define MENU_IDX_WIFI_NEW        4
-#define MENU_IDX_WIFI_DISCONNECT 5
-#define MENU_IDX_GIT_SYNC        6
-#define MENU_IDX_DRAFTBOX        7
-#define MENU_IDX_KB_LAYOUT       8
+#define MENU_IDX_TODAY           0
+#define MENU_IDX_WEEK            1
+#define MENU_IDX_MONTH           2
+#define MENU_IDX_NOTES           3
+#define MENU_IDX_SETTINGS        4
+#define MENU_IDX_BLE_STATUS      5
+#define MENU_IDX_BLE_SCAN        6
+#define MENU_IDX_WIFI_CONNECT    7
+#define MENU_IDX_WIFI_NEW        8
+#define MENU_IDX_WIFI_DISCONNECT 9
+#define MENU_IDX_GIT_SYNC        10
+#define MENU_IDX_DRAFTBOX        11
+#define MENU_IDX_KB_LAYOUT       12
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-#define MENU_IDX_USB_MSC         9
-#define _MENU_NEXT_AFTER_USB_MSC 10
+#define MENU_IDX_USB_MSC         13
+#define _MENU_NEXT_AFTER_USB_MSC 14
 #else
-#define _MENU_NEXT_AFTER_USB_MSC 9
+#define _MENU_NEXT_AFTER_USB_MSC 13
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 #define MENU_IDX_KERMIT          _MENU_NEXT_AFTER_USB_MSC
@@ -1024,7 +1029,7 @@ static lv_obj_t *s_save_cur      = NULL;   /* blinking cursor in name field */
 static bool      s_save_open     = false;
 static char      s_save_buf[128] = "";     /* editable filename (no directory) */
 static int       s_save_pos      = 0;      /* cursor position in s_save_buf (byte) */
-/* The same overlay renames the file browser's selected file (F2 or Alt+R):
+/* The same overlay renames the file browser's selected file (R or Alt+R):
  * s_rename_src then holds the full path of the file being renamed and
  * the panel is moved onto whichever screen is showing the browser. */
 static bool      s_save_is_rename = false;
@@ -3902,7 +3907,7 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
-    snprintf(buf, buf_size, "F1:Menu  N:New  F2:Rename");
+    snprintf(buf, buf_size, "F1:Menu  N:New  R:Rename");
 }
 
 static void refresh_file_list(const char *select_name = NULL)
@@ -4007,6 +4012,7 @@ extern "C" void editor_ui_show_file_browser(void)
          * and swallows keystrokes, so make the editor screen active and
          * paint both panes before overlaying the selector. */
         s_editor_screen_active = true;
+        planner_ui_deactivate();
         if (lv_scr_act() != s_scr) {
             lv_scr_load(s_scr);
             editor_ui_refresh();
@@ -4019,6 +4025,7 @@ extern "C" void editor_ui_show_file_browser(void)
      * refresh gating switch over immediately, regardless of the focused
      * pane's per-document editor mode (see s_editor_screen_active). */
     s_editor_screen_active = false;
+    planner_ui_deactivate();
 
     /* Single-pane: opening a file replaces the current document, so
      * close it now (historical behavior; the buffer is reloaded
@@ -4061,6 +4068,7 @@ extern "C" void editor_ui_show_file_browser(void)
 extern "C" void editor_ui_show_editor(void)
 {
     s_editor_screen_active = true;
+    planner_ui_deactivate();
     editor_set_mode(EDITOR_MODE_EDITING);
     sync_battery_labels();
     lv_scr_load(s_scr);
@@ -4335,6 +4343,10 @@ struct menu_hotkey_t {
 };
 
 static const menu_hotkey_t s_menu_hotkeys[] = {
+    { MENU_IDX_TODAY,           't', 0  },  /* "Today (F2)" */
+    { MENU_IDX_WEEK,            'e', 1  },  /* "Week (F3)" */
+    { MENU_IDX_MONTH,           'm', 0  },  /* "Month (F4)" */
+    { MENU_IDX_NOTES,           'o', 1  },  /* "Notes (F5)" */
     { MENU_IDX_SETTINGS,        's', 0  },  /* "Settings..." */
     { MENU_IDX_BLE_SCAN,        'l', 1  },  /* "BLE: Start scan" */
     { MENU_IDX_WIFI_CONNECT,    'w', 0  },  /* "WiFi: ..." */
@@ -4433,20 +4445,26 @@ static void refresh_menu_items(void)
 
     char buf[80];
 
-    /* 0: Settings */
+    /* Views */
+    lv_list_add_btn(s_menu_list, NULL, "Today (F2)");
+    lv_list_add_btn(s_menu_list, NULL, "Week (F3)");
+    lv_list_add_btn(s_menu_list, NULL, "Month (F4)");
+    lv_list_add_btn(s_menu_list, NULL, "Notes (F5)");
+
+    /* Settings */
     lv_list_add_btn(s_menu_list, NULL, "Settings...");
 
-    /* 1: BLE status */
+    /* BLE status */
     snprintf(buf, sizeof(buf), "BLE: %s",
              ble_keyboard_is_connected()
                  ? ble_keyboard_get_device_name()
                  : "not connected");
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 2: BLE scan */
+    /* BLE scan */
     lv_list_add_btn(s_menu_list, NULL, "BLE: Start scan");
 
-    /* 3: WiFi status / connect to the configured (wifi.cfg / NVS) SSID */
+    /* WiFi status / connect to the configured (wifi.cfg / NVS) SSID */
     if (wifi_manager_is_connected()) {
         snprintf(buf, sizeof(buf), "WiFi: %s (%s)",
                  wifi_manager_get_ssid(), wifi_manager_get_ip());
@@ -4460,27 +4478,27 @@ static void refresh_menu_items(void)
     }
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 4: WiFi scan / pick a new network */
+    /* WiFi scan / pick a new network */
     lv_list_add_btn(s_menu_list, NULL, "WiFi: New connection...");
 
-    /* 5: WiFi disconnect */
+    /* WiFi disconnect */
     lv_list_add_btn(s_menu_list, NULL, "WiFi: Disconnect");
 
-    /* 6: Git sync */
+    /* Git sync */
     snprintf(buf, sizeof(buf), "Git Sync%s",
              git_sync_is_configured() ? "" : " (not configured)");
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 7: Draftbox one-time password -> git.cfg */
+    /* Draftbox one-time password -> git.cfg */
     lv_list_add_btn(s_menu_list, NULL, "Connect a Draftbox repository...");
 
-    /* 8: Keyboard layout */
+    /* Keyboard layout */
     snprintf(buf, sizeof(buf), "Keyboard: %s  (Enter to cycle)",
              kb_layout_name(kb_layout_get()));
     lv_list_add_btn(s_menu_list, NULL, buf);
 
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-    /* 9: SD card via USB. Shows the staged choice (s_usbmsc_pending_mode),
+    /* SD card via USB. Shows the staged choice (s_usbmsc_pending_mode),
      * not necessarily what usb_msc is doing right now -- see the
      * picker opened from menu_activate_item() and applied by
      * commit_usb_msc_pending_mode(). See usbmsc_item_disabled() for
@@ -4646,13 +4664,42 @@ static void commit_usb_msc_pending_mode(void)
 }
 #endif
 
-static void close_menu(void)
+/* ---- Views ----
+ * Today, Week and Month live in planner_ui; Notes is the editor / file
+ * browser. While a planner view is up, s_editor_screen_active still
+ * records which Notes screen to come back to. The open document stays
+ * in memory, so nothing is saved or closed by switching. */
+static void show_planner_view(planner_view_t view)
 {
-    s_menu_open = false;
+    const planner_ui_style_t style = {
+        FONT_18, FONT_14, FONT_11, theme_fg(), theme_bg()
+    };
+    lv_obj_t *scr = planner_ui_render(view, &style);
+#if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
+    /* Same missing-repaint bug as show_menu() -- see its comment. */
+    display_clear(0xFF);
+    lv_obj_invalidate(scr);
+#endif
+    lv_scr_load(scr);
+}
+
+/* Not editor_ui_show_file_browser() directly when a document is open:
+ * it closes the document. */
+static void show_notes_view(void)
+{
     if (s_editor_screen_active)
         editor_ui_show_editor();
     else
         editor_ui_show_file_browser();
+}
+
+static void close_menu(void)
+{
+    s_menu_open = false;
+    if (planner_ui_is_active())
+        show_planner_view(planner_ui_current());
+    else
+        show_notes_view();
 }
 
 /* ---- Settings screen ---- */
@@ -6571,6 +6618,22 @@ static void open_fmt_picker(void)
 static void menu_activate_item(int idx)
 {
     switch (idx) {
+    case MENU_IDX_TODAY:
+        s_menu_open = false;
+        show_planner_view(PLANNER_VIEW_TODAY);
+        break;
+    case MENU_IDX_WEEK:
+        s_menu_open = false;
+        show_planner_view(PLANNER_VIEW_WEEK);
+        break;
+    case MENU_IDX_MONTH:
+        s_menu_open = false;
+        show_planner_view(PLANNER_VIEW_MONTH);
+        break;
+    case MENU_IDX_NOTES:
+        s_menu_open = false;
+        show_notes_view();
+        break;
     case MENU_IDX_SETTINGS:
         show_settings();
         break;
@@ -6700,6 +6763,8 @@ static void menu_activate_item(int idx)
          * the dialog is drawn on the editor screen it lives on. With no
          * unsaved changes (or if the menu was opened from the file
          * browser) go straight to deep sleep. */
+        if (s_editor_screen_active && editor_is_modified())
+            planner_ui_deactivate();
         close_menu();
         if (s_editor_screen_active && editor_is_modified()) {
             show_sleep_prompt();
@@ -6911,6 +6976,7 @@ static void help_heading(std::string &out, const char *title)
 static void help_common_rows(std::string &out, int cols, int kc)
 {
     help_row(out, cols, kc, "F1, Ctrl+M", "Menu");
+    help_row(out, cols, kc, "F2 to F5", "Views: Today, Week, Month, Notes");
     help_row(out, cols, kc, "F10", "This help");
     help_row(out, cols, kc, "Ctrl+1", "Single pane");
     help_row(out, cols, kc, "Ctrl+2", "Split into two equal panes");
@@ -6966,7 +7032,7 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Esc", "Back to the editor");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
-        help_row(out, cols, kc, "F2, Alt+R", "Rename the file");
+        help_row(out, cols, kc, "R, Alt+R", "Rename the file");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file (with Git sync: only once it is pushed)");
         help_row(out, cols, kc, "Alt+L", "Set or remove a password for opening the file");
         help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
@@ -7399,6 +7465,10 @@ static void show_browser_fileinfo(void)
 static void close_help(void)
 {
     s_help_open = false;
+    if (planner_ui_is_active()) {
+        show_planner_view(planner_ui_current());
+        return;
+    }
     switch (s_help_origin) {
     case HELP_FROM_EDITOR:
         editor_ui_show_editor();
@@ -7542,7 +7612,7 @@ static void show_save_prompt(void)
     refresh_save_prompt();
 }
 
-/* F2 / Alt+R in the file browser: ask for a new name for the selected file. */
+/* R / Alt+R in the file browser: ask for a new name for the selected file. */
 static void show_rename_prompt(void)
 {
     if (!s_save_panel || !s_browser_list) return;
@@ -9422,7 +9492,7 @@ static void show_inpane_browser(void)
     /* The editor screen stays active (the other pane keeps rendering);
      * keystrokes are rerouted by the s_inpane_browser_open check in
      * process_key_event. */
-    editor_ui_set_status("Open into pane: Enter  N:new  F2:rename  Esc:cancel");
+    editor_ui_set_status("Open into pane: Enter  N:new  R:rename  Esc:cancel");
 }
 
 /* Dismiss the in-pane file selector and restore the full-screen list
@@ -9718,8 +9788,8 @@ static void handle_browser_key(const kb_event_t *ev)
         show_browser_fileinfo();
         return;
     }
-    if (ev->keycode == KB_KEY_F2 || (ch == 'r' && alt && !ctrl)) {
-        /* F2 / Alt+R: rename the selected file (and its metadata
+    if (ch == 'r' && !ctrl) {
+        /* R / Alt+R: rename the selected file (and its metadata
          * sidecar). */
         show_rename_prompt();
         return;
@@ -9825,6 +9895,59 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
 }
 
 /* Process a single key event (must be called with LVGL lock held). */
+/* F2-F5 switch views from any screen. Returns true when the key was
+ * one of them, used or not. They do nothing during a prompt or inside a
+ * sub-picker, so a half-answered question is never dropped. */
+static bool handle_view_key(const kb_event_t *ev)
+{
+    if (ev->keycode < KB_KEY_F2 || ev->keycode > KB_KEY_F5) return false;
+
+    if (lv_scr_act() == s_scr_ble_prompt) return true;
+    if (s_msg_open || s_save_open || s_newfmt_open || s_del_open || s_pw_open ||
+        s_exit_open || s_search_open || s_wifi_pw_open || s_dbx_open) {
+        return true;
+    }
+    bool menu_sub = s_wifi_scan_picker_open || s_fmt_step != FMT_STEP_NONE;
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+    menu_sub = menu_sub || s_usbmsc_picker_open;
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    menu_sub = menu_sub || s_kermit_picker_open;
+#endif
+    if (s_menu_open && menu_sub) return true;
+
+    /* s_restart_needed: leaving Settings must go through its prompt. */
+    bool settings_sub = s_restart_needed || s_restart_confirm_open ||
+                        s_factory_reset_confirm || s_layouts_picker_open ||
+                        s_datetime_picker_open;
+#if defined(CONFIG_DRAFTLING_DISPLAY_COLOR)
+    settings_sub = settings_sub || s_theme_picker_open;
+#endif
+    if (s_settings_open && settings_sub) return true;
+
+    bool on_notes = !planner_ui_is_active() && !s_menu_open &&
+                    !s_settings_open && !s_help_open;
+    s_menu_open = false;
+    s_settings_open = false;
+    s_help_open = false;
+
+    switch (ev->keycode) {
+    case KB_KEY_F2: show_planner_view(PLANNER_VIEW_TODAY); break;
+    case KB_KEY_F3: show_planner_view(PLANNER_VIEW_WEEK);  break;
+    case KB_KEY_F4: show_planner_view(PLANNER_VIEW_MONTH); break;
+    default:
+        if (!on_notes) show_notes_view();
+        break;
+    }
+    return true;
+}
+
+/* Planner screens only know F1 so far; F2-F5 are handled above. */
+static void handle_planner_key(const kb_event_t *ev)
+{
+    if (ev->keycode == KB_KEY_F1) show_menu();
+}
+
 static void process_key_event(const kb_event_t *ev)
 {
     /* Normalize Keypad Enter to regular Enter so all handlers
@@ -9851,6 +9974,8 @@ static void process_key_event(const kb_event_t *ev)
     }
 
     const kb_event_t *e = &norm;
+
+    if (handle_view_key(e)) return;
 
     if (s_msg_open) {
         /* Modal over whatever screen it was raised on. */
@@ -9881,6 +10006,8 @@ static void process_key_event(const kb_event_t *ev)
         handle_help_key(e);
     } else if (s_menu_open) {
         handle_menu_key(e);
+    } else if (planner_ui_is_active()) {
+        handle_planner_key(e);
     } else if (s_inpane_browser_open) {
         /* Split-mode in-pane file selector overlays the editor screen
          * (s_editor_screen_active stays true), so it must be checked
@@ -10120,6 +10247,8 @@ static void apply_pending_sleep_request(void)
         }
         return;
     }
+    /* The prompt is drawn on the editor screen. */
+    if (planner_ui_is_active()) show_notes_view();
     show_sleep_prompt();
 }
 
@@ -10232,7 +10361,9 @@ static void apply_pending_connect_state(void)
              * does not inherit a sticky press that would absorb
              * the first tap. */
             lv_indev_reset(NULL, NULL);
-            if (s_editor_screen_active) {
+            if (planner_ui_is_active()) {
+                show_planner_view(planner_ui_current());
+            } else if (s_editor_screen_active) {
                 /* Restore the editor -- file contents are still in
                  * the gap buffer; no need to close/reopen. */
                 lv_scr_load(s_scr);
@@ -10947,7 +11078,7 @@ static void build_screens(void)
     lv_obj_set_width(s_lbl_br_status, SCR_W - 4);
     lv_obj_set_style_text_font(s_lbl_br_status, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_br_status, theme_fg(), 0);
-    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  F2:Rename");
+    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  R:Rename");
 
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     /* Device battery label (right-aligned in browser status bar) */
