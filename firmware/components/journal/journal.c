@@ -11,6 +11,7 @@
 #define LINE_MAX_LEN (JOURNAL_TEXT_MAX + 32)
 #define MOVED_MARK   " -> "
 #define DATE_LEN     10
+#define HEADER_MAX_LEN 40
 
 static char s_root[160] = "/sdcard";
 
@@ -19,10 +20,11 @@ void journal_set_root(const char *root)
     snprintf(s_root, sizeof(s_root), "%s", root);
 }
 
-static void day_path(char *out, size_t out_sz, int y, int m, int d)
+static void page_path(char *out, size_t out_sz, const journal_day_t *day)
 {
-    snprintf(out, out_sz, "%s/journal/%04d/%02d/%04d-%02d-%02d.md",
-             s_root, y, m, y, m, d);
+    int y = day->year, m = day->month;
+    snprintf(out, out_sz, "%s/journal/%04d/%02d/%04d-%02d-%02d%s.md",
+             s_root, y, m, y, m, day->day, day->is_week ? "-week" : "");
 }
 
 static bool file_exists(const char *path)
@@ -64,11 +66,28 @@ void journal_date_add(int *year, int *month, int *day_of_month, int delta)
     *day_of_month = t.tm_mday;
 }
 
-static void format_header(char *out, size_t out_sz, int y, int m, int d)
+void journal_week_start(int *year, int *month, int *day_of_month)
 {
     struct tm t;
-    date_to_tm(&t, y, m, d);
-    strftime(out, out_sz, "# %a %Y-%m-%d", &t);
+    date_to_tm(&t, *year, *month, *day_of_month);
+    journal_date_add(year, month, day_of_month, -((t.tm_wday + 6) % 7));
+}
+
+static void format_header(char *out, size_t out_sz, const journal_day_t *day)
+{
+    struct tm t;
+    date_to_tm(&t, day->year, day->month, day->day);
+    if (!day->is_week) {
+        strftime(out, out_sz, "# %a %Y-%m-%d", &t);
+        return;
+    }
+
+    struct tm sunday;
+    char first[16], last[16];
+    date_to_tm(&sunday, day->year, day->month, day->day + 6);
+    strftime(first, sizeof(first), "%Y-%m-%d", &t);
+    strftime(last, sizeof(last), "%Y-%m-%d", &sunday);
+    snprintf(out, out_sz, "# %s to %s", first, last);
 }
 
 static void set_text(journal_bullet_t *b, journal_kind_t kind, const char *text)
@@ -134,17 +153,19 @@ static void write_bullet(FILE *f, const journal_bullet_t *b)
     }
 }
 
-int journal_load(journal_day_t *day, int year, int month, int day_of_month)
+static int load_page(journal_day_t *day, int year, int month,
+                     int day_of_month, bool is_week)
 {
     if (!day) return JOURNAL_ERR_ARG;
     day->year = year;
     day->month = month;
     day->day = day_of_month;
+    day->is_week = is_week;
     day->count = 0;
 
     char path[PATH_MAX_LEN];
     char tmp[PATH_MAX_LEN + 4];
-    day_path(path, sizeof(path), year, month, day_of_month);
+    page_path(path, sizeof(path), day);
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
 
     /* journal_save() was cut off between its remove and rename. */
@@ -153,8 +174,8 @@ int journal_load(journal_day_t *day, int year, int month, int day_of_month)
     FILE *f = fopen(path, "r");
     if (!f) return file_exists(path) ? JOURNAL_ERR_IO : JOURNAL_OK;
 
-    char header[32];
-    format_header(header, sizeof(header), year, month, day_of_month);
+    char header[HEADER_MAX_LEN];
+    format_header(header, sizeof(header), day);
 
     char line[LINE_MAX_LEN];
     int ret = JOURNAL_OK;
@@ -185,16 +206,22 @@ int journal_load(journal_day_t *day, int year, int month, int day_of_month)
     return ret;
 }
 
-int journal_save(const journal_day_t *day)
+int journal_load(journal_day_t *day, int year, int month, int day_of_month)
 {
-    if (!day) return JOURNAL_ERR_ARG;
+    return load_page(day, year, month, day_of_month, false);
+}
 
-    char path[PATH_MAX_LEN];
+int journal_load_week(journal_day_t *week, int year, int month,
+                      int day_of_month)
+{
+    journal_week_start(&year, &month, &day_of_month);
+    return load_page(week, year, month, day_of_month, true);
+}
+
+static int write_page(const journal_day_t *day, const char *path)
+{
     char tmp[PATH_MAX_LEN + 4];
-    day_path(path, sizeof(path), day->year, day->month, day->day);
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
-
-    if (day->count == 0 && !file_exists(path)) return JOURNAL_OK;
 
     int ret = make_dirs(day->year, day->month);
     if (ret != JOURNAL_OK) return ret;
@@ -204,8 +231,8 @@ int journal_save(const journal_day_t *day)
     FILE *f = fopen(tmp, "w");
     if (!f) return JOURNAL_ERR_IO;
 
-    char header[32];
-    format_header(header, sizeof(header), day->year, day->month, day->day);
+    char header[HEADER_MAX_LEN];
+    format_header(header, sizeof(header), day);
     fprintf(f, "%s\n\n", header);
     for (int i = 0; i < day->count; i++) write_bullet(f, &day->bullets[i]);
 
@@ -223,11 +250,32 @@ int journal_save(const journal_day_t *day)
     return rename(tmp, path) == 0 ? JOURNAL_OK : JOURNAL_ERR_IO;
 }
 
+int journal_save(const journal_day_t *day)
+{
+    if (!day) return JOURNAL_ERR_ARG;
+
+    char path[PATH_MAX_LEN];
+    page_path(path, sizeof(path), day);
+    if (day->count == 0 && !file_exists(path)) return JOURNAL_OK;
+    return write_page(day, path);
+}
+
+int journal_create(const journal_day_t *day)
+{
+    if (!day) return JOURNAL_ERR_ARG;
+
+    char path[PATH_MAX_LEN];
+    page_path(path, sizeof(path), day);
+    if (file_exists(path)) return JOURNAL_OK;
+    return write_page(day, path);
+}
+
 int journal_migrate(journal_day_t *src, int idx, int year, int month,
                     int day_of_month)
 {
     if (!src || idx < 0 || idx >= src->count) return JOURNAL_ERR_ARG;
-    if (year == src->year && month == src->month && day_of_month == src->day) {
+    if (!src->is_week && year == src->year && month == src->month &&
+        day_of_month == src->day) {
         return JOURNAL_ERR_ARG;
     }
 

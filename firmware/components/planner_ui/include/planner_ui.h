@@ -1,6 +1,7 @@
 #pragma once
 
-/* planner_ui: the Today, Week and Month screens.
+/* planner_ui: the Today, Week and Month screens, plus the day and weekly
+ * pages opened from the Week grid.
  *
  * This component only draws them. The caller loads the returned screen
  * and routes keys, so it stays in charge of what is on the display. */
@@ -18,6 +19,8 @@ typedef enum {
     PLANNER_VIEW_TODAY,
     PLANNER_VIEW_WEEK,
     PLANNER_VIEW_MONTH,
+    PLANNER_VIEW_DAY,       /* reached only from the Week grid */
+    PLANNER_VIEW_WEEKLY,    /* reached only from the Week grid */
 } planner_view_t;
 
 typedef struct {

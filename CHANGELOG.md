@@ -27,7 +27,18 @@ in the git log.
 - **Views**: F2, F3, F4 and F5 switch to Today, Week, Month and Notes
   from any screen, and the F1 menu lists them too. Your open file,
   cursor and unsaved text are kept while you are away from Notes.
-  Week and Month are placeholders for now.
+  Month is a placeholder for now.
+- **Week view**: F3 now shows the current week as eight boxes, one for
+  each day plus "This week". Each box lists that day's tasks, events
+  and `!` bullets, one line each, with `...` on long lines and
+  `+N more` when they do not all fit. The knob moves between the boxes
+  and Enter opens one, creating its file if there is none yet. Esc goes
+  back to the week.
+- **Weekly page**: the "This week" box opens a bullet page for items
+  with no particular day. It works like a day, is headed with the
+  week's dates, and is saved as
+  `/journal/YYYY/MM/YYYY-MM-DD-week.md`, named after the Monday.
+  Migrating an item moves it to a chosen day.
 - **Today bullet log**: a planner page for each day, with no file to
   create or name. Each day is saved as Markdown in
   `/journal/YYYY/MM/YYYY-MM-DD.md` as soon as you change it. Up/Down

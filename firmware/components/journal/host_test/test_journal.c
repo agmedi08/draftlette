@@ -108,6 +108,54 @@ int main(int argc, char **argv)
     assert(journal_load(&b, 2026, 11, 7) == JOURNAL_OK);
     assert(b.count == 1 && !strcmp(b.bullets[0].text, "crlf"));
 
+    /* Any date in a week finds its Monday, across a month end. */
+    y = 2026; m = 11; d = 8;
+    journal_week_start(&y, &m, &d);
+    assert(y == 2026 && m == 11 && d == 2);
+    journal_week_start(&y, &m, &d);
+    assert(y == 2026 && m == 11 && d == 2);
+    y = 2026; m = 11; d = 1;
+    journal_week_start(&y, &m, &d);
+    assert(y == 2026 && m == 10 && d == 26);
+
+    /* Opening a day creates its file once and keeps what is there. */
+    char made[256];
+    snprintf(made, sizeof(made), "%s/journal/2027/01/2027-01-04.md", argv[1]);
+    assert(journal_load(&b, 2027, 1, 4) == JOURNAL_OK && b.count == 0);
+    assert(journal_create(&b) == JOURNAL_OK);
+    assert(!strcmp(read_all(made), "# Mon 2027-01-04\n\n"));
+    put_file(made, "# Mon 2027-01-04\n\n- [ ] kept\n");
+    assert(journal_create(&b) == JOURNAL_OK);
+    assert(!strcmp(read_all(made), "# Mon 2027-01-04\n\n- [ ] kept\n"));
+
+    /* A weekly page is its own file, named after its Monday, and any
+     * date in the week loads it. */
+    char wk[256];
+    snprintf(wk, sizeof(wk), "%s/journal/2026/11/2026-11-02-week.md", argv[1]);
+    assert(journal_load_week(&a, 2026, 11, 7) == JOURNAL_OK);
+    assert(a.is_week && a.count == 0 && a.day == 2);
+    assert(journal_save(&a) == JOURNAL_OK);
+    assert(!fopen(wk, "r"));
+    assert(journal_create(&a) == JOURNAL_OK);
+    assert(!strcmp(read_all(wk), "# 2026-11-02 to 2026-11-08\n\n"));
+    a.bullets[a.count].kind = JOURNAL_TASK;
+    strcpy(a.bullets[a.count++].text, "whenever");
+    a.bullets[a.count].kind = JOURNAL_TASK;
+    strcpy(a.bullets[a.count++].text, "on monday");
+    assert(journal_save(&a) == JOURNAL_OK);
+    assert(journal_load_week(&a, 2026, 11, 2) == JOURNAL_OK);
+    assert(a.count == 2 && a.bullets[0].kind == JOURNAL_TASK);
+    assert(journal_load(&b, 2026, 11, 2) == JOURNAL_OK && b.count == 0);
+
+    /* The week's header does not come back as a bullet, and a weekly
+     * item can move to any day, its own Monday included. */
+    assert(journal_migrate(&a, 1, 2026, 11, 2) == JOURNAL_OK);
+    assert(journal_load(&b, 2026, 11, 2) == JOURNAL_OK && b.count == 1);
+    assert(!strcmp(b.bullets[0].text, "on monday") && !b.is_week);
+    assert(journal_load_week(&a, 2026, 11, 2) == JOURNAL_OK);
+    assert(a.count == 2 && a.bullets[1].kind == JOURNAL_MIGRATED);
+    assert(!strcmp(a.bullets[1].moved_to, "2026-11-02"));
+
     puts("journal tests passed");
     return 0;
 }

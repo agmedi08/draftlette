@@ -13,9 +13,19 @@
 #define BODY_TOP       30
 #define ROW_MAX        20
 
+/* The Week grid: Mon-Thu down the left column, Fri-Sun and the weekly
+ * page down the right. */
+#define GRID_BOXES     8
+#define GRID_PER_COL   4
+#define GRID_WEEKLY    7
+#define GRID_ROW_MAX   6
+
 #define HINT_VIEWS  "F1:Menu  F2:Today  F3:Week  F4:Month  F5:Notes"
 #define HINT_LIST   "Knob:move  Enter:edit  Space:done  Bksp:close  Tab:type"
+#define HINT_LIST_BACK  HINT_LIST "  Esc:week"
 #define HINT_EMPTY  "Knob down or Enter: new bullet"
+#define HINT_EMPTY_BACK HINT_EMPTY "  Esc:week"
+#define HINT_GRID   "Knob:move  Enter:open  F1:Menu"
 #define HINT_EDIT   "Enter:finish  Esc:cancel  Tab:type"
 #define HINT_CLOSE  "Knob:move  Enter:pick  Esc:back"
 #define HINT_DATE   "Knob:day  ? or ,:week  Enter:migrate  Esc:back"
@@ -46,8 +56,19 @@ static planner_ui_style_t s_style;
 static bool s_active;
 static planner_view_t s_view = PLANNER_VIEW_TODAY;
 
-/* Today. s_day is NULL until first shown; s_day_ok says it was loaded
- * and may be changed and saved. */
+/* Week grid. s_grid is the parent of every box, so one flag hides it. */
+static lv_obj_t *s_grid;
+static lv_obj_t *s_box[GRID_BOXES];
+static lv_obj_t *s_box_title[GRID_BOXES];
+static lv_obj_t *s_box_row[GRID_BOXES][GRID_ROW_MAX];
+static int s_box_rows;              /* item lines that fit in a box */
+static int s_grid_sel;
+static int s_week_year, s_week_month, s_week_day;   /* its Monday */
+
+/* The page on display: today's, or the one opened from the grid. s_day
+ * is NULL until first needed, and the grid borrows it to read each
+ * file; s_day_ok says it holds the page and may be changed and saved. */
+static int s_open_year, s_open_month, s_open_day;
 static journal_day_t *s_day;
 static bool s_day_ok;
 static today_mode_t s_mode = MODE_LIST;
@@ -84,6 +105,24 @@ static void build_screen(void)
         lv_obj_set_style_pad_left(s_rows[i], 2, 0);
     }
 
+    s_grid = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(s_grid);
+    lv_obj_remove_flag(s_grid, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_grid, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < GRID_BOXES; i++) {
+        s_box[i] = lv_obj_create(s_grid);
+        lv_obj_remove_style_all(s_box[i]);
+        lv_obj_remove_flag(s_box[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_opa(s_box[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(s_box[i], 1, 0);
+        s_box_title[i] = lv_label_create(s_box[i]);
+        lv_label_set_long_mode(s_box_title[i], LV_LABEL_LONG_CLIP);
+        for (int r = 0; r < GRID_ROW_MAX; r++) {
+            s_box_row[i][r] = lv_label_create(s_box[i]);
+            lv_label_set_long_mode(s_box_row[i][r], LV_LABEL_LONG_DOT);
+        }
+    }
+
     s_lbl_hint = lv_label_create(s_scr);
     lv_obj_set_width(s_lbl_hint, w - 4);
     lv_label_set_long_mode(s_lbl_hint, LV_LABEL_LONG_CLIP);
@@ -114,6 +153,32 @@ static void apply_style(const planner_ui_style_t *style)
         lv_obj_set_pos(s_rows[i], 4, BODY_TOP + i * row_h);
         lv_obj_set_size(s_rows[i], w - 8, row_h);
     }
+
+    /* The boxes use the small font: it is what fits a useful number of
+     * items in an eighth of the screen. */
+    int32_t box_w = (w - 12) / 2;
+    int32_t box_h = room / GRID_PER_COL;
+    int32_t line_h = lv_font_get_line_height(style->hint_font) + 1;
+    s_box_rows = (int)((box_h - 3) / line_h) - 1;
+    if (s_box_rows > GRID_ROW_MAX) s_box_rows = GRID_ROW_MAX;
+    if (s_box_rows < 1) s_box_rows = 1;
+
+    lv_obj_set_pos(s_grid, 4, BODY_TOP - 2);
+    lv_obj_set_size(s_grid, w - 8, box_h * GRID_PER_COL);
+    for (int i = 0; i < GRID_BOXES; i++) {
+        lv_obj_set_pos(s_box[i], (i / GRID_PER_COL) * (box_w + 4),
+                       (i % GRID_PER_COL) * box_h);
+        lv_obj_set_size(s_box[i], box_w, box_h - 1);
+        lv_obj_set_style_border_color(s_box[i], style->fg, 0);
+        lv_obj_set_style_text_font(s_box_title[i], style->hint_font, 0);
+        lv_obj_set_pos(s_box_title[i], 2, 0);
+        lv_obj_set_size(s_box_title[i], box_w - 6, line_h);
+        for (int r = 0; r < GRID_ROW_MAX; r++) {
+            lv_obj_set_style_text_font(s_box_row[i][r], style->hint_font, 0);
+            lv_obj_set_pos(s_box_row[i][r], 2, (r + 1) * line_h);
+            lv_obj_set_size(s_box_row[i][r], box_w - 6, line_h);
+        }
+    }
 }
 
 static void set_row(int i, const char *text, bool selected)
@@ -133,6 +198,7 @@ static void hide_rows_from(int first)
 
 static void show_body(const char *text, const char *hint)
 {
+    lv_obj_add_flag(s_grid, LV_OBJ_FLAG_HIDDEN);
     hide_rows_from(0);
     lv_obj_remove_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_lbl_body, text);
@@ -150,7 +216,19 @@ static void date_to_tm(struct tm *t, int y, int m, int d)
     mktime(t);
 }
 
-/* ---- Today ---- */
+static void read_clock(struct tm *now)
+{
+    time_t t = time(NULL);
+    localtime_r(&t, now);
+}
+
+/* Day and weekly pages opened from the Week grid: Esc goes back to it. */
+static bool opened_from_grid(void)
+{
+    return s_view == PLANNER_VIEW_DAY || s_view == PLANNER_VIEW_WEEKLY;
+}
+
+/* ---- Bullet pages: Today, and a day or week opened from the grid ---- */
 
 static const char *bullet_prefix(journal_kind_t kind)
 {
@@ -188,7 +266,8 @@ static void render_bullets(void)
     if (s_day->count == 0) {
         set_row(0, "Nothing here yet.", false);
         hide_rows_from(1);
-        lv_label_set_text(s_lbl_hint, HINT_EMPTY);
+        lv_label_set_text(s_lbl_hint,
+                          opened_from_grid() ? HINT_EMPTY_BACK : HINT_EMPTY);
         return;
     }
 
@@ -211,7 +290,9 @@ static void render_bullets(void)
         set_row(row, line, i == s_sel);
     }
     hide_rows_from(row);
-    lv_label_set_text(s_lbl_hint, s_mode == MODE_EDIT ? HINT_EDIT : HINT_LIST);
+    lv_label_set_text(s_lbl_hint,
+                      s_mode == MODE_EDIT ? HINT_EDIT :
+                      opened_from_grid()  ? HINT_LIST_BACK : HINT_LIST);
 }
 
 static void render_closeout(void)
@@ -254,16 +335,32 @@ static void render_delete(void)
     lv_label_set_text(s_lbl_hint, HINT_DELETE);
 }
 
-static void render_today(void)
+static void format_page_title(char *out, size_t out_sz)
+{
+    struct tm t;
+    char date[20];
+
+    date_to_tm(&t, s_day->year, s_day->month, s_day->day);
+    strftime(date, sizeof(date), "%a %Y-%m-%d", &t);
+    if (s_day->is_week) {
+        struct tm sunday;
+        char last[20];
+        date_to_tm(&sunday, s_day->year, s_day->month, s_day->day + 6);
+        strftime(last, sizeof(last), "%a %Y-%m-%d", &sunday);
+        snprintf(out, out_sz, "%s - %s", date, last);
+    } else {
+        snprintf(out, out_sz, "%s%s",
+                 s_view == PLANNER_VIEW_TODAY ? "Today  " : "", date);
+    }
+}
+
+static void render_page(void)
 {
     if (!s_day_ok) return;
 
-    struct tm t;
-    char title[40];
-    date_to_tm(&t, s_day->year, s_day->month, s_day->day);
-    strftime(title, sizeof(title),
-             kb_layout_caps() ? "Today  %a %Y-%m-%d  CAPS"
-                              : "Today  %a %Y-%m-%d", &t);
+    char title[48];
+    format_page_title(title, sizeof(title) - 6);
+    if (kb_layout_caps()) strcat(title, "  CAPS");
     lv_label_set_text(s_lbl_title, title);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
 
@@ -300,7 +397,7 @@ static void remove_bullet(int idx)
 static void start_new_bullet(void)
 {
     if (s_day->count == JOURNAL_MAX_BULLETS) {
-        s_msg = "This day is full.";
+        s_msg = "This page is full.";
         return;
     }
     journal_bullet_t *b = &s_day->bullets[s_day->count];
@@ -386,6 +483,30 @@ static void open_closeout(void)
     s_mode = MODE_CLOSEOUT;
 }
 
+/* A day's bullet starts at the next day. A weekly item starts at today,
+ * or at the Monday of a week that is not this one. */
+static void start_migrate_date(void)
+{
+    s_mig_year = s_day->year;
+    s_mig_month = s_day->month;
+    s_mig_day = s_day->day;
+    if (!s_day->is_week) {
+        journal_date_add(&s_mig_year, &s_mig_month, &s_mig_day, 1);
+        return;
+    }
+
+    struct tm now;
+    read_clock(&now);
+    int y = now.tm_year + 1900, m = now.tm_mon + 1, d = now.tm_mday;
+    int wy = y, wm = m, wd = d;
+    journal_week_start(&wy, &wm, &wd);
+    if (wy == s_day->year && wm == s_day->month && wd == s_day->day) {
+        s_mig_year = y;
+        s_mig_month = m;
+        s_mig_day = d;
+    }
+}
+
 static void pick_closeout(void)
 {
     journal_bullet_t *b = &s_day->bullets[s_sel];
@@ -400,10 +521,7 @@ static void pick_closeout(void)
         save_day();
         break;
     case CLOSE_MIGRATE:
-        s_mig_year = s_day->year;
-        s_mig_month = s_day->month;
-        s_mig_day = s_day->day;
-        journal_date_add(&s_mig_year, &s_mig_month, &s_mig_day, 1);
+        start_migrate_date();
         s_mode = MODE_DATE;
         break;
     default:
@@ -578,33 +696,10 @@ static void key_delete(const kb_event_t *ev)
     }
 }
 
-void planner_ui_handle_key(const kb_event_t *ev)
+/* Returns NULL when the clock and the card are usable and s_day is
+ * allocated, or what to show instead. */
+static const char *check_ready(const struct tm *now)
 {
-    if (!s_active || s_view != PLANNER_VIEW_TODAY || !s_day_ok) return;
-
-    s_msg = NULL;
-    switch (s_mode) {
-    case MODE_EDIT:     key_edit(ev);     break;
-    case MODE_CLOSEOUT: key_closeout(ev); break;
-    case MODE_DATE:     key_date(ev);     break;
-    case MODE_DELETE:   key_delete(ev);   break;
-    default:            key_list(ev);     break;
-    }
-    render_today();
-}
-
-void planner_ui_commit_pending(void)
-{
-    if (s_day_ok && s_mode == MODE_EDIT) finish_edit();
-    s_mode = MODE_LIST;
-}
-
-/* Returns NULL when ready, or what to show instead of the day. */
-static const char *load_today(const struct tm *now)
-{
-    s_day_ok = false;
-    s_msg = NULL;
-
     if (now->tm_year + 1900 < MIN_VALID_YEAR) {
         return "The clock is not set.\n\nF1 > Settings > Date and time";
     }
@@ -615,52 +710,241 @@ static const char *load_today(const struct tm *now)
         s_day = calloc(1, sizeof(*s_day));
         if (!s_day) return "Out of memory.";
     }
+    journal_set_root(sd_card_get_mount_point());
+    return NULL;
+}
 
-    int y = now->tm_year + 1900, m = now->tm_mon + 1, d = now->tm_mday;
-    if (s_day->year != y || s_day->month != m || s_day->day != d) {
+/* Returns NULL when ready, or what to show instead of the page. */
+static const char *load_page(const struct tm *now, int y, int m, int d,
+                             bool is_week)
+{
+    s_day_ok = false;
+    s_msg = NULL;
+
+    const char *problem = check_ready(now);
+    if (problem) return problem;
+
+    if (s_day->year != y || s_day->month != m || s_day->day != d ||
+        s_day->is_week != is_week) {
         s_sel = 0;
         s_top = 0;
     }
 
-    journal_set_root(sd_card_get_mount_point());
-    int ret = journal_load(s_day, y, m, d);
+    int ret = is_week ? journal_load_week(s_day, y, m, d)
+                      : journal_load(s_day, y, m, d);
     if (ret == JOURNAL_ERR_TOO_BIG) {
-        return "Today's file is too big to show here.\n\nOpen it in Notes.";
+        return "This file is too big to show here.\n\nOpen it in Notes.";
     }
-    if (ret != JOURNAL_OK) return "Could not read today's file.";
+    if (ret != JOURNAL_OK) return "Could not read this file.";
 
     s_day_ok = true;
     clamp_sel();
     return NULL;
 }
 
-/* ---- Week and Month placeholders ---- */
-
-/* Monday first. Stepping tm_mday at noon lets mktime() handle month
- * ends, and noon stays clear of daylight-saving changes. */
-static void fill_week(const struct tm *now, char *out, size_t out_sz)
+/* Show the page s_view and s_open_* name. */
+static void show_page(const struct tm *now, bool create_file)
 {
-    struct tm day = *now;
-    day.tm_hour = 12;
-    day.tm_min = 0;
-    day.tm_sec = 0;
-    day.tm_isdst = -1;
-    day.tm_mday -= (now->tm_wday + 6) % 7;
+    lv_obj_add_flag(s_grid, LV_OBJ_FLAG_HIDDEN);
 
-    size_t used = 0;
-    for (int i = 0; i < 7; i++) {
-        struct tm d = day;
-        d.tm_mday += i;
-        mktime(&d);
-        char date[16];
-        strftime(date, sizeof(date), "%a %m-%d", &d);
-        bool today = d.tm_yday == now->tm_yday && d.tm_year == now->tm_year;
-        int n = snprintf(out + used, out_sz - used, "%s %s\n",
-                         today ? ">" : " ", date);
-        if (n < 0 || (size_t)n >= out_sz - used) break;
-        used += (size_t)n;
+    const char *problem = load_page(now, s_open_year, s_open_month, s_open_day,
+                                    s_view == PLANNER_VIEW_WEEKLY);
+    if (problem) {
+        show_body(problem, HINT_VIEWS);
+        return;
+    }
+    if (create_file && journal_create(s_day) != JOURNAL_OK) {
+        s_msg = "Could not create the file. Check the SD card.";
+    }
+    render_page();
+}
+
+/* ---- Week grid ---- */
+
+static bool shows_in_grid(journal_kind_t kind)
+{
+    return kind == JOURNAL_TASK || kind == JOURNAL_DONE ||
+           kind == JOURNAL_EVENT || kind == JOURNAL_TRACKER;
+}
+
+static void paint_box(int idx)
+{
+    bool selected = idx == s_grid_sel;
+    lv_color_t fg = selected ? s_style.bg : s_style.fg;
+
+    lv_obj_set_style_bg_color(s_box[idx], selected ? s_style.fg : s_style.bg, 0);
+    lv_obj_set_style_text_color(s_box_title[idx], fg, 0);
+    for (int r = 0; r < GRID_ROW_MAX; r++) {
+        lv_obj_set_style_text_color(s_box_row[idx][r], fg, 0);
     }
 }
+
+/* List what s_day holds in a box. When it does not all fit, the last
+ * line says how much is left out. */
+static void fill_box_items(int idx)
+{
+    char line[JOURNAL_TEXT_MAX + 8];
+    int total = 0;
+    int row = 0;
+
+    for (int i = 0; i < s_day->count; i++) {
+        if (shows_in_grid(s_day->bullets[i].kind)) total++;
+    }
+    int room = total > s_box_rows ? s_box_rows - 1 : total;
+
+    for (int i = 0; i < s_day->count && row < room; i++) {
+        const journal_bullet_t *b = &s_day->bullets[i];
+        if (!shows_in_grid(b->kind)) continue;
+        snprintf(line, sizeof(line), "%s%s", bullet_prefix(b->kind), b->text);
+        lv_label_set_text(s_box_row[idx][row++], line);
+    }
+    if (total > room) {
+        snprintf(line, sizeof(line), "+%d more", total - room);
+        lv_label_set_text(s_box_row[idx][row++], line);
+    }
+    while (row < GRID_ROW_MAX) lv_label_set_text(s_box_row[idx][row++], "");
+}
+
+static void fill_box(int idx, const char *title, int load_result)
+{
+    lv_label_set_text(s_box_title[idx], title);
+    fill_box_items(idx);    /* a failed load leaves nothing to list */
+    if (load_result != JOURNAL_OK) {
+        lv_label_set_text(s_box_row[idx][0],
+                          load_result == JOURNAL_ERR_TOO_BIG
+                              ? "Too big. Open it in Notes."
+                              : "Could not read this file.");
+    }
+    paint_box(idx);
+}
+
+/* keep_sel: stay on the same box, if this is still the same week. */
+static void show_grid(const struct tm *now, bool keep_sel)
+{
+    lv_label_set_text(s_lbl_title, "Week");
+
+    const char *problem = check_ready(now);
+    if (problem) {
+        show_body(problem, HINT_VIEWS);
+        return;
+    }
+
+    int y = now->tm_year + 1900, m = now->tm_mon + 1, d = now->tm_mday;
+    int today = (now->tm_wday + 6) % 7;
+    journal_week_start(&y, &m, &d);
+    if (!keep_sel || y != s_week_year || m != s_week_month || d != s_week_day) {
+        s_grid_sel = today;
+    }
+    s_week_year = y;
+    s_week_month = m;
+    s_week_day = d;
+
+    /* s_day is only a place to read into here. Loading the weekly page
+     * last leaves no day that a later page could mistake for its own. */
+    s_day_ok = false;
+    for (int i = 0; i < GRID_WEEKLY; i++) {
+        struct tm t;
+        char date[16];
+        char title[20];
+        int by = y, bm = m, bd = d;
+
+        journal_date_add(&by, &bm, &bd, i);
+        date_to_tm(&t, by, bm, bd);
+        strftime(date, sizeof(date), "%a %m-%d", &t);
+        snprintf(title, sizeof(title), "%s%s", i == today ? "> " : "", date);
+        fill_box(i, title, journal_load(s_day, by, bm, bd));
+    }
+    fill_box(GRID_WEEKLY, "This week", journal_load_week(s_day, y, m, d));
+
+    hide_rows_from(0);
+    lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_grid, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_lbl_hint, HINT_GRID);
+}
+
+static void open_box(int idx)
+{
+    struct tm now;
+    read_clock(&now);
+
+    s_open_year = s_week_year;
+    s_open_month = s_week_month;
+    s_open_day = s_week_day;
+    if (idx == GRID_WEEKLY) {
+        s_view = PLANNER_VIEW_WEEKLY;
+    } else {
+        s_view = PLANNER_VIEW_DAY;
+        journal_date_add(&s_open_year, &s_open_month, &s_open_day, idx);
+    }
+    s_sel = 0;
+    s_top = 0;
+    s_mode = MODE_LIST;
+    show_page(&now, true);
+}
+
+static void key_grid(const kb_event_t *ev)
+{
+    int old = s_grid_sel;
+
+    switch (ev->keycode) {
+    case KB_KEY_UP:
+        s_grid_sel = (s_grid_sel + GRID_BOXES - 1) % GRID_BOXES;
+        break;
+    case KB_KEY_DOWN:
+        s_grid_sel = (s_grid_sel + 1) % GRID_BOXES;
+        break;
+    case KB_KEY_ENTER:
+        open_box(s_grid_sel);
+        return;
+    default:
+        return;
+    }
+    paint_box(old);
+    paint_box(s_grid_sel);
+}
+
+static void back_to_grid(void)
+{
+    struct tm now;
+    read_clock(&now);
+    s_view = PLANNER_VIEW_WEEK;
+    show_grid(&now, true);
+}
+
+void planner_ui_handle_key(const kb_event_t *ev)
+{
+    if (!s_active) return;
+
+    if (s_view == PLANNER_VIEW_WEEK) {
+        /* No boxes up: the clock or the card stopped it. */
+        if (!lv_obj_has_flag(s_grid, LV_OBJ_FLAG_HIDDEN)) key_grid(ev);
+        return;
+    }
+    if (opened_from_grid() && s_mode == MODE_LIST &&
+        ev->keycode == KB_KEY_ESCAPE) {
+        back_to_grid();
+        return;
+    }
+    if (s_view == PLANNER_VIEW_MONTH || !s_day_ok) return;
+
+    s_msg = NULL;
+    switch (s_mode) {
+    case MODE_EDIT:     key_edit(ev);     break;
+    case MODE_CLOSEOUT: key_closeout(ev); break;
+    case MODE_DATE:     key_date(ev);     break;
+    case MODE_DELETE:   key_delete(ev);   break;
+    default:            key_list(ev);     break;
+    }
+    render_page();
+}
+
+void planner_ui_commit_pending(void)
+{
+    if (s_day_ok && s_mode == MODE_EDIT) finish_edit();
+    s_mode = MODE_LIST;
+}
+
+/* ---- Month placeholder ---- */
 
 static void fill_month(const struct tm *now, char *out, size_t out_sz)
 {
@@ -671,37 +955,48 @@ static void fill_month(const struct tm *now, char *out, size_t out_sz)
 
 lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style)
 {
-    static const char *const titles[] = { "Today", "Week", "Month" };
-
     if (!s_scr) build_screen();
     apply_style(style);
     planner_ui_commit_pending();
 
-    time_t t = time(NULL);
     struct tm now;
-    localtime_r(&t, &now);
+    read_clock(&now);
+
+    /* Coming back from a page or the menu, not arriving from elsewhere. */
+    bool keep_sel = s_active && (s_view == PLANNER_VIEW_WEEK ||
+                                 opened_from_grid());
 
     s_view = view;
     s_active = true;
-    lv_label_set_text(s_lbl_title, titles[view]);
 
-    if (view == PLANNER_VIEW_TODAY) {
-        const char *problem = load_today(&now);
-        if (problem) show_body(problem, HINT_VIEWS);
-        else render_today();
-        return s_scr;
+    switch (view) {
+    case PLANNER_VIEW_WEEK:
+        show_grid(&now, keep_sel);
+        break;
+    case PLANNER_VIEW_TODAY:
+        s_open_year = now.tm_year + 1900;
+        s_open_month = now.tm_mon + 1;
+        s_open_day = now.tm_mday;
+        lv_label_set_text(s_lbl_title, "Today");
+        show_page(&now, false);
+        break;
+    case PLANNER_VIEW_DAY:
+    case PLANNER_VIEW_WEEKLY:
+        show_page(&now, false);
+        break;
+    default: {
+        char body[192];
+        lv_label_set_text(s_lbl_title, "Month");
+        if (now.tm_year + 1900 < MIN_VALID_YEAR) {
+            snprintf(body, sizeof(body),
+                     "The clock is not set.\n\nF1 > Settings > Date and time");
+        } else {
+            fill_month(&now, body, sizeof(body));
+        }
+        show_body(body, HINT_VIEWS);
+        break;
     }
-
-    char body[192];
-    if (now.tm_year + 1900 < MIN_VALID_YEAR) {
-        snprintf(body, sizeof(body),
-                 "The clock is not set.\n\nF1 > Settings > Date and time");
-    } else if (view == PLANNER_VIEW_WEEK) {
-        fill_week(&now, body, sizeof(body));
-    } else {
-        fill_month(&now, body, sizeof(body));
     }
-    show_body(body, HINT_VIEWS);
     return s_scr;
 }
 

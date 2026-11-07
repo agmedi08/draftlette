@@ -13,7 +13,12 @@
  *   - note
  *
  * Any other line is kept untouched as JOURNAL_RAW, so hand edits made
- * in Notes survive. Blank lines are not kept. */
+ * in Notes survive. Blank lines are not kept.
+ *
+ * A weekly page holds items for a week but no particular day. It has
+ * the same bullets, is named after the week's Monday, and sits beside
+ * that day's file: <root>/journal/YYYY/MM/YYYY-MM-DD-week.md, headed
+ * "# 2026-11-02 to 2026-11-08". */
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,7 +53,8 @@ typedef struct {
 } journal_bullet_t;
 
 typedef struct {
-    int year, month, day;
+    int year, month, day;   /* a weekly page: its Monday */
+    bool is_week;
     int count;
     journal_bullet_t bullets[JOURNAL_MAX_BULLETS];
 } journal_day_t;
@@ -60,8 +66,17 @@ void journal_set_root(const char *root);
  * than a partial day, because saving a partial day would lose lines. */
 int journal_load(journal_day_t *day, int year, int month, int day_of_month);
 
+/* Load the weekly page for the week holding the given date. A week
+ * with no file loads as empty. */
+int journal_load_week(journal_day_t *week, int year, int month,
+                      int day_of_month);
+
 /* Writes the whole day. An empty day with no file creates nothing. */
 int journal_save(const journal_day_t *day);
+
+/* Make sure the day has a file, even with no bullets yet. A file that
+ * already exists is left alone. */
+int journal_create(const journal_day_t *day);
 
 /* Copy bullet idx to the given day as an open item, then mark it
  * migrated in src. The copy is saved first, so a failure can duplicate
@@ -71,6 +86,9 @@ int journal_migrate(journal_day_t *src, int idx, int year, int month,
 
 /* Move a date by delta days. */
 void journal_date_add(int *year, int *month, int *day_of_month, int delta);
+
+/* Move a date back to the Monday of its week. */
+void journal_week_start(int *year, int *month, int *day_of_month);
 
 #ifdef __cplusplus
 }
