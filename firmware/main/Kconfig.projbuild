@@ -884,9 +884,21 @@ config DRAFTLING_BACKLIGHT_MIN_PCT
     # Waveshare ESP32-S3-LCD-3.16: transmissive IPS panel that is too
     # dark to read at 10 %.
     default 25 if DRAFTLING_MODEL_WAVESHARE_LCD_316
+    # Elecrow CrowPanel 5.0": 10 % is still bright in a dark room;
+    # the 2 % and 5 % steps (DRAFTLING_BACKLIGHT_EXTRA_DIM) stay
+    # readable.
+    default 2 if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     # X4 Classic has no front-light, so DRAFTLING_DISPLAY_HAS_BACKLIGHT
     # is off there and this value is never consulted.
     default 10
+
+# Adds 2 % and 5 % steps below the 10 % backlight step, for panels
+# that are still too bright at 10 % at night. They are only offered
+# down to DRAFTLING_BACKLIGHT_MIN_PCT. Non-prompted; set per model.
+config DRAFTLING_BACKLIGHT_EXTRA_DIM
+    bool
+    depends on DRAFTLING_DISPLAY_HAS_BACKLIGHT
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
 
 # DRAFTLING_BL_DUTY_FLOOR_PCT shifts the bottom of the PWM duty
 # range so that the lowest UI brightness steps are still visible

@@ -30,6 +30,10 @@ in the git log.
 
 ### Changed
 
+- **Dimmer backlight on the Elecrow CrowPanel 5.0"**: the backlight
+  setting (F1 -> Settings, or `Ctrl+B`) now goes down to 5 % and 2 %,
+  for writing in a dark room.
+
 - **Long list items stay indented**: in Markdown files, when a numbered
   or bullet list item wraps onto more rows, those rows now line up with
   the item's text instead of starting under the number or bullet. This

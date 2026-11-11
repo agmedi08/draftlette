@@ -460,8 +460,14 @@ static const int BACKLIGHT_OPTIONS[] = {
      * this step. */
     0,
 #endif
+#if defined(CONFIG_DRAFTLING_BACKLIGHT_EXTRA_DIM) && \
+    (CONFIG_DRAFTLING_BACKLIGHT_MIN_PCT <= 2)
+    /* Night-time steps for panels still too bright at 10 %. */
+    2,
+#endif
 #if (CONFIG_DRAFTLING_BACKLIGHT_MIN_PCT <= 5) && \
-    (defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO) || \
+    (defined(CONFIG_DRAFTLING_BACKLIGHT_EXTRA_DIM) || \
+     defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO) || \
      defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752))
     /* Extra-dim step for the LilyGO T5 E-Paper S3 Pro / Pro Lite
      * front-light: 10 % is already usable in a dark room but some
