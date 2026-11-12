@@ -548,6 +548,37 @@ extern "C" esp_err_t sd_card_mkdir(const char *path)
     return (mkdir(tmp, 0755) == 0 || errno == EEXIST) ? ESP_OK : ESP_FAIL;
 }
 
+extern "C" esp_err_t sd_card_rmdir(const char *path)
+{
+    DIR *dir = opendir(path);
+    if (!dir) return ESP_FAIL;
+    /* First pass: refuse unless every entry is a hidden file. */
+    struct dirent *ent;
+    bool empty = true;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+        if (ent->d_name[0] != '.' || ent->d_type == DT_DIR) {
+            empty = false;
+            break;
+        }
+    }
+    if (!empty) {
+        closedir(dir);
+        return ESP_ERR_INVALID_STATE;
+    }
+    rewinddir(dir);
+    char full[512];
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+        snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
+        remove(full);
+    }
+    closedir(dir);
+    return (rmdir(path) == 0) ? ESP_OK : ESP_FAIL;
+}
+
 /* qsort() comparator: directories first, then files; both groups
  * sorted by name case-insensitively so the file browser shows a
  * predictable, alphabetical listing regardless of FAT directory

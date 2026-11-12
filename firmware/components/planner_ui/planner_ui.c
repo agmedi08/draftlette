@@ -21,14 +21,13 @@
 #define GRID_ROW_MAX   6
 
 #define HINT_VIEWS  "F1:Menu  F2:Today  F3:Week  F4:Month  F5:Notes"
-#define HINT_LIST   "Knob:move  Enter:edit  Space:done  Bksp:close  Tab:type"
-#define HINT_LIST_BACK  HINT_LIST "  Esc:week"
-#define HINT_EMPTY  "Knob down or Enter: new bullet"
-#define HINT_EMPTY_BACK HINT_EMPTY "  Esc:week"
-#define HINT_GRID   "Knob:move  Enter:open  F1:Menu"
+#define HINT_LIST   "Knob:move  Enter:edit  Spc:done  Bksp:close"
+#define HINT_LIST_NEW "Knob:move  Enter:new bullet"
+#define HINT_GRID   "Knob:move  Enter:open  ? or ,:week  F1:Menu"
 #define HINT_EDIT   "Enter:finish  Esc:cancel  Tab:type"
 #define HINT_CLOSE  "Knob:move  Enter:pick  Esc:back"
 #define HINT_DATE   "Knob:day  ? or ,:week  Enter:migrate  Esc:back"
+#define HINT_WEEK_PICK "Knob:week  Enter:migrate  Esc:back"
 #define HINT_DELETE "Enter:delete  Esc:keep"
 
 typedef enum {
@@ -42,6 +41,7 @@ typedef enum {
 typedef enum {
     CLOSE_CANCEL,
     CLOSE_MIGRATE,
+    CLOSE_MIGRATE_WEEK,
     CLOSE_REOPEN,
     CLOSE_BACK,
 } close_item_t;
@@ -63,7 +63,8 @@ static lv_obj_t *s_box_title[GRID_BOXES];
 static lv_obj_t *s_box_row[GRID_BOXES][GRID_ROW_MAX];
 static int s_box_rows;              /* item lines that fit in a box */
 static int s_grid_sel;
-static int s_week_year, s_week_month, s_week_day;   /* its Monday */
+static int s_week_year, s_week_month, s_week_day;   /* Monday of the week shown */
+static bool s_week_reset;           /* next render: back to the current week */
 
 /* The page on display: today's, or the one opened from the grid. s_day
  * is NULL until first needed, and the grid borrows it to read each
@@ -78,10 +79,31 @@ static const char *s_msg;           /* replaces the hint until the next key */
 static char s_edit[JOURNAL_TEXT_MAX];
 static bool s_edit_is_new;
 static journal_kind_t s_edit_old_kind;
-static close_item_t s_close_items[3];
+static close_item_t s_close_items[4];
 static int s_close_count;
 static int s_close_sel;
 static int s_mig_year, s_mig_month, s_mig_day;
+static bool s_mig_week;             /* to a weekly page, not a day */
+
+static void clamp_sel(void);
+
+/* ---- Windows ----
+ * A page is split into windows. Tab moves between the ones the page
+ * has, and the knob and keys work inside the one in focus. A window
+ * that is busy (typing, or a prompt) keeps Tab for itself. To add one,
+ * write these functions and add it to s_panes, below. */
+typedef struct {
+    const char *name;               /* for the "Tab:" hint */
+    bool (*available)(void);        /* on the page on display */
+    bool (*busy)(void);
+    void (*render)(bool focused);
+    void (*hide)(void);
+    const char *(*hint)(void);      /* while focused */
+    void (*key)(const kb_event_t *ev);
+    void (*commit)(void);           /* save typing and leave any prompt */
+} pane_t;
+
+static int s_focus;                 /* index into s_panes */
 
 static void build_screen(void)
 {
@@ -181,6 +203,11 @@ static void apply_style(const planner_ui_style_t *style)
     }
 }
 
+static int32_t row_width(void)
+{
+    return lv_display_get_horizontal_resolution(lv_display_get_default()) - 8;
+}
+
 static void set_row(int i, const char *text, bool selected)
 {
     lv_obj_remove_flag(s_rows[i], LV_OBJ_FLAG_HIDDEN);
@@ -244,55 +271,49 @@ static const char *bullet_prefix(journal_kind_t kind)
     }
 }
 
-/* The end of the text being typed, sized to fit the row. */
-static const char *edit_tail(size_t prefix_len)
+/* The end of the text being typed, sized to fit a row width px wide. */
+static const char *edit_tail(const char *text, size_t prefix_len, int32_t width)
 {
-    int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
     int32_t glyph = lv_font_get_glyph_width(s_style.body_font, 'M', 0);
-    size_t fit = (size_t)((w - 16) / (glyph > 0 ? glyph : 8));
+    size_t fit = (size_t)((width - 8) / (glyph > 0 ? glyph : 8));
     fit = fit > prefix_len + 1 ? fit - prefix_len - 1 : 1;
 
-    size_t len = strlen(s_edit);
-    if (len <= fit) return s_edit;
-    const char *p = s_edit + len - fit;
+    size_t len = strlen(text);
+    if (len <= fit) return text;
+    const char *p = text + len - fit;
     while ((*p & 0xC0) == 0x80) p++;    /* not mid UTF-8 character */
     return p;
 }
 
-static void render_bullets(void)
+/* The list ends in a "+ New" row, at index s_day->count, so the knob
+ * can wrap round past it. */
+static void render_bullets(bool focused)
 {
     char line[JOURNAL_TEXT_MAX + 32];
-
-    if (s_day->count == 0) {
-        set_row(0, "Nothing here yet.", false);
-        hide_rows_from(1);
-        lv_label_set_text(s_lbl_hint,
-                          opened_from_grid() ? HINT_EMPTY_BACK : HINT_EMPTY);
-        return;
-    }
 
     if (s_sel < s_top) s_top = s_sel;
     if (s_sel >= s_top + s_visible_rows) s_top = s_sel - s_visible_rows + 1;
 
     int row = 0;
-    for (int i = s_top; i < s_day->count && row < s_visible_rows; i++, row++) {
+    for (int i = s_top; i <= s_day->count && row < s_visible_rows; i++, row++) {
+        if (i == s_day->count) {
+            set_row(row, "+ New", focused && i == s_sel);
+            continue;
+        }
         const journal_bullet_t *b = &s_day->bullets[i];
         const char *prefix = bullet_prefix(b->kind);
         if (s_mode == MODE_EDIT && i == s_sel) {
             snprintf(line, sizeof(line), "%s%s_", prefix,
-                     edit_tail(strlen(prefix)));
+                     edit_tail(s_edit, strlen(prefix), row_width()));
         } else if (b->kind == JOURNAL_MIGRATED && b->moved_to[0]) {
             snprintf(line, sizeof(line), "%s%s -> %s", prefix, b->text,
                      b->moved_to + 5);
         } else {
             snprintf(line, sizeof(line), "%s%s", prefix, b->text);
         }
-        set_row(row, line, i == s_sel);
+        set_row(row, line, focused && i == s_sel);
     }
     hide_rows_from(row);
-    lv_label_set_text(s_lbl_hint,
-                      s_mode == MODE_EDIT ? HINT_EDIT :
-                      opened_from_grid()  ? HINT_LIST_BACK : HINT_LIST);
 }
 
 static void render_closeout(void)
@@ -300,6 +321,7 @@ static void render_closeout(void)
     static const char *const labels[] = {
         [CLOSE_CANCEL]  = "Cancel it",
         [CLOSE_MIGRATE] = "Migrate to a date...",
+        [CLOSE_MIGRATE_WEEK] = "Migrate to a week...",
         [CLOSE_REOPEN]  = "Reopen it",
         [CLOSE_BACK]    = "Back",
     };
@@ -311,20 +333,39 @@ static void render_closeout(void)
         set_row(i + 1, labels[s_close_items[i]], i == s_close_sel);
     }
     hide_rows_from(s_close_count + 1);
-    lv_label_set_text(s_lbl_hint, HINT_CLOSE);
+}
+
+/* "Mon 2026-11-02 - Sun 2026-11-08", given the Monday. */
+static void format_week_range(char *out, size_t out_sz, int y, int m, int d)
+{
+    struct tm first, last;
+    char a[20], b[20];
+
+    date_to_tm(&first, y, m, d);
+    date_to_tm(&last, y, m, d + 6);
+    strftime(a, sizeof(a), "%a %Y-%m-%d", &first);
+    strftime(b, sizeof(b), "%a %Y-%m-%d", &last);
+    snprintf(out, out_sz, "%s - %s", a, b);
 }
 
 static void render_date(void)
 {
     struct tm t;
-    char line[32];
+    char line[48];
+
+    if (s_mig_week) {
+        format_week_range(line, sizeof(line), s_mig_year, s_mig_month, s_mig_day);
+        set_row(0, "Migrate to week:", false);
+        set_row(1, line, true);
+        hide_rows_from(2);
+        return;
+    }
 
     date_to_tm(&t, s_mig_year, s_mig_month, s_mig_day);
     strftime(line, sizeof(line), "%a %Y-%m-%d", &t);
     set_row(0, "Migrate to:", false);
     set_row(1, line, true);
     hide_rows_from(2);
-    lv_label_set_text(s_lbl_hint, HINT_DATE);
 }
 
 static void render_delete(void)
@@ -332,25 +373,70 @@ static void render_delete(void)
     set_row(0, "Delete this bullet?", false);
     set_row(1, s_day->bullets[s_sel].text, true);
     hide_rows_from(2);
-    lv_label_set_text(s_lbl_hint, HINT_DELETE);
 }
 
 static void format_page_title(char *out, size_t out_sz)
 {
-    struct tm t;
+    if (s_day->is_week) {
+        format_week_range(out, out_sz, s_day->year, s_day->month, s_day->day);
+        return;
+    }
+
+    struct tm t, now;
     char date[20];
 
+    read_clock(&now);
     date_to_tm(&t, s_day->year, s_day->month, s_day->day);
     strftime(date, sizeof(date), "%a %Y-%m-%d", &t);
-    if (s_day->is_week) {
-        struct tm sunday;
-        char last[20];
-        date_to_tm(&sunday, s_day->year, s_day->month, s_day->day + 6);
-        strftime(last, sizeof(last), "%a %Y-%m-%d", &sunday);
-        snprintf(out, out_sz, "%s - %s", date, last);
-    } else {
-        snprintf(out, out_sz, "%s%s",
-                 s_view == PLANNER_VIEW_TODAY ? "Today  " : "", date);
+    bool today = t.tm_year == now.tm_year && t.tm_yday == now.tm_yday;
+    snprintf(out, out_sz, "%s%s", today ? "Today  " : "", date);
+}
+
+static bool tasks_available(void);
+static bool tasks_busy(void);
+static void tasks_render(bool focused);
+static void tasks_hide(void);
+static const char *tasks_hint(void);
+static void tasks_key(const kb_event_t *ev);
+static void tasks_commit(void);
+
+/* Tab order. The first is where focus falls back to. */
+static const pane_t s_panes[] = {
+    { "tasks",  tasks_available,  tasks_busy,  tasks_render,  tasks_hide,
+      tasks_hint,  tasks_key,  tasks_commit },
+};
+static const int s_pane_count = sizeof(s_panes) / sizeof(s_panes[0]);
+
+/* The focused window's hint, then where Tab goes and Esc:week, unless
+ * the window is busy and keeps those keys. */
+static const char *pane_hint(void)
+{
+    static char hint[96];
+    const pane_t *p = &s_panes[s_focus];
+
+    snprintf(hint, sizeof(hint), "%s", p->hint());
+    if (p->busy()) return hint;
+    for (int i = 1; i < s_pane_count; i++) {
+        const pane_t *next = &s_panes[(s_focus + i) % s_pane_count];
+        if (!next->available()) continue;
+        strncat(hint, "  Tab:", sizeof(hint) - strlen(hint) - 1);
+        strncat(hint, next->name, sizeof(hint) - strlen(hint) - 1);
+        break;
+    }
+    if (opened_from_grid()) {
+        strncat(hint, "  Esc:week", sizeof(hint) - strlen(hint) - 1);
+    }
+    return hint;
+}
+
+static void focus_next(void)
+{
+    for (int i = 1; i < s_pane_count; i++) {
+        int n = (s_focus + i) % s_pane_count;
+        if (s_panes[n].available()) {
+            s_focus = n;
+            return;
+        }
     }
 }
 
@@ -358,19 +444,21 @@ static void render_page(void)
 {
     if (!s_day_ok) return;
 
-    char title[48];
-    format_page_title(title, sizeof(title) - 6);
-    if (kb_layout_caps()) strcat(title, "  CAPS");
+    if (s_mode == MODE_LIST) clamp_sel();
+
+    char title[64];
+    format_page_title(title, 48);
+    if (kb_layout_caps()) strncat(title, "  CAPS", sizeof(title) - strlen(title) - 1);
     lv_label_set_text(s_lbl_title, title);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
 
-    switch (s_mode) {
-    case MODE_CLOSEOUT: render_closeout(); break;
-    case MODE_DATE:     render_date();     break;
-    case MODE_DELETE:   render_delete();   break;
-    default:            render_bullets();  break;
+    if (!s_panes[s_focus].available()) s_focus = 0;
+    /* Last first: the task list flows around the windows beside it. */
+    for (int i = s_pane_count - 1; i >= 0; i--) {
+        if (s_panes[i].available()) s_panes[i].render(i == s_focus);
+        else s_panes[i].hide();
     }
-    if (s_msg) lv_label_set_text(s_lbl_hint, s_msg);
+    lv_label_set_text(s_lbl_hint, s_msg ? s_msg : pane_hint());
 }
 
 static void save_day(void)
@@ -380,10 +468,19 @@ static void save_day(void)
     }
 }
 
+/* s_day->count is the "+ New" row. */
 static void clamp_sel(void)
 {
-    if (s_sel >= s_day->count) s_sel = s_day->count - 1;
+    if (s_sel > s_day->count) s_sel = s_day->count;
     if (s_sel < 0) s_sel = 0;
+}
+
+/* The next row after idx in dir (+1 or -1), or -1 past the end. The
+ * "+ New" row, s_day->count, counts as a row. */
+static int step_shown(int idx, int dir)
+{
+    int i = idx + dir;
+    return i >= 0 && i <= s_day->count ? i : -1;
 }
 
 static void remove_bullet(int idx)
@@ -466,9 +563,11 @@ static void open_closeout(void)
     case JOURNAL_TASK:
         s_close_items[s_close_count++] = CLOSE_CANCEL;
         s_close_items[s_close_count++] = CLOSE_MIGRATE;
+        if (s_day->is_week) s_close_items[s_close_count++] = CLOSE_MIGRATE_WEEK;
         break;
     case JOURNAL_EVENT:
         s_close_items[s_close_count++] = CLOSE_MIGRATE;
+        if (s_day->is_week) s_close_items[s_close_count++] = CLOSE_MIGRATE_WEEK;
         break;
     case JOURNAL_DONE:
     case JOURNAL_CANCELLED:
@@ -522,6 +621,15 @@ static void pick_closeout(void)
         break;
     case CLOSE_MIGRATE:
         start_migrate_date();
+        s_mig_week = false;
+        s_mode = MODE_DATE;
+        break;
+    case CLOSE_MIGRATE_WEEK:
+        s_mig_year = s_day->year;
+        s_mig_month = s_day->month;
+        s_mig_day = s_day->day;
+        journal_date_add(&s_mig_year, &s_mig_month, &s_mig_day, 7);
+        s_mig_week = true;
         s_mode = MODE_DATE;
         break;
     default:
@@ -531,14 +639,16 @@ static void pick_closeout(void)
 
 static void migrate_bullet(void)
 {
-    int ret = journal_migrate(s_day, s_sel, s_mig_year, s_mig_month, s_mig_day);
+    int ret = s_mig_week
+        ? journal_migrate_week(s_day, s_sel, s_mig_year, s_mig_month, s_mig_day)
+        : journal_migrate(s_day, s_sel, s_mig_year, s_mig_month, s_mig_day);
     if (ret == JOURNAL_ERR_ARG) {
-        s_msg = "Pick a different day.";
+        s_msg = s_mig_week ? "Pick a different week." : "Pick a different day.";
         return;
     }
     s_mode = MODE_LIST;
-    if (ret == JOURNAL_ERR_FULL)         s_msg = "That day is full.";
-    else if (ret == JOURNAL_ERR_TOO_BIG) s_msg = "That day's file is too big.";
+    if (ret == JOURNAL_ERR_FULL)         s_msg = "That page is full.";
+    else if (ret == JOURNAL_ERR_TOO_BIG) s_msg = "That file is too big.";
     else if (ret != JOURNAL_OK)          s_msg = "Migrate failed. Check the SD card.";
 }
 
@@ -547,17 +657,29 @@ static bool ctrl_held(const kb_event_t *ev)
     return (ev->modifier & (KB_MOD_LCTRL | KB_MOD_RCTRL)) != 0;
 }
 
-static void edit_backspace(bool whole_word)
+static void edit_backspace(char *buf, bool whole_word)
 {
-    size_t len = strlen(s_edit);
+    size_t len = strlen(buf);
     if (whole_word) {
-        while (len && s_edit[len - 1] == ' ') len--;
-        while (len && s_edit[len - 1] != ' ') len--;
+        while (len && buf[len - 1] == ' ') len--;
+        while (len && buf[len - 1] != ' ') len--;
     } else {
-        while (len && (s_edit[len - 1] & 0xC0) == 0x80) len--;
+        while (len && (buf[len - 1] & 0xC0) == 0x80) len--;
         if (len) len--;
     }
-    s_edit[len] = '\0';
+    buf[len] = '\0';
+}
+
+/* Add a typed key to buf. skip: a character not to take, or 0. */
+static void edit_type(char *buf, size_t buf_sz, const kb_event_t *ev, char skip)
+{
+    if (ctrl_held(ev)) return;
+    const char *text = kb_layout_translate(ev->keycode, ev->modifier);
+    if (!text || (unsigned char)text[0] < 0x20) return;
+    if (skip && text[0] == skip) return;
+    size_t len = strlen(buf);
+    size_t add = strlen(text);
+    if (len + add < buf_sz) memcpy(buf + len, text, add + 1);
 }
 
 static void key_edit(const kb_event_t *ev)
@@ -570,12 +692,16 @@ static void key_edit(const kb_event_t *ev)
         cancel_edit();
         return;
     case KB_KEY_UP:
-        if (finish_edit() && s_sel > 0) s_sel--;
+        if (finish_edit()) {
+            int i = step_shown(s_sel, -1);
+            if (i >= 0) s_sel = i;
+        }
         return;
     case KB_KEY_DOWN:
         /* Keep going: knob down from the last bullet starts the next. */
         if (finish_edit()) {
-            if (s_sel < s_day->count - 1) s_sel++;
+            int i = step_shown(s_sel, 1);
+            if (i >= 0 && i < s_day->count) s_sel = i;
             else start_new_bullet();
         }
         return;
@@ -583,38 +709,34 @@ static void key_edit(const kb_event_t *ev)
         cycle_kind(&s_day->bullets[s_sel]);
         return;
     case KB_KEY_BACKSPACE:
-        edit_backspace(ctrl_held(ev));
+        edit_backspace(s_edit, ctrl_held(ev));
         return;
     default:
         break;
     }
-
-    if (ctrl_held(ev)) return;
-    const char *text = kb_layout_translate(ev->keycode, ev->modifier);
-    if (!text || (unsigned char)text[0] < 0x20) return;
-    size_t len = strlen(s_edit);
-    size_t add = strlen(text);
-    if (len + add < sizeof(s_edit)) memcpy(s_edit + len, text, add + 1);
+    edit_type(s_edit, sizeof(s_edit), ev, 0);
 }
 
+/* Up and Down wrap round through the "+ New" row. */
 static void key_list(const kb_event_t *ev)
 {
-    bool empty = s_day->count == 0;
+    bool on_new = s_sel == s_day->count;
 
     switch (ev->keycode) {
-    case KB_KEY_UP:
-        if (s_sel > 0) s_sel--;
+    case KB_KEY_UP: {
+        int i = step_shown(s_sel, -1);
+        s_sel = i >= 0 ? i : s_day->count;
         break;
+    }
     case KB_KEY_DOWN:
-        if (s_sel < s_day->count - 1) s_sel++;
-        else start_new_bullet();
+        s_sel = step_shown(s_sel < s_day->count ? s_sel : -1, 1);
         break;
     case KB_KEY_ENTER:
-        if (empty) start_new_bullet();
+        if (on_new) start_new_bullet();
         else start_edit();
         break;
     case KB_KEY_SPACE: {
-        if (empty) break;
+        if (on_new) break;
         journal_bullet_t *b = &s_day->bullets[s_sel];
         if (b->kind == JOURNAL_TASK) b->kind = JOURNAL_DONE;
         else if (b->kind == JOURNAL_DONE) b->kind = JOURNAL_TASK;
@@ -622,18 +744,13 @@ static void key_list(const kb_event_t *ev)
         save_day();
         break;
     }
-    case KB_KEY_TAB:
-        if (empty) break;
-        cycle_kind(&s_day->bullets[s_sel]);
-        save_day();
-        break;
     case KB_KEY_BACKSPACE:
-        if (empty) break;
+        if (on_new) break;
         if (ctrl_held(ev)) s_mode = MODE_DELETE;
         else open_closeout();
         break;
     case KB_KEY_DELETE:
-        if (!empty) s_mode = MODE_DELETE;
+        if (!on_new) s_mode = MODE_DELETE;
         break;
     default:
         break;
@@ -666,8 +783,8 @@ static void key_date(const kb_event_t *ev)
     int delta = 0;
 
     switch (ev->keycode) {
-    case KB_KEY_UP:   delta = -1; break;
-    case KB_KEY_DOWN: delta = 1;  break;
+    case KB_KEY_UP:   delta = s_mig_week ? -7 : -1; break;
+    case KB_KEY_DOWN: delta = s_mig_week ? 7 : 1;   break;
     case KB_KEY_ENTER:
         migrate_bullet();
         return;
@@ -694,6 +811,50 @@ static void key_delete(const kb_event_t *ev)
     } else if (ev->keycode == KB_KEY_ESCAPE) {
         s_mode = MODE_LIST;
     }
+}
+
+/* ---- Tasks window: the page's bullets ---- */
+
+static bool tasks_available(void) { return true; }
+static bool tasks_busy(void) { return s_mode != MODE_LIST; }
+static void tasks_hide(void) { hide_rows_from(0); }
+
+static void tasks_render(bool focused)
+{
+    switch (s_mode) {
+    case MODE_CLOSEOUT: render_closeout();       break;
+    case MODE_DATE:     render_date();           break;
+    case MODE_DELETE:   render_delete();         break;
+    default:            render_bullets(focused); break;
+    }
+}
+
+static const char *tasks_hint(void)
+{
+    switch (s_mode) {
+    case MODE_EDIT:     return HINT_EDIT;
+    case MODE_CLOSEOUT: return HINT_CLOSE;
+    case MODE_DATE:     return s_mig_week ? HINT_WEEK_PICK : HINT_DATE;
+    case MODE_DELETE:   return HINT_DELETE;
+    default:            return s_sel == s_day->count ? HINT_LIST_NEW : HINT_LIST;
+    }
+}
+
+static void tasks_key(const kb_event_t *ev)
+{
+    switch (s_mode) {
+    case MODE_EDIT:     key_edit(ev);     break;
+    case MODE_CLOSEOUT: key_closeout(ev); break;
+    case MODE_DATE:     key_date(ev);     break;
+    case MODE_DELETE:   key_delete(ev);   break;
+    default:            key_list(ev);     break;
+    }
+}
+
+static void tasks_commit(void)
+{
+    if (s_day_ok && s_mode == MODE_EDIT) finish_edit();
+    s_mode = MODE_LIST;
 }
 
 /* Returns NULL when the clock and the card are usable and s_day is
@@ -818,8 +979,9 @@ static void fill_box(int idx, const char *title, int load_result)
     paint_box(idx);
 }
 
-/* keep_sel: stay on the same box, if this is still the same week. */
-static void show_grid(const struct tm *now, bool keep_sel)
+/* keep_week: show s_week_* with the same box selected, rather than
+ * the current week with today selected. */
+static void show_grid(const struct tm *now, bool keep_week)
 {
     lv_label_set_text(s_lbl_title, "Week");
 
@@ -830,14 +992,18 @@ static void show_grid(const struct tm *now, bool keep_sel)
     }
 
     int y = now->tm_year + 1900, m = now->tm_mon + 1, d = now->tm_mday;
-    int today = (now->tm_wday + 6) % 7;
     journal_week_start(&y, &m, &d);
-    if (!keep_sel || y != s_week_year || m != s_week_month || d != s_week_day) {
-        s_grid_sel = today;
+    if (!keep_week) {
+        s_week_year = y;
+        s_week_month = m;
+        s_week_day = d;
+        s_grid_sel = (now->tm_wday + 6) % 7;
     }
-    s_week_year = y;
-    s_week_month = m;
-    s_week_day = d;
+    bool this_week = y == s_week_year && m == s_week_month && d == s_week_day;
+    int today = this_week ? (now->tm_wday + 6) % 7 : -1;
+    y = s_week_year;
+    m = s_week_month;
+    d = s_week_day;
 
     /* s_day is only a place to read into here. Loading the weekly page
      * last leaves no day that a later page could mistake for its own. */
@@ -854,7 +1020,17 @@ static void show_grid(const struct tm *now, bool keep_sel)
         snprintf(title, sizeof(title), "%s%s", i == today ? "> " : "", date);
         fill_box(i, title, journal_load(s_day, by, bm, bd));
     }
-    fill_box(GRID_WEEKLY, "This week", journal_load_week(s_day, y, m, d));
+    fill_box(GRID_WEEKLY, this_week ? "This week" : "Whole week",
+             journal_load_week(s_day, y, m, d));
+
+    struct tm first, last;
+    char a[8], b[8], header[48];
+    date_to_tm(&first, y, m, d);
+    date_to_tm(&last, y, m, d + 6);
+    strftime(a, sizeof(a), "%m-%d", &first);
+    strftime(b, sizeof(b), "%m-%d", &last);
+    snprintf(header, sizeof(header), "Week  %s - %s", a, b);
+    lv_label_set_text(s_lbl_title, header);
 
     hide_rows_from(0);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
@@ -882,9 +1058,28 @@ static void open_box(int idx)
     show_page(&now, true);
 }
 
+/* ? pages forward and , back, as in the date picker. 0 for other keys. */
+static int page_direction(const kb_event_t *ev)
+{
+    if (ctrl_held(ev)) return 0;
+    const char *text = kb_layout_translate(ev->keycode, ev->modifier);
+    if (text && text[0] == '?') return 1;
+    if (text && text[0] == ',') return -1;
+    return 0;
+}
+
 static void key_grid(const kb_event_t *ev)
 {
     int old = s_grid_sel;
+    int dir = page_direction(ev);
+
+    if (dir) {
+        struct tm now;
+        read_clock(&now);
+        journal_date_add(&s_week_year, &s_week_month, &s_week_day, dir * 7);
+        show_grid(&now, true);
+        return;
+    }
 
     switch (ev->keycode) {
     case KB_KEY_UP:
@@ -903,12 +1098,37 @@ static void key_grid(const kb_event_t *ev)
     paint_box(s_grid_sel);
 }
 
+/* Back to the week the page belongs to, on that page's box. Paging may
+ * have left the week that was on the grid. */
 static void back_to_grid(void)
+{
+    struct tm now, t;
+    read_clock(&now);
+
+    date_to_tm(&t, s_open_year, s_open_month, s_open_day);
+    s_grid_sel = s_view == PLANNER_VIEW_WEEKLY ? GRID_WEEKLY
+                                               : (t.tm_wday + 6) % 7;
+    s_week_year = s_open_year;
+    s_week_month = s_open_month;
+    s_week_day = s_open_day;
+    journal_week_start(&s_week_year, &s_week_month, &s_week_day);
+
+    s_view = PLANNER_VIEW_WEEK;
+    show_grid(&now, true);
+}
+
+/* To the next or previous day or week. No file is made: a page gets one
+ * with its first bullet, so flipping past a day leaves nothing behind. */
+static void page_move(int dir)
 {
     struct tm now;
     read_clock(&now);
-    s_view = PLANNER_VIEW_WEEK;
-    show_grid(&now, true);
+
+    bool week = s_view == PLANNER_VIEW_WEEKLY;
+    journal_date_add(&s_open_year, &s_open_month, &s_open_day,
+                     dir * (week ? 7 : 1));
+    if (s_view == PLANNER_VIEW_TODAY) s_view = PLANNER_VIEW_DAY;
+    show_page(&now, false);
 }
 
 void planner_ui_handle_key(const kb_event_t *ev)
@@ -920,28 +1140,34 @@ void planner_ui_handle_key(const kb_event_t *ev)
         if (!lv_obj_has_flag(s_grid, LV_OBJ_FLAG_HIDDEN)) key_grid(ev);
         return;
     }
-    if (opened_from_grid() && s_mode == MODE_LIST &&
-        ev->keycode == KB_KEY_ESCAPE) {
+    if (s_view == PLANNER_VIEW_MONTH) return;
+
+    /* Paging, Esc and Tab belong to the page, unless the window in
+     * focus is busy with them. */
+    bool busy = s_day_ok && s_panes[s_focus].busy();
+    if (opened_from_grid() && !busy && ev->keycode == KB_KEY_ESCAPE) {
         back_to_grid();
         return;
     }
-    if (s_view == PLANNER_VIEW_MONTH || !s_day_ok) return;
+    if (!busy) {
+        /* Before the s_day_ok check, to page past an unreadable file. */
+        int dir = page_direction(ev);
+        if (dir) {
+            page_move(dir);
+            return;
+        }
+    }
+    if (!s_day_ok) return;
 
     s_msg = NULL;
-    switch (s_mode) {
-    case MODE_EDIT:     key_edit(ev);     break;
-    case MODE_CLOSEOUT: key_closeout(ev); break;
-    case MODE_DATE:     key_date(ev);     break;
-    case MODE_DELETE:   key_delete(ev);   break;
-    default:            key_list(ev);     break;
-    }
+    if (!busy && ev->keycode == KB_KEY_TAB) focus_next();
+    else s_panes[s_focus].key(ev);
     render_page();
 }
 
 void planner_ui_commit_pending(void)
 {
-    if (s_day_ok && s_mode == MODE_EDIT) finish_edit();
-    s_mode = MODE_LIST;
+    for (int i = 0; i < s_pane_count; i++) s_panes[i].commit();
 }
 
 /* ---- Month placeholder ---- */
@@ -962,16 +1188,17 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
     struct tm now;
     read_clock(&now);
 
-    /* Coming back from a page or the menu, not arriving from elsewhere. */
-    bool keep_sel = s_active && (s_view == PLANNER_VIEW_WEEK ||
-                                 opened_from_grid());
+    /* Coming back from the menu, not asking for the week afresh. */
+    bool keep_week = s_active && !s_week_reset && s_week_year != 0 &&
+                     (s_view == PLANNER_VIEW_WEEK || opened_from_grid());
+    s_week_reset = false;
 
     s_view = view;
     s_active = true;
 
     switch (view) {
     case PLANNER_VIEW_WEEK:
-        show_grid(&now, keep_sel);
+        show_grid(&now, keep_week);
         break;
     case PLANNER_VIEW_TODAY:
         s_open_year = now.tm_year + 1900;
@@ -1000,6 +1227,7 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
     return s_scr;
 }
 
+void planner_ui_go_to_this_week(void) { s_week_reset = true; }
 bool planner_ui_is_active(void) { return s_active; }
 planner_view_t planner_ui_current(void) { return s_view; }
 void planner_ui_deactivate(void) { s_active = false; }

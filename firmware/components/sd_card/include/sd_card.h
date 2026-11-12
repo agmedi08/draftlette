@@ -62,6 +62,11 @@ esp_err_t sd_card_append_file(const char *path, const char *data, size_t len);
 bool sd_card_file_exists(const char *path);
 esp_err_t sd_card_delete_file(const char *path);
 esp_err_t sd_card_mkdir(const char *path);
+/* Remove a directory that holds no visible entries. Hidden files
+ * (names starting with '.', e.g. metadata sidecars left behind) are
+ * deleted first. Returns ESP_ERR_INVALID_STATE if the directory still
+ * holds a visible entry or a hidden subdirectory. */
+esp_err_t sd_card_rmdir(const char *path);
 
 typedef struct {
     char name[256];

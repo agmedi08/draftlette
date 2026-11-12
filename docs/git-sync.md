@@ -141,7 +141,8 @@ This is deliberately a minimal client:
 - **One branch**, no tags, no submodules, no signed commits.
 - The working tree is the **flat set of `*.md`, `*.fountain` and `*.txt` files** in the sync
   directory (non-recursive). Sub-directories in the repository under
-  `path` are not checked out. Dotfiles (`.git`, `*.meta`, `wifi.cfg`,
+  `path` are not checked out, and files kept in folders made in the
+  file browser are not synced. Dotfiles (`.git`, `*.meta`, `wifi.cfg`,
   `git.cfg`) are never committed.
 - Deleting every local `*.md` / `*.fountain` / `*.txt` file will commit the deletion of the whole
   synced sub-tree on the next sync – that is correct Git behaviour, but

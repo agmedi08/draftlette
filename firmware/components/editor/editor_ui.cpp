@@ -810,6 +810,7 @@ static lv_obj_t *s_lbl_status= NULL;
 static lv_obj_t *s_scr_browser = NULL;
 static lv_obj_t *s_list_files  = NULL;
 static lv_obj_t *s_lbl_br_status = NULL;
+static lv_obj_t *s_lbl_br_title  = NULL;   /* shows the current folder */
 /* Divider line between the two editor panes (split mode only). */
 static lv_obj_t *s_pane_divider = NULL;
 
@@ -981,6 +982,17 @@ static int  s_browser_sel    = 0;
 static int  s_browser_sel_prev = -1;
 static int  s_browser_count  = 0;
 static sd_card_file_entry_t s_browser_entries[64];
+/* Folder the file browser shows, relative to the SD card mount point
+ * ("" = top level, "notes/drafts" = two levels down). Kept for the
+ * session; both browsers (full-screen and in-pane) share it. Every
+ * browser action builds its paths with browser_dir_path() /
+ * browser_entry_path(). When it is not the top level, row 0 of the
+ * list is the ".." row, whose user_data is BROWSER_UP_ROW. */
+static char s_browser_rel[121] = "";
+#define BROWSER_UP_ROW (-1)
+/* Ctrl+X in the file browser remembers a file to move; Ctrl+V moves it
+ * into the folder then shown. "" = nothing pending. */
+static char s_move_src[256] = "";
 
 /* Settings screen objects */
 static lv_obj_t *s_scr_settings  = NULL;
@@ -1034,6 +1046,13 @@ static int       s_save_pos      = 0;      /* cursor position in s_save_buf (byt
  * the panel is moved onto whichever screen is showing the browser. */
 static bool      s_save_is_rename = false;
 static char      s_rename_src[512] = "";
+/* Rename of a folder rather than a file (no document extension needed). */
+static bool      s_rename_is_dir  = false;
+/* D in the file browser: the overlay asks for a new folder's name. */
+static bool      s_save_is_mkdir  = false;
+/* Folder a "Save as" writes into: the document's own folder, or the
+ * file browser's current folder for an untitled document. */
+static char      s_save_dir[256]  = "";
 
 /* ---- WiFi "New connection" scan/pick flow ----
  * Selecting the F1 menu's "WiFi: New connection..." row
@@ -1210,6 +1229,7 @@ static lv_obj_t *s_del_opt_lbl[DELCONF_COUNT] = { NULL, NULL };
 static bool      s_del_open    = false;
 static int       s_del_sel     = DELCONF_CANCEL;
 static char      s_del_path[512] = "";
+static bool      s_del_is_dir = false;   /* deleting an empty folder */
 /* Row to select after the deletion (the neighbouring file). */
 static char      s_del_next_name[256] = "";
 
@@ -3907,7 +3927,105 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
-    snprintf(buf, buf_size, "F1:Menu  N:New  R:Rename");
+    if (s_move_src[0]) {
+        const char *slash = strrchr(s_move_src, '/');
+        snprintf(buf, buf_size, "Moving %.24s  T:Drop here  Esc:Cancel",
+                 slash ? slash + 1 : s_move_src);
+        return;
+    }
+    snprintf(buf, buf_size, "F1:Menu  N:New  D:Folder  R:Rename  T:Move");
+}
+
+/* Full path of the folder the file browser shows (no trailing slash). */
+static void browser_dir_path(char *out, size_t out_sz)
+{
+    const char *mp = sd_card_get_mount_point();
+    if (s_browser_rel[0])
+        snprintf(out, out_sz, "%s/%s", mp, s_browser_rel);
+    else
+        snprintf(out, out_sz, "%s", mp);
+}
+
+/* Full path of name inside the browser's folder. False (and out left
+ * unusable) when the path would not fit a document path. */
+static bool browser_entry_path(const char *name, char *out, size_t out_sz)
+{
+    char dir[200];
+    browser_dir_path(dir, sizeof(dir));
+    int n = snprintf(out, out_sz, "%s/%s", dir, name);
+    return n > 0 && (size_t)n < out_sz && n < 256;
+}
+
+/* Entry index behind a browser row: an s_browser_entries[] index,
+ * BROWSER_UP_ROW for the ".." row, or -2 for no such row. */
+static int browser_row_index(int row)
+{
+    if (!s_browser_list) return -2;
+    lv_obj_t *btn = lv_obj_get_child(s_browser_list, row);
+    if (!btn) return -2;
+    return (int)(intptr_t)lv_obj_get_user_data(btn);
+}
+
+/* True when any open document lives in dir or below it. */
+static bool doc_open_under(const char *dir)
+{
+    struct ctx_t { const char *dir; size_t len; bool found; } ctx =
+        { dir, strlen(dir), false };
+    editor_doc_foreach([](editor_doc_t *d, void *p) {
+        ctx_t *c = (ctx_t *)p;
+        const char *path = editor_doc_get_path(d);
+        if (path && strncmp(path, c->dir, c->len) == 0 && path[c->len] == '/')
+            c->found = true;
+    }, &ctx);
+    return ctx.found;
+}
+
+/* Show the current folder in the browser titles. */
+static void update_browser_titles(void)
+{
+    char t[200];
+    if (s_lbl_br_title) {
+        if (s_browser_rel[0])
+            snprintf(t, sizeof(t), "Folder: %s  (Backspace: up)", s_browser_rel);
+        else
+            snprintf(t, sizeof(t), "File Browser - Up/Down, Enter to open, N for new");
+        lv_label_set_text(s_lbl_br_title, t);
+    }
+    if (s_inpane_hdr) {
+        if (s_browser_rel[0])
+            snprintf(t, sizeof(t), "Open into pane: %s", s_browser_rel);
+        else
+            snprintf(t, sizeof(t), "Open into pane");
+        lv_label_set_text(s_inpane_hdr, t);
+    }
+}
+
+static void refresh_file_list(const char *select_name);
+
+/* Open the folder name inside the current one. */
+static void browser_enter_dir(const char *name)
+{
+    size_t cur = strlen(s_browser_rel);
+    size_t add = strlen(name) + (cur ? 1 : 0);
+    if (cur + add >= sizeof(s_browser_rel)) {
+        editor_ui_set_status("Folder path too long");
+        return;
+    }
+    if (cur) s_browser_rel[cur++] = '/';
+    memcpy(s_browser_rel + cur, name, strlen(name) + 1);
+    refresh_file_list("");   /* "" = select the first row */
+}
+
+/* Go up one folder, keeping the folder we came from selected. */
+static void browser_go_up(void)
+{
+    if (!s_browser_rel[0]) return;
+    char *slash = strrchr(s_browser_rel, '/');
+    char left[sizeof(s_browser_rel)];
+    strcpy(left, slash ? slash + 1 : s_browser_rel);
+    if (slash) *slash = '\0';
+    else s_browser_rel[0] = '\0';
+    refresh_file_list(left);
 }
 
 static void refresh_file_list(const char *select_name = NULL)
@@ -3933,9 +4051,17 @@ static void refresh_file_list(const char *select_name = NULL)
         }
     }
 
-    const char *mp = sd_card_get_mount_point();
-    s_browser_count = sd_card_list_dir(mp, s_browser_entries, 64);
+    char dir[200];
+    browser_dir_path(dir, sizeof(dir));
+    s_browser_count = sd_card_list_dir(dir, s_browser_entries, 64);
+    if (s_browser_count < 0 && s_browser_rel[0]) {
+        /* The folder is gone (e.g. removed over USB): back to the top. */
+        s_browser_rel[0] = '\0';
+        browser_dir_path(dir, sizeof(dir));
+        s_browser_count = sd_card_list_dir(dir, s_browser_entries, 64);
+    }
     if (s_browser_count < 0) s_browser_count = 0;
+    update_browser_titles();
 
     /* Filter to show only documents (.md / .fountain / .txt) and
      * directories */
@@ -3943,14 +4069,19 @@ static void refresh_file_list(const char *select_name = NULL)
 
     int restored_row = -1;
     int row = 0;
+    if (s_browser_rel[0]) {
+        lv_obj_t *up = lv_list_add_btn(s_browser_list, NULL, "[DIR] .. (up)");
+        lv_obj_set_user_data(up, (void *)(intptr_t)BROWSER_UP_ROW);
+        row++;
+    }
     for (int i = 0; i < s_browser_count; i++) {
         const char *name = s_browser_entries[i].name;
         bool show = s_browser_entries[i].is_dir;
         if (!show) show = editor_path_format(name, NULL);
         if (show) {
             char label[sizeof(s_browser_entries[0].name) + 16];
-            char fpath[320];
-            snprintf(fpath, sizeof(fpath), "%s/%.255s", mp, name);
+            char fpath[sizeof(dir) + sizeof(s_browser_entries[0].name)];
+            snprintf(fpath, sizeof(fpath), "%s/%.255s", dir, name);
             if (s_browser_entries[i].is_dir)
                 snprintf(label, sizeof(label), "[DIR] %.255s", name);
             else if (editor_file_is_locked(fpath))
@@ -6634,6 +6765,7 @@ static void menu_activate_item(int idx)
         break;
     case MENU_IDX_WEEK:
         s_menu_open = false;
+        planner_ui_go_to_this_week();
         show_planner_view(PLANNER_VIEW_WEEK);
         break;
     case MENU_IDX_MONTH:
@@ -7043,9 +7175,12 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
         help_row(out, cols, kc, "Enter", "Open the file or folder");
         if (origin == HELP_FROM_INPANE)
             help_row(out, cols, kc, "Esc", "Back to the editor");
+        help_row(out, cols, kc, "Backspace", "Up one folder (same as the \"..\" row)");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
-        help_row(out, cols, kc, "R, Alt+R", "Rename the file");
-        help_row(out, cols, kc, "Del, Alt+D", "Delete the file (with Git sync: only once it is pushed)");
+        help_row(out, cols, kc, "D", "New folder");
+        help_row(out, cols, kc, "T", "Move a file: T on it, open a folder, T again (Esc cancels)");
+        help_row(out, cols, kc, "R, Alt+R", "Rename the file or folder");
+        help_row(out, cols, kc, "Del, Alt+D", "Delete the file or empty folder (with Git sync: files only once pushed)");
         help_row(out, cols, kc, "Alt+L", "Set or remove a password for opening the file");
         help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
         if (origin == HELP_FROM_INPANE)
@@ -7447,17 +7582,14 @@ static void show_editor_fileinfo(void)
 static void show_browser_fileinfo(void)
 {
     if (!s_scr_help || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
+    int idx = browser_row_index(s_browser_sel);
+    if (idx < 0 || idx >= s_browser_count || s_browser_entries[idx].is_dir) {
         editor_ui_set_status("Select a file to see its information");
         return;
     }
     const char *name = s_browser_entries[idx].name;
     char path[320];
-    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(), name);
+    if (!browser_entry_path(name, path, sizeof(path))) return;
     char *data = NULL;
     size_t len = 0;
     if (sd_card_read_file(path, &data, &len) != ESP_OK) {
@@ -7467,8 +7599,9 @@ static void show_browser_fileinfo(void)
     editor_doc_format_t fmt = EDITOR_DOC_MARKDOWN;
     editor_path_format(name, &fmt);
     std::string text;
+    /* Git sync only covers the top level of the card. */
     build_fileinfo_text(text, help_cols(), name, fileinfo_format_name(fmt),
-                        false, data, len, name);
+                        false, data, len, s_browser_rel[0] ? NULL : name);
     free(data);
     show_fileinfo_page(s_inpane_browser_open ? HELP_FROM_INPANE : HELP_FROM_BROWSER,
                        text);
@@ -7562,14 +7695,13 @@ static void help_touch_cb(lv_event_t *e)
 static bool generate_default_name(char *buf, size_t buf_size)
 {
     static const char *const exts[] = { "md", "fountain", "txt" };
-    const char *mp = sd_card_get_mount_point();
-    if (!mp) return false;
+    if (!s_save_dir[0]) return false;
     const char *ext = editor_format_ext(editor_get_format());
-    char path[256];
+    char path[320];
     for (int seq = 1; seq <= MAX_DRAFT_SEQ; seq++) {
         bool taken = false;
         for (const char *e : exts) {
-            snprintf(path, sizeof(path), "%s/draft_%03d.%s", mp, seq, e);
+            snprintf(path, sizeof(path), "%s/draft_%03d.%s", s_save_dir, seq, e);
             if (sd_card_file_exists(path)) taken = true;
         }
         if (!taken) {
@@ -7601,14 +7733,17 @@ static void refresh_save_prompt(void)
 
 static void show_save_prompt(void)
 {
-    /* Pre-fill with existing filename (bare name, no directory) */
+    /* Pre-fill with existing filename (bare name, no directory). The
+     * file is saved into its own folder; an untitled document goes into
+     * the folder the file browser shows. */
     const char *path = editor_get_file_path();
-    if (path) {
-        const char *slash = strrchr(path, '/');
-        const char *name = slash ? slash + 1 : path;
-        strncpy(s_save_buf, name, sizeof(s_save_buf) - 1);
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    if (path && slash) {
+        snprintf(s_save_dir, sizeof(s_save_dir), "%.*s", (int)(slash - path), path);
+        strncpy(s_save_buf, slash + 1, sizeof(s_save_buf) - 1);
         s_save_buf[sizeof(s_save_buf) - 1] = '\0';
     } else {
+        browser_dir_path(s_save_dir, sizeof(s_save_dir));
         if (!generate_default_name(s_save_buf, sizeof(s_save_buf))) {
             editor_ui_set_status("Save failed: too many drafts");
             return;
@@ -7617,6 +7752,7 @@ static void show_save_prompt(void)
     s_save_pos = (int)strlen(s_save_buf);
     s_save_open = true;
     s_save_is_rename = false;
+    s_save_is_mkdir = false;
     lv_label_set_text(s_save_hdr_lbl, "Save as (Enter/Esc):");
     lv_obj_set_parent(s_save_panel, s_scr);
     lv_obj_remove_flag(s_save_panel, LV_OBJ_FLAG_HIDDEN);
@@ -7624,31 +7760,83 @@ static void show_save_prompt(void)
     refresh_save_prompt();
 }
 
-/* R / Alt+R in the file browser: ask for a new name for the selected file. */
-static void show_rename_prompt(void)
+/* Show the shared name overlay on the browser's screen. */
+static void show_browser_name_prompt(const char *hdr, const char *initial)
 {
-    if (!s_save_panel || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
-        editor_ui_set_status("Only files can be renamed");
-        return;
-    }
-    const char *name = s_browser_entries[idx].name;
-    snprintf(s_rename_src, sizeof(s_rename_src), "%s/%s",
-             sd_card_get_mount_point(), name);
-    strncpy(s_save_buf, name, sizeof(s_save_buf) - 1);
+    strncpy(s_save_buf, initial, sizeof(s_save_buf) - 1);
     s_save_buf[sizeof(s_save_buf) - 1] = '\0';
     s_save_pos = (int)strlen(s_save_buf);
     s_save_open = true;
-    s_save_is_rename = true;
-    lv_label_set_text(s_save_hdr_lbl, "Rename to (Enter/Esc):");
+    lv_label_set_text(s_save_hdr_lbl, hdr);
     lv_obj_set_parent(s_save_panel, lv_scr_act());
     lv_obj_remove_flag(s_save_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_save_panel);
     refresh_save_prompt();
+}
+
+/* R / Alt+R in the file browser: ask for a new name for the selected
+ * file or folder. */
+static void show_rename_prompt(void)
+{
+    if (!s_save_panel || !s_browser_list) return;
+    int idx = browser_row_index(s_browser_sel);
+    if (idx < 0 || idx >= s_browser_count) return;
+    const char *name = s_browser_entries[idx].name;
+    if (!browser_entry_path(name, s_rename_src, sizeof(s_rename_src))) return;
+    s_rename_is_dir = s_browser_entries[idx].is_dir;
+    if (s_rename_is_dir && doc_open_under(s_rename_src)) {
+        editor_ui_set_status("A file in this folder is open -- close it first");
+        return;
+    }
+    s_save_is_rename = true;
+    s_save_is_mkdir = false;
+    show_browser_name_prompt(s_rename_is_dir ? "Rename folder to (Enter/Esc):"
+                                             : "Rename to (Enter/Esc):", name);
+}
+
+/* D in the file browser: ask for the name of a new folder. */
+static void show_mkdir_prompt(void)
+{
+    if (!s_save_panel || !s_browser_list) return;
+    s_save_is_rename = false;
+    s_save_is_mkdir = true;
+    show_browser_name_prompt("New folder name (Enter/Esc):", "");
+}
+
+/* A folder name the browser can show and open again. */
+static bool valid_folder_name(const char *name)
+{
+    if (!name[0] || name[0] == '.') return false;   /* hidden or "." / ".." */
+    return strlen(name) <= 40;
+}
+
+static void close_save_prompt(void);
+
+static void mkdir_prompt_confirm(void)
+{
+    if (!valid_folder_name(s_save_buf)) {
+        editor_ui_set_status("Folder name: 1-40 characters, not starting with '.'");
+        return;
+    }
+    if (strlen(s_browser_rel) + 1 + strlen(s_save_buf) >= sizeof(s_browser_rel)) {
+        editor_ui_set_status("Folder path too long");
+        return;
+    }
+    char path[320];
+    if (!browser_entry_path(s_save_buf, path, sizeof(path))) return;
+    if (sd_card_file_exists(path)) {
+        editor_ui_set_status("Something with that name already exists");
+        return;
+    }
+    close_save_prompt();
+    if (sd_card_mkdir(path) != ESP_OK) {
+        editor_ui_set_status("Could not create the folder");
+        return;
+    }
+    refresh_file_list(s_save_buf);
+    char msg[80];
+    snprintf(msg, sizeof(msg), "Created folder %.40s", s_save_buf);
+    editor_ui_set_status(msg);
 }
 
 static void close_save_prompt(void)
@@ -7666,14 +7854,33 @@ static void rename_prompt_confirm(void)
         restore_default_status();
         return;
     }
-    if (!editor_path_format(s_save_buf, NULL)) {
+    if (s_rename_is_dir ? !valid_folder_name(s_save_buf)
+                        : !editor_path_format(s_save_buf, NULL)) {
         /* Any other extension would hide the file from the browser. */
-        editor_ui_set_status("Name must end in .md, .fountain or .txt");
+        editor_ui_set_status(s_rename_is_dir
+            ? "Folder name: 1-40 characters, not starting with '.'"
+            : "Name must end in .md, .fountain or .txt");
         return;
     }
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(), s_save_buf);
-    esp_err_t err = editor_rename_file(s_rename_src, path);
+    if (!browser_entry_path(s_save_buf, path, sizeof(path))) {
+        editor_ui_set_status("Path too long");
+        return;
+    }
+    esp_err_t err;
+    if (s_rename_is_dir) {
+        /* A file inside may be waiting to be moved (Ctrl+X); its path
+         * changes with the folder, so drop it. */
+        size_t sl = strlen(s_rename_src);
+        if (strncmp(s_move_src, s_rename_src, sl) == 0 && s_move_src[sl] == '/')
+            s_move_src[0] = '\0';
+        if (strcasecmp(s_rename_src, path) != 0 && sd_card_file_exists(path))
+            err = ESP_ERR_INVALID_STATE;
+        else
+            err = sd_card_rename(s_rename_src, path);
+    } else {
+        err = editor_rename_file(s_rename_src, path);
+    }
     if (err == ESP_ERR_INVALID_STATE) {
         editor_ui_set_status("Rename failed: name already exists");
         return;
@@ -7699,14 +7906,21 @@ static void save_prompt_confirm(void)
         rename_prompt_confirm();
         return;
     }
-    const char *mp = sd_card_get_mount_point();
-    if (!mp) {
+    if (s_save_is_mkdir) {
+        mkdir_prompt_confirm();
+        return;
+    }
+    if (!sd_card_get_mount_point() || !s_save_dir[0]) {
         close_save_prompt();
         editor_ui_set_status("Save failed: SD card not ready");
         return;
     }
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", mp, s_save_buf);
+    int plen = snprintf(path, sizeof(path), "%s/%s", s_save_dir, s_save_buf);
+    if (plen >= 256) {
+        editor_ui_set_status("Save failed: path too long");
+        return;
+    }
     esp_err_t err = editor_save_file_as(path);
     close_save_prompt();
     if (err == ESP_OK) {
@@ -7727,7 +7941,7 @@ static void handle_save_prompt_key(const kb_event_t *ev)
         return;
     case KB_KEY_ESCAPE:
         close_save_prompt();
-        if (s_save_is_rename)
+        if (s_save_is_rename || s_save_is_mkdir)
             restore_default_status();
         else
             editor_ui_set_status(
@@ -7939,25 +8153,30 @@ static void close_delete_prompt(void)
 static void show_delete_prompt(void)
 {
     if (!s_del_panel || !s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    int idx = browser_row_index(s_browser_sel);
     if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
-        editor_ui_set_status("Only files can be deleted");
-        return;
-    }
     const char *name = s_browser_entries[idx].name;
 
-    snprintf(s_del_path, sizeof(s_del_path), "%s/%s", sd_card_get_mount_point(), name);
-    if (!s_pw_ok && editor_file_is_locked(s_del_path)) {
+    if (!browser_entry_path(name, s_del_path, sizeof(s_del_path))) return;
+    s_del_is_dir = s_browser_entries[idx].is_dir;
+    if (s_del_is_dir) {
+        /* Only an empty folder goes: there is nothing to lose. */
+        static sd_card_file_entry_t probe[1];
+        if (sd_card_list_dir(s_del_path, probe, 1) != 0) {
+            editor_ui_set_status("Folder is not empty -- move or delete its files first");
+            return;
+        }
+    } else if (!s_pw_ok && editor_file_is_locked(s_del_path)) {
         show_pw_prompt(PW_DELETE, s_del_path, s_browser_sel);
         return;
     }
     s_pw_ok = false;
 
     bool in_git = false;
-    switch (git_sync_file_status(name)) {
+    /* Git sync only covers files at the top level of the card. */
+    git_sync_file_status_t gst = (s_del_is_dir || s_browser_rel[0])
+        ? GIT_SYNC_FILE_NOT_CONFIGURED : git_sync_file_status(name);
+    switch (gst) {
     case GIT_SYNC_FILE_PUSHED:
         in_git = true;
         break;
@@ -7991,8 +8210,11 @@ static void show_delete_prompt(void)
     }
 
     char hdr[96];
-    snprintf(hdr, sizeof(hdr), "Delete %.40s? %s", name,
-             in_git ? "(kept in Git history)" : "Cannot be undone.");
+    if (s_del_is_dir)
+        snprintf(hdr, sizeof(hdr), "Delete empty folder %.40s?", name);
+    else
+        snprintf(hdr, sizeof(hdr), "Delete %.40s? %s", name,
+                 in_git ? "(kept in Git history)" : "Cannot be undone.");
     lv_label_set_text(s_del_hdr_lbl, hdr);
     s_del_open = true;
     s_del_sel = DELCONF_CANCEL;
@@ -8012,9 +8234,11 @@ static void delete_prompt_activate(void)
     const char *slash = strrchr(s_del_path, '/');
     const char *name = slash ? slash + 1 : s_del_path;
     char msg[80];
-    esp_err_t err = editor_delete_file(s_del_path);
+    esp_err_t err = s_del_is_dir ? sd_card_rmdir(s_del_path)
+                                 : editor_delete_file(s_del_path);
     if (err == ESP_ERR_INVALID_STATE) {
-        editor_ui_set_status("File is open in a pane -- close it first");
+        editor_ui_set_status(s_del_is_dir ? "Folder is not empty"
+                                          : "File is open in a pane -- close it first");
         return;
     }
     if (err != ESP_OK) {
@@ -8108,17 +8332,13 @@ static void close_pw_prompt(void)
 static void show_lock_prompt(void)
 {
     if (!s_browser_list) return;
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, s_browser_sel);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-    if (idx < 0 || idx >= s_browser_count) return;
-    if (s_browser_entries[idx].is_dir) {
+    int idx = browser_row_index(s_browser_sel);
+    if (idx < 0 || idx >= s_browser_count || s_browser_entries[idx].is_dir) {
         editor_ui_set_status("Only files can have a password");
         return;
     }
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s", sd_card_get_mount_point(),
-             s_browser_entries[idx].name);
+    if (!browser_entry_path(s_browser_entries[idx].name, path, sizeof(path))) return;
     show_pw_prompt(editor_file_is_locked(path) ? PW_REMOVE : PW_SET, path, s_browser_sel);
 }
 
@@ -9550,18 +9770,26 @@ static void browser_activate_item(int row)
         editor_ui_set_status(busy);
         return;
     }
-    lv_obj_t *btn = lv_obj_get_child(s_browser_list, row);
-    if (!btn) return;
-    int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+    int idx = browser_row_index(row);
+    if (idx == BROWSER_UP_ROW) {
+        browser_go_up();
+        return;
+    }
     if (idx < 0 || idx >= s_browser_count) return;
     if (s_browser_entries[idx].is_dir) {
-        /* Directory navigation is not implemented yet. */
+        browser_enter_dir(s_browser_entries[idx].name);
+        return;
+    }
+    if (s_move_src[0]) {
+        editor_ui_set_status("Moving a file: T drops it here, Esc cancels");
         return;
     }
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/%s",
-             sd_card_get_mount_point(), s_browser_entries[idx].name);
+    if (!browser_entry_path(s_browser_entries[idx].name, path, sizeof(path))) {
+        editor_ui_set_status("Path too long");
+        return;
+    }
 
     /* A file with a password asks for it every time it is opened. */
     if (!s_pw_ok && editor_file_is_locked(path)) {
@@ -9636,6 +9864,57 @@ static void browser_activate_item(int row)
      * mode. */
     close_inpane_browser();
     editor_ui_show_editor();
+}
+
+/* Ctrl+X in the file browser: remember the selected file to move. */
+static void browser_cut_file(void)
+{
+    int idx = browser_row_index(s_browser_sel);
+    if (idx < 0 || idx >= s_browser_count || s_browser_entries[idx].is_dir) {
+        editor_ui_set_status("Only files can be moved");
+        return;
+    }
+    if (!browser_entry_path(s_browser_entries[idx].name, s_move_src,
+                            sizeof(s_move_src))) {
+        s_move_src[0] = '\0';
+        return;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Moving %.40s  T:Drop here  Esc:Cancel",
+             s_browser_entries[idx].name);
+    editor_ui_set_status(msg);
+}
+
+/* Ctrl+V in the file browser: move the Ctrl+X file into this folder. */
+static void browser_paste_file(void)
+{
+    const char *slash = strrchr(s_move_src, '/');
+    const char *name = slash ? slash + 1 : s_move_src;
+    char dest[320];
+    if (!browser_entry_path(name, dest, sizeof(dest))) {
+        editor_ui_set_status("Move failed: path too long");
+        return;
+    }
+    if (strcmp(dest, s_move_src) == 0) {
+        editor_ui_set_status("The file is already in this folder");
+        return;
+    }
+    esp_err_t err = editor_rename_file(s_move_src, dest);
+    if (err == ESP_ERR_INVALID_STATE) {
+        editor_ui_set_status("A file with that name is already here");
+        return;
+    }
+    if (err != ESP_OK) {
+        editor_ui_set_status("Move failed!");
+        return;
+    }
+    char moved[sizeof(s_move_src)];
+    snprintf(moved, sizeof(moved), "%s", name);
+    s_move_src[0] = '\0';
+    refresh_file_list(moved);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Moved %.40s here", moved);
+    editor_ui_set_status(msg);
 }
 
 static void handle_browser_key(const kb_event_t *ev)
@@ -9782,6 +10061,27 @@ static void handle_browser_key(const kb_event_t *ev)
     if (ch == 'n' && !alt) {
         show_newfmt_prompt(s_inpane_browser_open ? NEWDOC_INPANE
                                                  : NEWDOC_BROWSER);
+        return;
+    }
+    if (ev->keycode == KB_KEY_BACKSPACE && !ctrl && !alt) {
+        /* Backspace: up one folder (same as the ".." row). */
+        browser_go_up();
+        return;
+    }
+    if (ev->keycode == KB_KEY_ESCAPE && s_move_src[0]) {
+        /* Esc forgets a pending move. */
+        s_move_src[0] = '\0';
+        editor_ui_set_status("Move cancelled");
+        return;
+    }
+    if (ch == 'd' && !alt && !ctrl) {
+        show_mkdir_prompt();
+        return;
+    }
+    if (ch == 't' && !alt && !ctrl) {
+        /* T on a file picks it up; T again drops it in the folder shown. */
+        if (s_move_src[0]) browser_paste_file();
+        else browser_cut_file();
         return;
     }
     if ((ev->keycode == KB_KEY_DELETE && !ctrl && !alt) || (ch == 'd' && alt && !ctrl)) {
@@ -9950,7 +10250,10 @@ static bool handle_view_key(const kb_event_t *ev)
 
     switch (ev->keycode) {
     case KB_KEY_F2: show_planner_view(PLANNER_VIEW_TODAY); break;
-    case KB_KEY_F3: show_planner_view(PLANNER_VIEW_WEEK);  break;
+    case KB_KEY_F3:
+        planner_ui_go_to_this_week();
+        show_planner_view(PLANNER_VIEW_WEEK);
+        break;
     case KB_KEY_F4: show_planner_view(PLANNER_VIEW_MONTH); break;
     default:
         if (!on_notes) show_notes_view();
@@ -11048,11 +11351,13 @@ static void build_screens(void)
     s_scr_browser = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_scr_browser, theme_bg(), 0);
 
-    lv_obj_t *br_title = lv_label_create(s_scr_browser);
-    lv_obj_set_pos(br_title, 2, 0);
-    lv_obj_set_style_text_font(br_title, FONT_11, 0);
-    lv_obj_set_style_text_color(br_title, theme_fg(), 0);
-    lv_label_set_text(br_title, "File Browser - Up/Down, Enter to open, N for new");
+    s_lbl_br_title = lv_label_create(s_scr_browser);
+    lv_obj_set_pos(s_lbl_br_title, 2, 0);
+    lv_obj_set_width(s_lbl_br_title, SCR_W - 4);
+    lv_label_set_long_mode(s_lbl_br_title, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_font(s_lbl_br_title, FONT_11, 0);
+    lv_obj_set_style_text_color(s_lbl_br_title, theme_fg(), 0);
+    lv_label_set_text(s_lbl_br_title, "File Browser - Up/Down, Enter to open, N for new");
 
     s_list_files = lv_list_create(s_scr_browser);
     lv_obj_set_pos(s_list_files, 0, HEADER_H);
@@ -11106,7 +11411,7 @@ static void build_screens(void)
     lv_obj_set_width(s_lbl_br_status, SCR_W - 4);
     lv_obj_set_style_text_font(s_lbl_br_status, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_br_status, theme_fg(), 0);
-    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  R:Rename");
+    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  D:Folder  R:Rename  T:Move");
 
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     /* Device battery label (right-aligned in browser status bar) */
@@ -11890,7 +12195,7 @@ static void teardown_screens(void)
         }
         s_rp = save_rp;
     }
-    s_list_files = s_lbl_br_status = NULL;
+    s_list_files = s_lbl_br_status = s_lbl_br_title = NULL;
     s_inpane_list = s_inpane_hdr = NULL;
     s_browser_list = NULL;
     s_inpane_browser_open = false;

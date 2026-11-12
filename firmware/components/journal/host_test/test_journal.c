@@ -156,6 +156,30 @@ int main(int argc, char **argv)
     assert(a.count == 2 && a.bullets[1].kind == JOURNAL_MIGRATED);
     assert(!strcmp(a.bullets[1].moved_to, "2026-11-02"));
 
+    /* A weekly item moves to another week, keeping its kind; its own
+     * week is refused. */
+    a.bullets[0].kind = JOURNAL_EVENT;
+    assert(journal_migrate_week(&a, 0, 2026, 11, 3) == JOURNAL_ERR_ARG);
+    assert(journal_migrate_week(&a, 0, 2026, 11, 12) == JOURNAL_OK);
+    assert(a.bullets[0].kind == JOURNAL_MIGRATED);
+    assert(!strcmp(a.bullets[0].moved_to, "2026-11-09"));
+    assert(journal_load_week(&b, 2026, 11, 9) == JOURNAL_OK);
+    assert(b.is_week && b.count == 1 && b.bullets[0].kind == JOURNAL_EVENT);
+    assert(!strcmp(b.bullets[0].text, "whenever"));
+    assert(journal_load_week(&a, 2026, 11, 2) == JOURNAL_OK);
+    assert(!strcmp(a.bullets[0].moved_to, "2026-11-09"));
+
+    /* A full week refuses it and leaves the bullet where it was. */
+    b.count = JOURNAL_MAX_BULLETS;
+    for (int i = 0; i < b.count; i++) {
+        b.bullets[i].kind = JOURNAL_NOTE;
+        strcpy(b.bullets[i].text, "x");
+    }
+    assert(journal_save(&b) == JOURNAL_OK);
+    a.bullets[0].kind = JOURNAL_TASK;
+    assert(journal_migrate_week(&a, 0, 2026, 11, 9) == JOURNAL_ERR_FULL);
+    assert(a.bullets[0].kind == JOURNAL_TASK);
+
     puts("journal tests passed");
     return 0;
 }

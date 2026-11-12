@@ -19,7 +19,7 @@ typedef enum {
     PLANNER_VIEW_TODAY,
     PLANNER_VIEW_WEEK,
     PLANNER_VIEW_MONTH,
-    PLANNER_VIEW_DAY,       /* reached only from the Week grid */
+    PLANNER_VIEW_DAY,       /* reached from the Week grid or by paging */
     PLANNER_VIEW_WEEKLY,    /* reached only from the Week grid */
 } planner_view_t;
 
@@ -35,6 +35,11 @@ typedef struct {
  * planner active, and return the screen for the caller to load. Dates
  * are read from the clock on every call. */
 lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style);
+
+/* The next Week render shows the current week with today selected,
+ * instead of the week last shown. For the user asking for Week, not for
+ * redrawing it after the menu. */
+void planner_ui_go_to_this_week(void);
 
 /* True while a planner view owns the display, including while the menu
  * or help is open on top of it. */

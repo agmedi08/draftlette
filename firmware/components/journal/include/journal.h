@@ -84,6 +84,11 @@ int journal_create(const journal_day_t *day);
 int journal_migrate(journal_day_t *src, int idx, int year, int month,
                     int day_of_month);
 
+/* The same, to the weekly page of the week holding the given date. The
+ * bullet's moved_to is that week's Monday. */
+int journal_migrate_week(journal_day_t *src, int idx, int year, int month,
+                         int day_of_month);
+
 /* Move a date by delta days. */
 void journal_date_add(int *year, int *month, int *day_of_month, int delta);
 

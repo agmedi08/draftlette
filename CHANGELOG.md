@@ -33,22 +33,35 @@ in the git log.
   and `!` bullets, one line each, with `...` on long lines and
   `+N more` when they do not all fit. The knob moves between the boxes
   and Enter opens one, creating its file if there is none yet. Esc goes
-  back to the week.
+  back to the week. `?` and `,` show the next and previous week, and
+  F3 always comes back to this one.
+- **Next and previous day**: on Today or a day page, `?` and `,` go to
+  the next and previous day, and on a weekly page to the next and
+  previous week. A page you only look at gets no file; adding a bullet
+  makes one, so you can plan ahead.
 - **Weekly page**: the "This week" box opens a bullet page for items
   with no particular day. It works like a day, is headed with the
   week's dates, and is saved as
   `/journal/YYYY/MM/YYYY-MM-DD-week.md`, named after the Monday.
-  Migrating an item moves it to a chosen day.
+  Migrating an item moves it to a chosen day, or with "Migrate to a
+  week..." to another week's page.
 - **Today bullet log**: a planner page for each day, with no file to
   create or name. Each day is saved as Markdown in
   `/journal/YYYY/MM/YYYY-MM-DD.md` as soon as you change it. Up/Down
-  move between bullets, and Down past the last one adds a new bullet.
-  Enter edits, Space marks a task done, Tab changes the type (task,
-  event, note, tracker), Backspace closes out a bullet (cancel, or
-  migrate it to another day), and Del deletes it.
+  move between bullets and wrap round past a "+ New" row at the end;
+  Enter on it adds a bullet, and Down while typing the last one starts
+  the next. Enter edits, Space marks a task done, Tab while typing
+  changes the type (task, event, note, tracker), Backspace closes out a
+  bullet (cancel, or migrate it to another day), and Del deletes it.
 - **Local time zone**: a new build option, `DRAFTLING_TIMEZONE`, sets
   the time zone for dates shown on the device (UTC unless the board
   preset changes it). Git commits still use UTC.
+- **Folders in the file browser**: `D` makes a new folder, Enter
+  opens it, and the ".." row or Backspace goes back up. New files and
+  "Save as" go into the folder you are in. Move a file with `T`, open
+  the folder it should go to, then `T` again (Esc cancels). `R`
+  renames a folder and `Del` deletes it once it is empty. Git sync
+  still only syncs the files at the top level of the card.
 
 - **Password for a file**: select a file in the file browser and press
   `Alt+L` to give it a password (typed twice). From then on the file

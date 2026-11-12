@@ -270,19 +270,13 @@ int journal_create(const journal_day_t *day)
     return write_page(day, path);
 }
 
-int journal_migrate(journal_day_t *src, int idx, int year, int month,
-                    int day_of_month)
+static int migrate_to(journal_day_t *src, int idx, int year, int month,
+                      int day_of_month, bool to_week)
 {
-    if (!src || idx < 0 || idx >= src->count) return JOURNAL_ERR_ARG;
-    if (!src->is_week && year == src->year && month == src->month &&
-        day_of_month == src->day) {
-        return JOURNAL_ERR_ARG;
-    }
-
     journal_day_t *dst = malloc(sizeof(*dst));
     if (!dst) return JOURNAL_ERR_IO;
 
-    int ret = journal_load(dst, year, month, day_of_month);
+    int ret = load_page(dst, year, month, day_of_month, to_week);
     if (ret == JOURNAL_OK && dst->count == JOURNAL_MAX_BULLETS) {
         ret = JOURNAL_ERR_FULL;
     }
@@ -302,3 +296,27 @@ int journal_migrate(journal_day_t *src, int idx, int year, int month,
              year, month, day_of_month);
     return journal_save(src);
 }
+
+int journal_migrate(journal_day_t *src, int idx, int year, int month,
+                    int day_of_month)
+{
+    if (!src || idx < 0 || idx >= src->count) return JOURNAL_ERR_ARG;
+    if (!src->is_week && year == src->year && month == src->month &&
+        day_of_month == src->day) {
+        return JOURNAL_ERR_ARG;
+    }
+    return migrate_to(src, idx, year, month, day_of_month, false);
+}
+
+int journal_migrate_week(journal_day_t *src, int idx, int year, int month,
+                         int day_of_month)
+{
+    if (!src || idx < 0 || idx >= src->count) return JOURNAL_ERR_ARG;
+    journal_week_start(&year, &month, &day_of_month);
+    if (src->is_week && year == src->year && month == src->month &&
+        day_of_month == src->day) {
+        return JOURNAL_ERR_ARG;
+    }
+    return migrate_to(src, idx, year, month, day_of_month, true);
+}
+
