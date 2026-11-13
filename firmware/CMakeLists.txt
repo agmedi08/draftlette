@@ -2,11 +2,12 @@ cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/version.cmake)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
-# Draftling release version, shown in the F1 menu and embedded in the
-# app image's esp_app_desc_t (readable at runtime via
-# esp_app_get_description()->version). Bump this alongside every
-# tagged release.
-set(PROJECT_VER "1.0.17")
+# Release version of the padlette branch, shown in the F1 menu and
+# embedded in the app image's esp_app_desc_t (readable at runtime via
+# esp_app_get_description()->version). This branch has its own version
+# line, 0.0.N, tagged padlette-v0.0.N; upstream Draftling's 1.0.x tags
+# are not used here. Bump this alongside every tagged release.
+set(PROJECT_VER "0.0.1")
 
 project(draftling)
 

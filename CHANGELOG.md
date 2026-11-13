@@ -6,6 +6,14 @@ in the git log.
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-11-13
+
+### Changed
+
+- **Version numbers**: this branch now has its own version line,
+  starting at 0.0.1, so the F1 menu shows 0.0.1 instead of 1.0.17.
+  Later releases count up from here.
+
 ### Added
 
 - **Caps Lock**: the Caps Lock key now works. It flips Shift for letters
