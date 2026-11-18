@@ -6,5 +6,5 @@ idf_component_register(
     SRCS "planner_ui.c"
     INCLUDE_DIRS "include"
     REQUIRES lvgl__lvgl ble_keyboard
-    PRIV_REQUIRES journal kb_layout sd_card
+    PRIV_REQUIRES journal kb_layout sd_card status_bar
 )
