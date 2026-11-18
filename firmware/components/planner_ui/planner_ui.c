@@ -8,9 +8,11 @@
 #include "journal.h"
 #include "kb_layout.h"
 #include "sd_card.h"
+#include "status_bar.h"
 
 #define MIN_VALID_YEAR 2025
 #define BODY_TOP       30
+#define HEADER_RULE_Y  (BODY_TOP - 5)   /* under the 18 px title */
 #define ROW_MAX        20
 
 /* The Week grid: Mon-Thu down the left column, Fri-Sun and the weekly
@@ -50,6 +52,14 @@ static lv_obj_t *s_scr;
 static lv_obj_t *s_lbl_title;
 static lv_obj_t *s_lbl_body;
 static lv_obj_t *s_lbl_hint;
+/* The lines under the title and above the status bar, and the clock and
+ * battery at the right end of the status bar, as on the Notes screens. */
+static lv_obj_t *s_header_rule;
+static lv_obj_t *s_status_rule;
+static lv_obj_t *s_lbl_clock;
+static lv_obj_t *s_lbl_batt;
+static char s_clock_text[STATUS_BAR_CLOCK_LEN] = "--:--";
+static char s_batt_text[16] = "";
 static lv_obj_t *s_rows[ROW_MAX];
 static int s_visible_rows;
 static planner_ui_style_t s_style;
@@ -105,6 +115,24 @@ typedef struct {
 
 static int s_focus;                 /* index into s_panes */
 
+static lv_obj_t *create_rule(void)
+{
+    lv_obj_t *rule = lv_obj_create(s_scr);
+    lv_obj_remove_style_all(rule);
+    lv_obj_set_scrollable(rule, false);
+    lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
+    return rule;
+}
+
+static lv_obj_t *create_slot(const char *text)
+{
+    lv_obj_t *lbl = lv_label_create(s_scr);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_label_set_text(lbl, text);
+    return lbl;
+}
+
 static void build_screen(void)
 {
     int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
@@ -145,10 +173,14 @@ static void build_screen(void)
         }
     }
 
+    /* Sized and placed in the status bar by apply_style(). */
     s_lbl_hint = lv_label_create(s_scr);
-    lv_obj_set_width(s_lbl_hint, w - 4);
     lv_label_set_long_mode(s_lbl_hint, LV_LABEL_LONG_CLIP);
-    lv_obj_align(s_lbl_hint, LV_ALIGN_BOTTOM_LEFT, 2, -2);
+
+    s_header_rule = create_rule();
+    s_status_rule = create_rule();
+    s_lbl_clock = create_slot(s_clock_text);
+    s_lbl_batt = create_slot(s_batt_text);
 }
 
 static void apply_style(const planner_ui_style_t *style)
@@ -164,8 +196,38 @@ static void apply_style(const planner_ui_style_t *style)
 
     int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
     int32_t h = lv_display_get_vertical_resolution(lv_display_get_default());
+
+    /* The status bar: a line along its top, the hint at the left, the
+     * clock and battery at the right. Same layout as the Notes screens
+     * (status_bar_layout()), but without the WiFi icon. */
+    int32_t bar_y = h - style->status_h;
+    status_bar_layout_t bar;
+    status_bar_layout((int)w,
+                      (int)lv_font_get_glyph_width(style->hint_font, '0', 0),
+                      0, style->has_battery, &bar);
+
+    lv_obj_set_style_bg_color(s_header_rule, style->fg, 0);
+    lv_obj_set_pos(s_header_rule, 0, HEADER_RULE_Y);
+    lv_obj_set_size(s_header_rule, w, 1);
+    lv_obj_set_style_bg_color(s_status_rule, style->fg, 0);
+    lv_obj_set_pos(s_status_rule, 0, bar_y);
+    lv_obj_set_size(s_status_rule, w, 1);
+
+    lv_obj_set_pos(s_lbl_hint, STATUS_BAR_MARGIN, bar_y + 2);
+    lv_obj_set_width(s_lbl_hint, bar.text_w);
+
+    lv_obj_t *slots[2] = { s_lbl_clock, s_lbl_batt };
+    int32_t slot_x[2] = { bar.clock_x, bar.batt_x };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_set_style_text_font(slots[i], style->hint_font, 0);
+        lv_obj_set_style_text_color(slots[i], style->fg, 0);
+        lv_obj_set_pos(slots[i], slot_x[i], bar_y + 2);
+        lv_obj_set_width(slots[i], bar.slot_w);
+    }
+    lv_obj_set_hidden(s_lbl_batt, !style->has_battery);
+
     int32_t row_h = lv_font_get_line_height(style->body_font) + 3;
-    int32_t room = h - BODY_TOP - lv_font_get_line_height(style->hint_font) - 6;
+    int32_t room = bar_y - 1 - BODY_TOP;
     s_visible_rows = (int)(room / row_h);
     if (s_visible_rows > ROW_MAX) s_visible_rows = ROW_MAX;
     if (s_visible_rows < 1) s_visible_rows = 1;
@@ -1225,6 +1287,26 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
     }
     }
     return s_scr;
+}
+
+/* Keep text as the latest value for buf, and show it on lbl (once the
+ * screen exists) only if it changed. */
+static void set_slot(lv_obj_t *lbl, char *buf, size_t len, const char *text)
+{
+    if (!text) text = "";
+    if (strcmp(buf, text) == 0) return;
+    snprintf(buf, len, "%s", text);
+    if (lbl) lv_label_set_text(lbl, buf);
+}
+
+void planner_ui_set_clock(const char *text)
+{
+    set_slot(s_lbl_clock, s_clock_text, sizeof(s_clock_text), text);
+}
+
+void planner_ui_set_battery(const char *text)
+{
+    set_slot(s_lbl_batt, s_batt_text, sizeof(s_batt_text), text);
 }
 
 void planner_ui_go_to_this_week(void) { s_week_reset = true; }

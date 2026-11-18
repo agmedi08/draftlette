@@ -51,6 +51,7 @@
 #include "standby.h"
 #include "time_sync.h"
 #include "planner_ui.h"
+#include "status_bar.h"
 #include "greybeard.h"
 #include "battery.h"
 #include "wifi_icon.h"
@@ -1306,13 +1307,28 @@ static lv_obj_t  *s_lbl_ble_dev_batt = NULL; /* BLE prompt screen */
  * colour LCD; the epdiy e-paper boards are unaffected per testing). */
 #if defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752)
 #define DRAFTLING_BATT_PULL_MODE 1
-#else
-static lv_timer_t *s_batt_timer     = NULL;
-#define BATT_POLL_MS 5000  /* refresh battery every 5 s (so charging
-                              * state / plug-in events show up quickly
-                              * on backends that expose it, INA226 on
-                              * the M5Stack Tab5 in particular) */
 #endif
+#endif
+
+/* ---- Status bar clock ----
+ * The 24-hour time ("14:05", or "--:--" before the clock is set) left
+ * of the battery in the status bar of the editor and the file browser,
+ * and in the planner's (planner_ui_set_clock()). status_bar_layout()
+ * places it. Like the battery label it is only rewritten when its text
+ * changes, so it costs one small redraw a minute. */
+static lv_obj_t *s_lbl_clock    = NULL;  /* editor screen */
+static lv_obj_t *s_lbl_br_clock = NULL;  /* file browser screen */
+
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+/* One poll timer for the clock and, on boards with a battery monitor,
+ * the battery. The pull-model board (H752, above) has none: both ride
+ * its redraw points via sync_battery_labels(). */
+static lv_timer_t *s_status_timer   = NULL;
+#define STATUS_POLL_MS 5000  /* refresh every 5 s (so the clock is at
+                              * most 5 s late, and charging state /
+                              * plug-in events show up quickly on
+                              * backends that expose it, INA226 on
+                              * the M5Stack Tab5 in particular) */
 #endif
 
 /* ---- WiFi connectivity icon ----
@@ -1944,6 +1960,33 @@ static void cursor_blink_cb(lv_timer_t *timer)
 }
 #endif
 
+/* The string the clock labels currently show. */
+static char s_shown_clock[STATUS_BAR_CLOCK_LEN] = "";
+
+/* Show the current time on every clock label, if it changed. */
+static void sync_clock_labels(void)
+{
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    char clk[STATUS_BAR_CLOCK_LEN];
+    status_bar_clock_text(clk, sizeof(clk), &lt);
+    if (strcmp(s_shown_clock, clk) == 0) return;
+    if (s_lbl_clock)    lv_label_set_text(s_lbl_clock, clk);
+    if (s_lbl_br_clock) lv_label_set_text(s_lbl_br_clock, clk);
+    planner_ui_set_clock(clk);
+    strncpy(s_shown_clock, clk, sizeof(s_shown_clock) - 1);
+    s_shown_clock[sizeof(s_shown_clock) - 1] = '\0';
+}
+
+/* Paint the current time on every clock label, including ones created
+ * (empty) since the last update -- see build_screens(). */
+static void clock_labels_repaint(void)
+{
+    s_shown_clock[0] = '\0';
+    sync_clock_labels();
+}
+
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
 /* Build a battery level string for the status bar. */
 static void format_batt_str(char *buf, size_t len)
@@ -1985,14 +2028,18 @@ static void update_battery_cache(void)
     }
 }
 
+/* With no poll timer, the status bar clock is brought up to date at
+ * the same redraw points. */
 static void sync_battery_labels(void)
 {
+    sync_clock_labels();
     update_battery_cache();
     if (!s_batt_pending) return;
     s_batt_pending = false;
     if (s_lbl_dev_batt)    lv_label_set_text(s_lbl_dev_batt, s_cached_batt);
     if (s_lbl_br_dev_batt) lv_label_set_text(s_lbl_br_dev_batt, s_cached_batt);
     if (s_lbl_ble_dev_batt) lv_label_set_text(s_lbl_ble_dev_batt, s_cached_batt);
+    planner_ui_set_battery(s_cached_batt);
 }
 
 /* Paint the current value on every battery label, including ones
@@ -2006,9 +2053,9 @@ static void battery_labels_repaint(void)
 /* The string the battery labels currently show. */
 static char s_shown_batt[20] = "";
 
-static void batt_timer_cb(lv_timer_t *timer)
+/* The battery part of status_timer_cb(). */
+static void update_battery_labels(void)
 {
-    (void)timer;
     char batt[20];
     format_batt_str(batt, sizeof(batt));
     /* lv_label_set_text() dirties a label even when the new text is
@@ -2027,6 +2074,7 @@ static void batt_timer_cb(lv_timer_t *timer)
         if (s_lbl_dev_batt)    lv_label_set_text(s_lbl_dev_batt, batt);
         if (s_lbl_br_dev_batt) lv_label_set_text(s_lbl_br_dev_batt, batt);
         if (s_lbl_ble_dev_batt) lv_label_set_text(s_lbl_ble_dev_batt, batt);
+        planner_ui_set_battery(batt);
         strncpy(s_shown_batt, batt, sizeof(s_shown_batt) - 1);
         s_shown_batt[sizeof(s_shown_batt) - 1] = '\0';
     }
@@ -2040,7 +2088,7 @@ static void batt_timer_cb(lv_timer_t *timer)
 static void battery_labels_repaint(void)
 {
     s_shown_batt[0] = '\0';
-    batt_timer_cb(NULL);
+    update_battery_labels();
 }
 /* No-op on the timer-driven boards: the call sites below are shared,
  * but only the H752 pull model needs an explicit sync. */
@@ -2051,6 +2099,17 @@ static inline void sync_battery_labels(void) {}
  * call sites compile to nothing. */
 static inline void sync_battery_labels(void) {}
 static inline void battery_labels_repaint(void) {}
+#endif
+
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+static void status_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    update_battery_labels();
+#endif
+    sync_clock_labels();
+}
 #endif
 
 /* Update the WiFi connectivity icons in both status bars: shown when
@@ -4220,27 +4279,29 @@ extern "C" void editor_ui_show_editor(void)
     editor_ui_refresh();
 }
 
-/* Available pixel width for the editor's bottom status label.
- * Reserves room on the right for the battery percentage (when the
- * board has a battery) and the small WiFi icon, so the status text
- * never overlaps them and -- importantly -- never wraps to a second
- * line (which would extend past SCR_H and cause LVGL to draw a
- * screen scrollbar). The numbers mirror the layout in build_screens()
- * for s_lbl_dev_batt and s_img_wifi. */
+/* Where the WiFi icon, the clock and the battery percentage (when the
+ * board has a battery) go at the right end of the editor and browser
+ * status bars, and how much width that leaves for the status text. */
+static void bar_layout(status_bar_layout_t *out)
+{
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    const bool has_batt = true;
+#else
+    const bool has_batt = false;
+#endif
+    status_bar_layout(SCR_W, char_width_for_font(FONT_11), WIFI_ICON_W,
+                      has_batt, out);
+}
+
+/* Available pixel width for the editor's bottom status label, so the
+ * status text never overlaps the indicators on the right and --
+ * importantly -- never wraps to a second line (which would extend past
+ * SCR_H and cause LVGL to draw a screen scrollbar). */
 static int status_avail_width(void)
 {
-    int right_reserved;
-#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
-    /* Battery occupies SCR_W-80..SCR_W-2; WiFi icon sits at SCR_W-95.
-     * Leave a 2 px gap to the wifi icon. */
-    right_reserved = 95 + 2;
-#else
-    /* No battery; only the wifi icon at SCR_W-15. */
-    right_reserved = 15 + 2;
-#endif
-    int avail = SCR_W - 2 /* left margin */ - right_reserved;
-    if (avail < 0) avail = 0;
-    return avail;
+    status_bar_layout_t bar;
+    bar_layout(&bar);
+    return bar.text_w;
 }
 
 /* Hide the editor's status label when its current text is wider than
@@ -4808,8 +4869,13 @@ static void commit_usb_msc_pending_mode(void)
  * in memory, so nothing is saved or closed by switching. */
 static void show_planner_view(planner_view_t view)
 {
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    const bool has_batt = true;
+#else
+    const bool has_batt = false;
+#endif
     const planner_ui_style_t style = {
-        FONT_18, FONT_14, FONT_11, theme_fg(), theme_bg()
+        FONT_18, FONT_14, FONT_11, theme_fg(), theme_bg(), STATUS_H, has_batt
     };
     lv_obj_t *scr = planner_ui_render(view, &style);
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
@@ -11310,29 +11376,40 @@ static void build_screens(void)
     lv_label_set_text(s_lbl_status, editor_status_text());
     update_status_visibility();
 
+    /* Right end of the status bar, from the right: battery, clock,
+     * WiFi icon (positions from bar_layout()). */
+    status_bar_layout_t bar;
+    bar_layout(&bar);
+
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     /* Device battery label (right-aligned in editor status bar) */
     s_lbl_dev_batt = lv_label_create(s_scr);
     lv_obj_set_style_text_font(s_lbl_dev_batt, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_dev_batt, theme_fg(), 0);
     lv_obj_set_style_text_align(s_lbl_dev_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(s_lbl_dev_batt, SCR_W - 80, SCR_H - STATUS_H + 2);
-    lv_obj_set_width(s_lbl_dev_batt, 78);
+    lv_obj_set_pos(s_lbl_dev_batt, bar.batt_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_dev_batt, bar.slot_w);
     lv_label_set_text(s_lbl_dev_batt, "");
-#define WIFI_ICON_RIGHT_OFFSET 95   /* leave room for battery on its left */
-#else
-#define WIFI_ICON_RIGHT_OFFSET 15
 #endif
 
-    /* WiFi connectivity icon (right corner of editor status bar).
-     * Source image and vertical centering (which varies with icon
+    /* Clock (left of the battery). Painted by clock_labels_repaint()
+     * at the end of build_screens(). */
+    s_lbl_clock = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_lbl_clock, FONT_11, 0);
+    lv_obj_set_style_text_color(s_lbl_clock, theme_fg(), 0);
+    lv_obj_set_style_text_align(s_lbl_clock, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s_lbl_clock, bar.clock_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_clock, bar.slot_w);
+    lv_label_set_text(s_lbl_clock, "");
+
+    /* WiFi connectivity icon (left of the clock in the editor status
+     * bar). Source image and vertical centering (which varies with icon
      * height) are picked by update_wifi_icons(), called once both
      * status bars exist; only the fixed horizontal position is set
      * here. */
     s_img_wifi = lv_image_create(s_scr);
-    lv_obj_set_x(s_img_wifi, SCR_W - WIFI_ICON_RIGHT_OFFSET);
+    lv_obj_set_x(s_img_wifi, bar.icon_x);
     lv_obj_add_flag(s_img_wifi, LV_OBJ_FLAG_HIDDEN);
-#undef WIFI_ICON_RIGHT_OFFSET
 
     /* Cursor blink timer.
      *
@@ -11419,29 +11496,34 @@ static void build_screens(void)
     lv_obj_set_style_text_font(s_lbl_br_dev_batt, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_br_dev_batt, theme_fg(), 0);
     lv_obj_set_style_text_align(s_lbl_br_dev_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(s_lbl_br_dev_batt, SCR_W - 80, SCR_H - STATUS_H + 2);
-    lv_obj_set_width(s_lbl_br_dev_batt, 78);
+    lv_obj_set_pos(s_lbl_br_dev_batt, bar.batt_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_br_dev_batt, bar.slot_w);
     lv_label_set_text(s_lbl_br_dev_batt, "");
+#endif
+
+    /* Clock (left of the battery in the browser status bar). */
+    s_lbl_br_clock = lv_label_create(s_scr_browser);
+    lv_obj_set_style_text_font(s_lbl_br_clock, FONT_11, 0);
+    lv_obj_set_style_text_color(s_lbl_br_clock, theme_fg(), 0);
+    lv_obj_set_style_text_align(s_lbl_br_clock, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s_lbl_br_clock, bar.clock_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_br_clock, bar.slot_w);
+    lv_label_set_text(s_lbl_br_clock, "");
 
 #if !defined(DRAFTLING_BATT_PULL_MODE)
-    /* Battery poll timer. The first reading is painted at the end of
-     * build_screens(), once every battery label exists. The H752 has
-     * no periodic timer (see the declarations above); its updates
+    /* Clock and battery poll timer. The first readings are painted at
+     * the end of build_screens(), once every label exists. The H752
+     * has no periodic timer (see the declarations above); its updates
      * ride redraw points. */
-    s_batt_timer = lv_timer_create(batt_timer_cb, BATT_POLL_MS, NULL);
-#endif
-#define WIFI_ICON_RIGHT_OFFSET 95
-#else
-#define WIFI_ICON_RIGHT_OFFSET 15
+    s_status_timer = lv_timer_create(status_timer_cb, STATUS_POLL_MS, NULL);
 #endif
 
-    /* WiFi connectivity icon (right corner of browser status bar).
-     * See the matching editor-screen icon above: update_wifi_icons()
+    /* WiFi connectivity icon (left of the clock in the browser status
+     * bar). See the matching editor-screen icon above: update_wifi_icons()
      * picks the source image and vertical position. */
     s_img_br_wifi = lv_image_create(s_scr_browser);
-    lv_obj_set_x(s_img_br_wifi, SCR_W - WIFI_ICON_RIGHT_OFFSET);
+    lv_obj_set_x(s_img_br_wifi, bar.icon_x);
     lv_obj_add_flag(s_img_br_wifi, LV_OBJ_FLAG_HIDDEN);
-#undef WIFI_ICON_RIGHT_OFFSET
 
     /* Reflect any pre-existing WiFi state (in case the manager
      * fired its callback before the UI was ready). */
@@ -12137,9 +12219,11 @@ static void build_screens(void)
     wifi_manager_set_callback(wifi_state_cb);
     git_sync_set_callback(git_sync_cb);
 
-    /* Every battery label exists now: show the current level on all of
-     * them, including the BLE prompt screen loaded below. */
+    /* Every battery and clock label exists now: show the current level
+     * and time on all of them, including the BLE prompt screen loaded
+     * below. */
     battery_labels_repaint();
+    clock_labels_repaint();
 
     /* Start on BLE prompt screen (transitions to file browser on connect) */
     lv_scr_load(s_scr_ble_prompt);
@@ -12157,8 +12241,8 @@ static void teardown_screens(void)
 #if !defined(CONFIG_DRAFTLING_DISPLAY_EPD)
     if (s_blink_timer)     { lv_timer_delete(s_blink_timer);     s_blink_timer     = NULL; }
 #endif
-#if defined(DRAFTLING_HAS_BATT_INDICATOR) && !defined(DRAFTLING_BATT_PULL_MODE)
-    if (s_batt_timer)      { lv_timer_delete(s_batt_timer);      s_batt_timer      = NULL; }
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+    if (s_status_timer)    { lv_timer_delete(s_status_timer);    s_status_timer    = NULL; }
 #endif
     if (s_repeat_timer)    { lv_timer_delete(s_repeat_timer);    s_repeat_timer    = NULL; }
     if (s_status_clear_timer) {
@@ -12183,6 +12267,7 @@ static void teardown_screens(void)
      * pool) are cleared for every pane. */
     s_lbl_title = s_lbl_status = NULL;
     s_img_wifi = s_img_br_wifi = NULL;
+    s_lbl_clock = s_lbl_br_clock = NULL;
     s_pane_divider = NULL;
     {
         pane_t *save_rp = s_rp;

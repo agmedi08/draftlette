@@ -6,6 +6,17 @@ in the git log.
 
 ## [Unreleased]
 
+### Added
+
+- **Clock in the status bar**: the bottom bar of the Notes editor, the
+  file browser and the Today, Week and Month views shows the time
+  (24-hour, for example `14:05`) just left of the battery level. It
+  shows `--:--` until the clock has been set.
+- **Battery level and lines in the planner**: the Today, Week and Month
+  views, and the pages opened from them, now show the battery level
+  too, and have the same lines under the title and above the bottom
+  bar as the Notes editor.
+
 ## [0.0.1] - 2026-11-13
 
 ### Changed

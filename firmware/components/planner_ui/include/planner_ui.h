@@ -29,6 +29,8 @@ typedef struct {
     const lv_font_t *hint_font;
     lv_color_t fg;
     lv_color_t bg;
+    int32_t status_h;       /* height of the bottom status bar */
+    bool has_battery;       /* leave a battery slot in the status bar */
 } planner_ui_style_t;
 
 /* Build (first call) and fill the planner screen for view, mark the
@@ -49,6 +51,14 @@ planner_view_t planner_ui_current(void);
 
 /* The display went to another view. Does not load anything. */
 void planner_ui_deactivate(void);
+
+/* The text of the status bar's clock ("14:05") and battery ("85%")
+ * slots. The caller owns the readings and calls these whenever they
+ * change; the planner keeps the latest text and shows it on its screen,
+ * also when the screen is built later. A label is only rewritten when
+ * its text changes. Touches LVGL, so call from the LVGL task. */
+void planner_ui_set_clock(const char *text);
+void planner_ui_set_battery(const char *text);
 
 /* A key for the planner screen on display. Touches LVGL, so call it
  * from the LVGL task. */
