@@ -16,6 +16,24 @@ in the git log.
   views, and the pages opened from them, now show the battery level
   too, and have the same lines under the title and above the bottom
   bar as the Notes editor.
+- **Sub-tasks**: on Today, a day page and the weekly page, Right makes
+  the selected bullet a sub-task of the one above it (shown indented),
+  and Left moves it back out. This works while typing too, and Down from
+  the last sub-task starts another one. Migrating a task takes its open
+  sub-tasks along, and deleting it asks to delete them as well. The
+  Week grid lists only top-level bullets, to keep the boxes readable.
+  On the SD card, sub-tasks are indented Markdown list items
+  (`  - [ ] ...`).
+
+### Changed
+
+- **No more "+ New" row**: on Today, a day page or the weekly page,
+  Down on the last bullet starts a new bullet straight away, as it did
+  before 0.0.1; Down again before typing anything drops that empty
+  bullet and wraps round to the first one. Up from the first bullet
+  wraps round to the last one.
+  An empty page says "No bullets yet."; Enter or Down starts the first
+  bullet.
 
 ## [0.0.1] - 2026-11-13
 

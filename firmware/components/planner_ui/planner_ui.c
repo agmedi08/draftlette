@@ -24,7 +24,10 @@
 
 #define HINT_VIEWS  "F1:Menu  F2:Today  F3:Week  F4:Month  F5:Notes"
 #define HINT_LIST   "Knob:move  Enter:edit  Spc:done  Bksp:close"
-#define HINT_LIST_NEW "Knob:move  Enter:new bullet"
+#define HINT_SUB    "  Right:sub"
+#define HINT_UNSUB  "  Left:unsub"
+#define SUB_INDENT  "    "        /* before a sub-bullet's prefix */
+#define HINT_LIST_NEW "Enter:new bullet"
 #define HINT_GRID   "Knob:move  Enter:open  ? or ,:week  F1:Menu"
 #define HINT_EDIT   "Enter:finish  Esc:cancel  Tab:type"
 #define HINT_CLOSE  "Knob:move  Enter:pick  Esc:back"
@@ -89,6 +92,7 @@ static const char *s_msg;           /* replaces the hint until the next key */
 static char s_edit[JOURNAL_TEXT_MAX];
 static bool s_edit_is_new;
 static journal_kind_t s_edit_old_kind;
+static int s_edit_old_depth;
 static close_item_t s_close_items[4];
 static int s_close_count;
 static int s_close_sel;
@@ -347,23 +351,26 @@ static const char *edit_tail(const char *text, size_t prefix_len, int32_t width)
     return p;
 }
 
-/* The list ends in a "+ New" row, at index s_day->count, so the knob
- * can wrap round past it. */
+/* An empty page shows a line saying so, which is not a bullet. */
 static void render_bullets(bool focused)
 {
     char line[JOURNAL_TEXT_MAX + 32];
+
+    if (s_day->count == 0) {
+        set_row(0, "No bullets yet.", false);
+        hide_rows_from(1);
+        return;
+    }
 
     if (s_sel < s_top) s_top = s_sel;
     if (s_sel >= s_top + s_visible_rows) s_top = s_sel - s_visible_rows + 1;
 
     int row = 0;
-    for (int i = s_top; i <= s_day->count && row < s_visible_rows; i++, row++) {
-        if (i == s_day->count) {
-            set_row(row, "+ New", focused && i == s_sel);
-            continue;
-        }
+    for (int i = s_top; i < s_day->count && row < s_visible_rows; i++, row++) {
         const journal_bullet_t *b = &s_day->bullets[i];
-        const char *prefix = bullet_prefix(b->kind);
+        char prefix[16];
+        snprintf(prefix, sizeof(prefix), "%s%s", b->depth ? SUB_INDENT : "",
+                 bullet_prefix(b->kind));
         if (s_mode == MODE_EDIT && i == s_sel) {
             snprintf(line, sizeof(line), "%s%s_", prefix,
                      edit_tail(s_edit, strlen(prefix), row_width()));
@@ -432,7 +439,15 @@ static void render_date(void)
 
 static void render_delete(void)
 {
-    set_row(0, "Delete this bullet?", false);
+    char question[48];
+    int kids = journal_children(s_day, s_sel);
+    if (kids) {
+        snprintf(question, sizeof(question), "Delete this and %d sub-task%s?",
+                 kids, kids == 1 ? "" : "s");
+    } else {
+        snprintf(question, sizeof(question), "Delete this bullet?");
+    }
+    set_row(0, question, false);
     set_row(1, s_day->bullets[s_sel].text, true);
     hide_rows_from(2);
 }
@@ -530,30 +545,31 @@ static void save_day(void)
     }
 }
 
-/* s_day->count is the "+ New" row. */
+/* On a bullet, or 0 on an empty page. */
 static void clamp_sel(void)
 {
-    if (s_sel > s_day->count) s_sel = s_day->count;
+    if (s_sel > s_day->count - 1) s_sel = s_day->count - 1;
     if (s_sel < 0) s_sel = 0;
 }
 
-/* The next row after idx in dir (+1 or -1), or -1 past the end. The
- * "+ New" row, s_day->count, counts as a row. */
+/* The next bullet after idx in dir (+1 or -1), or -1 past either end. */
 static int step_shown(int idx, int dir)
 {
     int i = idx + dir;
-    return i >= 0 && i <= s_day->count ? i : -1;
+    return i >= 0 && i < s_day->count ? i : -1;
 }
 
-static void remove_bullet(int idx)
+/* Bullet idx and the n - 1 after it. */
+static void remove_bullets(int idx, int n)
 {
-    memmove(&s_day->bullets[idx], &s_day->bullets[idx + 1],
-            (size_t)(s_day->count - idx - 1) * sizeof(s_day->bullets[0]));
-    s_day->count--;
+    memmove(&s_day->bullets[idx], &s_day->bullets[idx + n],
+            (size_t)(s_day->count - idx - n) * sizeof(s_day->bullets[0]));
+    s_day->count -= n;
     clamp_sel();
 }
 
-static void start_new_bullet(void)
+/* depth 1 makes it a sub-bullet, if the line above allows one. */
+static void start_new_bullet(int depth)
 {
     if (s_day->count == JOURNAL_MAX_BULLETS) {
         s_msg = "This page is full.";
@@ -563,9 +579,11 @@ static void start_new_bullet(void)
     memset(b, 0, sizeof(*b));
     b->kind = JOURNAL_TASK;
     s_sel = s_day->count++;
+    b->depth = depth && journal_can_nest(s_day, s_sel) ? 1 : 0;
     s_edit[0] = '\0';
     s_edit_is_new = true;
     s_edit_old_kind = JOURNAL_TASK;
+    s_edit_old_depth = b->depth;
     s_mode = MODE_EDIT;
 }
 
@@ -581,15 +599,17 @@ static void start_edit(void)
     snprintf(s_edit, sizeof(s_edit), "%s", b->text);
     s_edit_is_new = false;
     s_edit_old_kind = b->kind;
+    s_edit_old_depth = b->depth;
     s_mode = MODE_EDIT;
 }
 
 static void cancel_edit(void)
 {
     if (s_edit_is_new) {
-        remove_bullet(s_sel);
+        remove_bullets(s_sel, 1);
     } else {
         s_day->bullets[s_sel].kind = s_edit_old_kind;
+        s_day->bullets[s_sel].depth = s_edit_old_depth;
     }
     s_mode = MODE_LIST;
 }
@@ -744,6 +764,24 @@ static void edit_type(char *buf, size_t buf_sz, const kb_event_t *ev, char skip)
     if (len + add < buf_sz) memcpy(buf + len, text, add + 1);
 }
 
+/* Right makes bullet idx a sub-bullet of the one above, Left makes it
+ * top-level again. Returns false when the key changed nothing. A
+ * bullet moved in brings its sub-bullets along, and the ones after a
+ * bullet moved out become its own. */
+static bool nest_key(int idx, const kb_event_t *ev)
+{
+    journal_bullet_t *b = &s_day->bullets[idx];
+    if (ev->keycode == KB_KEY_RIGHT && !b->depth && journal_can_nest(s_day, idx)) {
+        b->depth = 1;
+        return true;
+    }
+    if (ev->keycode == KB_KEY_LEFT && b->depth) {
+        b->depth = 0;
+        return true;
+    }
+    return false;
+}
+
 static void key_edit(const kb_event_t *ev)
 {
     switch (ev->keycode) {
@@ -759,19 +797,30 @@ static void key_edit(const kb_event_t *ev)
             if (i >= 0) s_sel = i;
         }
         return;
-    case KB_KEY_DOWN:
-        /* Keep going: knob down from the last bullet starts the next. */
+    case KB_KEY_DOWN: {
+        /* Keep going: knob down from the last bullet starts the next.
+         * Down again on that one while it is still empty drops it and
+         * wraps round to the top, since a new bullet is always last. */
+        bool was_new = s_edit_is_new;
         if (finish_edit()) {
             int i = step_shown(s_sel, 1);
             if (i >= 0 && i < s_day->count) s_sel = i;
-            else start_new_bullet();
+            else start_new_bullet(s_day->bullets[s_sel].depth);
+        } else if (was_new) {
+            s_sel = 0;
+            s_top = 0;
         }
         return;
+    }
     case KB_KEY_TAB:
         cycle_kind(&s_day->bullets[s_sel]);
         return;
     case KB_KEY_BACKSPACE:
         edit_backspace(s_edit, ctrl_held(ev));
+        return;
+    case KB_KEY_RIGHT:
+    case KB_KEY_LEFT:
+        nest_key(s_sel, ev);    /* saved with the text */
         return;
     default:
         break;
@@ -779,26 +828,40 @@ static void key_edit(const kb_event_t *ev)
     edit_type(s_edit, sizeof(s_edit), ev, 0);
 }
 
-/* Up and Down wrap round through the "+ New" row. */
+/* Down on the last bullet starts a new one after it, like Down while
+ * typing; a sub-task starts another sub-task. Up from the first bullet
+ * wraps round to the last. On an empty page, Enter or Down starts the
+ * first bullet. */
 static void key_list(const kb_event_t *ev)
 {
-    bool on_new = s_sel == s_day->count;
+    bool empty = s_day->count == 0;
 
     switch (ev->keycode) {
     case KB_KEY_UP: {
+        if (empty) break;
         int i = step_shown(s_sel, -1);
-        s_sel = i >= 0 ? i : s_day->count;
+        s_sel = i >= 0 ? i : s_day->count - 1;
         break;
     }
     case KB_KEY_DOWN:
-        s_sel = step_shown(s_sel < s_day->count ? s_sel : -1, 1);
+        if (empty) {
+            start_new_bullet(0);
+        } else if (s_sel == s_day->count - 1) {
+            start_new_bullet(s_day->bullets[s_sel].depth);
+        } else {
+            s_sel++;
+        }
         break;
     case KB_KEY_ENTER:
-        if (on_new) start_new_bullet();
+        if (empty) start_new_bullet(0);
         else start_edit();
         break;
+    case KB_KEY_RIGHT:
+    case KB_KEY_LEFT:
+        if (!empty && nest_key(s_sel, ev)) save_day();
+        break;
     case KB_KEY_SPACE: {
-        if (on_new) break;
+        if (empty) break;
         journal_bullet_t *b = &s_day->bullets[s_sel];
         if (b->kind == JOURNAL_TASK) b->kind = JOURNAL_DONE;
         else if (b->kind == JOURNAL_DONE) b->kind = JOURNAL_TASK;
@@ -807,12 +870,12 @@ static void key_list(const kb_event_t *ev)
         break;
     }
     case KB_KEY_BACKSPACE:
-        if (on_new) break;
+        if (empty) break;
         if (ctrl_held(ev)) s_mode = MODE_DELETE;
         else open_closeout();
         break;
     case KB_KEY_DELETE:
-        if (!on_new) s_mode = MODE_DELETE;
+        if (!empty) s_mode = MODE_DELETE;
         break;
     default:
         break;
@@ -867,7 +930,7 @@ static void key_date(const kb_event_t *ev)
 static void key_delete(const kb_event_t *ev)
 {
     if (ev->keycode == KB_KEY_ENTER) {
-        remove_bullet(s_sel);
+        remove_bullets(s_sel, 1 + journal_children(s_day, s_sel));
         save_day();
         s_mode = MODE_LIST;
     } else if (ev->keycode == KB_KEY_ESCAPE) {
@@ -898,8 +961,16 @@ static const char *tasks_hint(void)
     case MODE_CLOSEOUT: return HINT_CLOSE;
     case MODE_DATE:     return s_mig_week ? HINT_WEEK_PICK : HINT_DATE;
     case MODE_DELETE:   return HINT_DELETE;
-    default:            return s_sel == s_day->count ? HINT_LIST_NEW : HINT_LIST;
+    default:            break;
     }
+    if (s_day->count == 0) return HINT_LIST_NEW;
+
+    static char hint[80];
+    const journal_bullet_t *b = &s_day->bullets[s_sel];
+    const char *nest = b->depth ? HINT_UNSUB
+                     : journal_can_nest(s_day, s_sel) ? HINT_SUB : "";
+    snprintf(hint, sizeof(hint), "%s%s", HINT_LIST, nest);
+    return hint;
 }
 
 static void tasks_key(const kb_event_t *ev)
@@ -984,10 +1055,13 @@ static void show_page(const struct tm *now, bool create_file)
 
 /* ---- Week grid ---- */
 
-static bool shows_in_grid(journal_kind_t kind)
+/* Top-level open, done, event and tracker items. Sub-tasks would
+ * crowd an eighth of the screen, so only the page shows them. */
+static bool shows_in_grid(const journal_bullet_t *b)
 {
-    return kind == JOURNAL_TASK || kind == JOURNAL_DONE ||
-           kind == JOURNAL_EVENT || kind == JOURNAL_TRACKER;
+    if (b->depth) return false;
+    return b->kind == JOURNAL_TASK || b->kind == JOURNAL_DONE ||
+           b->kind == JOURNAL_EVENT || b->kind == JOURNAL_TRACKER;
 }
 
 static void paint_box(int idx)
@@ -1011,13 +1085,13 @@ static void fill_box_items(int idx)
     int row = 0;
 
     for (int i = 0; i < s_day->count; i++) {
-        if (shows_in_grid(s_day->bullets[i].kind)) total++;
+        if (shows_in_grid(&s_day->bullets[i])) total++;
     }
     int room = total > s_box_rows ? s_box_rows - 1 : total;
 
     for (int i = 0; i < s_day->count && row < room; i++) {
         const journal_bullet_t *b = &s_day->bullets[i];
-        if (!shows_in_grid(b->kind)) continue;
+        if (!shows_in_grid(b)) continue;
         snprintf(line, sizeof(line), "%s%s", bullet_prefix(b->kind), b->text);
         lv_label_set_text(s_box_row[idx][row++], line);
     }

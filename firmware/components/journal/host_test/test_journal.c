@@ -180,6 +180,79 @@ int main(int argc, char **argv)
     assert(journal_migrate_week(&a, 0, 2026, 11, 9) == JOURNAL_ERR_FULL);
     assert(a.bullets[0].kind == JOURNAL_TASK);
 
+    /* Sub-bullets: indented by spaces or a tab, written back with two
+     * spaces. Too deep, or under a hand-written line, is not one. */
+    char sub[256];
+    snprintf(sub, sizeof(sub), "%s/journal/2026/11/2026-11-10.md", argv[1]);
+    put_file(sub, "# Tue 2026-11-10\n\n"
+                  "  - [ ] orphan\n"
+                  "- [ ] parent\n"
+                  "  - [ ] two spaces\n"
+                  "\t- [x] tab\n"
+                  "    - o four spaces\n"
+                  "      - too deep\n"
+                  "## heading\n"
+                  "  - under heading\n"
+                  "  -\n");
+    assert(journal_load(&a, 2026, 11, 10) == JOURNAL_OK);
+    assert(a.count == 9);
+    assert(a.bullets[0].kind == JOURNAL_TASK && a.bullets[0].depth == 0);
+    assert(a.bullets[1].depth == 0);
+    assert(a.bullets[2].depth == 1 && !strcmp(a.bullets[2].text, "two spaces"));
+    assert(a.bullets[3].depth == 1 && a.bullets[3].kind == JOURNAL_DONE);
+    assert(a.bullets[4].depth == 1 && a.bullets[4].kind == JOURNAL_EVENT);
+    assert(a.bullets[5].kind == JOURNAL_RAW && a.bullets[5].depth == 0);
+    assert(!strcmp(a.bullets[5].text, "      - too deep"));
+    assert(a.bullets[7].kind == JOURNAL_NOTE && a.bullets[7].depth == 0);
+    assert(a.bullets[8].kind == JOURNAL_RAW);
+    assert(journal_children(&a, 1) == 3 && journal_children(&a, 2) == 0);
+    assert(journal_children(&a, 0) == 0);
+    assert(!journal_can_nest(&a, 0) && journal_can_nest(&a, 2));
+    assert(!journal_can_nest(&a, 7) && !journal_can_nest(&a, 5));
+    assert(journal_save(&a) == JOURNAL_OK);
+    assert(!strcmp(read_all(sub), "# Tue 2026-11-10\n\n"
+                                  "- [ ] orphan\n"
+                                  "- [ ] parent\n"
+                                  "  - [ ] two spaces\n"
+                                  "  - [x] tab\n"
+                                  "  - o four spaces\n"
+                                  "      - too deep\n"
+                                  "## heading\n"
+                                  "- under heading\n"
+                                  "  -\n"));
+
+    /* A parent takes its open sub-bullets along; the done one stays. */
+    assert(journal_migrate(&a, 1, 2026, 11, 11) == JOURNAL_OK);
+    assert(a.bullets[1].kind == JOURNAL_MIGRATED);
+    assert(a.bullets[2].kind == JOURNAL_MIGRATED);
+    assert(!strcmp(a.bullets[2].moved_to, "2026-11-11"));
+    assert(a.bullets[3].kind == JOURNAL_DONE);
+    assert(a.bullets[4].kind == JOURNAL_MIGRATED);
+    assert(journal_load(&b, 2026, 11, 11) == JOURNAL_OK && b.count == 3);
+    assert(b.bullets[0].depth == 0 && !strcmp(b.bullets[0].text, "parent"));
+    assert(b.bullets[1].depth == 1 && b.bullets[1].kind == JOURNAL_TASK);
+    assert(b.bullets[2].depth == 1 && b.bullets[2].kind == JOURNAL_EVENT);
+
+    /* A sub-bullet on its own arrives top-level. */
+    assert(journal_migrate(&b, 1, 2026, 11, 12) == JOURNAL_OK);
+    assert(b.bullets[1].kind == JOURNAL_MIGRATED && b.bullets[2].kind == JOURNAL_EVENT);
+    assert(journal_load(&b, 2026, 11, 12) == JOURNAL_OK && b.count == 1);
+    assert(b.bullets[0].depth == 0 && !strcmp(b.bullets[0].text, "two spaces"));
+
+    /* No room for the whole group: nothing moves. */
+    assert(journal_load(&a, 2026, 11, 13) == JOURNAL_OK);
+    a.count = JOURNAL_MAX_BULLETS - 1;
+    for (int i = 0; i < a.count; i++) {
+        a.bullets[i].kind = JOURNAL_NOTE;
+        a.bullets[i].depth = 0;
+        strcpy(a.bullets[i].text, "x");
+    }
+    assert(journal_save(&a) == JOURNAL_OK);
+    put_file(sub, "# Tue 2026-11-10\n\n- [ ] p\n  - [ ] c\n");
+    assert(journal_load(&a, 2026, 11, 10) == JOURNAL_OK);
+    assert(journal_migrate(&a, 0, 2026, 11, 13) == JOURNAL_ERR_FULL);
+    assert(a.bullets[0].kind == JOURNAL_TASK && a.bullets[1].kind == JOURNAL_TASK);
+
     puts("journal tests passed");
     return 0;
 }

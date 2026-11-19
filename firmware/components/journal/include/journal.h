@@ -11,6 +11,12 @@
  *   - o event
  *   - ! tracker
  *   - note
+ *     - [ ] sub-task of the note above
+ *
+ * A bullet indented by one to four spaces or a tab is a sub-bullet
+ * (depth 1) of the bullet above it; it is written back with two
+ * spaces. There is one level only, and a sub-bullet needs a bullet
+ * above it, not a JOURNAL_RAW line, or it loads as a top-level one.
  *
  * Any other line is kept untouched as JOURNAL_RAW, so hand edits made
  * in Notes survive. Blank lines are not kept.
@@ -50,6 +56,7 @@ typedef struct {
     journal_kind_t kind;
     char text[JOURNAL_TEXT_MAX];
     char moved_to[11];      /* JOURNAL_MIGRATED only: YYYY-MM-DD */
+    int depth;              /* 0, or 1 for a sub-bullet; JOURNAL_RAW is 0 */
 } journal_bullet_t;
 
 typedef struct {
@@ -78,9 +85,21 @@ int journal_save(const journal_day_t *day);
  * already exists is left alone. */
 int journal_create(const journal_day_t *day);
 
+/* True when bullet idx may be a sub-bullet: the line above it is a
+ * bullet, not JOURNAL_RAW, and idx itself is not JOURNAL_RAW. */
+bool journal_can_nest(const journal_day_t *day, int idx);
+
+/* The number of sub-bullets right after top-level bullet idx. 0 for a
+ * sub-bullet itself. */
+int journal_children(const journal_day_t *day, int idx);
+
 /* Copy bullet idx to the given day as an open item, then mark it
  * migrated in src. The copy is saved first, so a failure can duplicate
- * a bullet but never lose one. */
+ * a bullet but never lose one.
+ *
+ * A top-level bullet takes its open (task or event) sub-bullets along,
+ * as sub-bullets, and they are marked migrated too; the closed ones
+ * stay. A sub-bullet migrated on its own arrives as a top-level one. */
 int journal_migrate(journal_day_t *src, int idx, int year, int month,
                     int day_of_month);
 
