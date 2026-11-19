@@ -94,10 +94,26 @@ static void set_text(journal_bullet_t *b, journal_kind_t kind, const char *text)
 {
     b->kind = kind;
     b->moved_to[0] = '\0';
+    b->depth = 0;
     snprintf(b->text, sizeof(b->text), "%s", text);
 }
 
-static void parse_line(const char *line, journal_bullet_t *b)
+/* The length of a sub-bullet's indent: one to four spaces or a tab,
+ * before "- ". 0 when line is not an indented bullet. */
+static size_t nest_indent(const char *line)
+{
+    size_t n = 0;
+    if (line[0] == '\t') {
+        n = 1;
+    } else {
+        while (n < 5 && line[n] == ' ') n++;
+        if (n > 4) return 0;
+    }
+    return n && strncmp(line + n, "- ", 2) == 0 ? n : 0;
+}
+
+/* False when line is not a bullet, leaving b alone. */
+static bool parse_bullet(const char *line, journal_bullet_t *b)
 {
     static const struct {
         const char *prefix;
@@ -128,13 +144,24 @@ static void parse_line(const char *line, journal_bullet_t *b)
                 b->text[len - tail] = '\0';
             }
         }
+        return true;
+    }
+    return false;
+}
+
+static void parse_line(const char *line, journal_bullet_t *b)
+{
+    size_t indent = nest_indent(line);
+    if (indent && parse_bullet(line + indent, b)) {
+        b->depth = 1;
         return;
     }
-    set_text(b, JOURNAL_RAW, line);
+    if (!parse_bullet(line, b)) set_text(b, JOURNAL_RAW, line);
 }
 
 static void write_bullet(FILE *f, const journal_bullet_t *b)
 {
+    if (b->depth && b->kind != JOURNAL_RAW) fputs("  ", f);
     switch (b->kind) {
     case JOURNAL_TASK:      fprintf(f, "- [ ] %s\n", b->text); break;
     case JOURNAL_DONE:      fprintf(f, "- [x] %s\n", b->text); break;
@@ -198,7 +225,10 @@ static int load_page(journal_day_t *day, int year, int month,
             ret = JOURNAL_ERR_TOO_BIG;
             break;
         }
-        parse_line(line, &day->bullets[day->count++]);
+        journal_bullet_t *b = &day->bullets[day->count];
+        parse_line(line, b);
+        if (b->depth && !journal_can_nest(day, day->count)) b->depth = 0;
+        day->count++;
     }
     if (ret == JOURNAL_OK && ferror(f)) ret = JOURNAL_ERR_IO;
     fclose(f);
@@ -270,30 +300,71 @@ int journal_create(const journal_day_t *day)
     return write_page(day, path);
 }
 
+bool journal_can_nest(const journal_day_t *day, int idx)
+{
+    if (!day || idx <= 0 || idx >= day->count) return false;
+    return day->bullets[idx].kind != JOURNAL_RAW &&
+           day->bullets[idx - 1].kind != JOURNAL_RAW;
+}
+
+int journal_children(const journal_day_t *day, int idx)
+{
+    if (!day || idx < 0 || idx >= day->count) return 0;
+    if (day->bullets[idx].depth) return 0;
+    int n = 0;
+    while (idx + 1 + n < day->count && day->bullets[idx + 1 + n].depth) n++;
+    return n;
+}
+
+/* An open item, which a migrated parent takes along. */
+static bool carried(const journal_bullet_t *b)
+{
+    return b->kind == JOURNAL_TASK || b->kind == JOURNAL_EVENT;
+}
+
+static journal_kind_t open_kind(const journal_bullet_t *b)
+{
+    return b->kind == JOURNAL_EVENT ? JOURNAL_EVENT : JOURNAL_TASK;
+}
+
 static int migrate_to(journal_day_t *src, int idx, int year, int month,
                       int day_of_month, bool to_week)
 {
+    int kids = journal_children(src, idx);
+    int moving = 1;
+    for (int k = 1; k <= kids; k++) {
+        if (carried(&src->bullets[idx + k])) moving++;
+    }
+
     journal_day_t *dst = malloc(sizeof(*dst));
     if (!dst) return JOURNAL_ERR_IO;
 
     int ret = load_page(dst, year, month, day_of_month, to_week);
-    if (ret == JOURNAL_OK && dst->count == JOURNAL_MAX_BULLETS) {
+    if (ret == JOURNAL_OK && dst->count + moving > JOURNAL_MAX_BULLETS) {
         ret = JOURNAL_ERR_FULL;
     }
     if (ret == JOURNAL_OK) {
-        journal_bullet_t *b = &src->bullets[idx];
-        set_text(&dst->bullets[dst->count++],
-                 b->kind == JOURNAL_EVENT ? JOURNAL_EVENT : JOURNAL_TASK,
-                 b->text);
+        const journal_bullet_t *b = &src->bullets[idx];
+        set_text(&dst->bullets[dst->count++], open_kind(b), b->text);
+        for (int k = 1; k <= kids; k++) {
+            b = &src->bullets[idx + k];
+            if (!carried(b)) continue;
+            journal_bullet_t *copy = &dst->bullets[dst->count++];
+            set_text(copy, open_kind(b), b->text);
+            copy->depth = 1;
+        }
         ret = journal_save(dst);
     }
     free(dst);
     if (ret != JOURNAL_OK) return ret;
 
-    journal_bullet_t *b = &src->bullets[idx];
-    b->kind = JOURNAL_MIGRATED;
-    snprintf(b->moved_to, sizeof(b->moved_to), "%04d-%02d-%02d",
-             year, month, day_of_month);
+    for (int k = 0; k <= kids; k++) {
+        journal_bullet_t *b = &src->bullets[idx + k];
+        if (k && !carried(b)) continue;
+        b->kind = JOURNAL_MIGRATED;
+        snprintf(b->moved_to, sizeof(b->moved_to), "%04d-%02d-%02d",
+                 year, month, day_of_month);
+    }
     return journal_save(src);
 }
 
