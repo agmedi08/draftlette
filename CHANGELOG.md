@@ -13,6 +13,14 @@ in the git log.
   with an ESP32-S3, a MicroSD slot and a battery connector. Wake the
   device from sleep with RESET (the BOOT button drives the screen).
   Not yet tested on physical hardware. See HARDWARE.md.
+- **Battery level on the Elecrow CrowPanel 5.0"**: with a MAX17048
+  fuel-gauge breakout wired between the battery and the BAT connector
+  and plugged into the board's I2C connector, the status bar shows the
+  battery percentage and a "+" while it charges. Without the gauge the
+  battery indicator stays hidden, as before. Like the other
+  battery-powered boards, the CrowPanel 5.0" now also goes to sleep
+  when no keyboard has connected 3 minutes after start-up (press RESET
+  to wake it).
 
 ### Changed
 

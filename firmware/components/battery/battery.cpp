@@ -1,7 +1,7 @@
 /*
  * Battery monitor.
  *
- * Two backends are currently supported:
+ * Backends:
  *
  *   - ADC + resistive divider (battery_init):
  *       * Waveshare ESP32-S3-RLCD-4.2: GPIO4 (ADC1_CH3) with a 3:1
@@ -32,6 +32,14 @@
  *       * Seeed reTerminal Sticky: own I2C bus; its gauge is
  *         programmed for the pack, so CONFIG_DRAFTLING_BATTERY_
  *         BQ27220_GAUGE_SOC makes the percentage come from 0x2C.
+ *
+ *   - MAX17048 add-on fuel gauge over I2C (battery_init_max17048):
+ *       * Elecrow CrowPanel 5.0": optional breakout wired between the
+ *         cell and the BAT connector, on the board's I2C connector.
+ *         Probed at boot; percentage is the gauge's own SOC register.
+ *
+ *   (The CW2017, AXP2101, M5PM1 and INA226 backends are described at
+ *   their state blocks below.)
  */
 
 #include "battery.h"
@@ -58,6 +66,7 @@ enum batt_backend {
     BATT_BACKEND_CW2017,
     BATT_BACKEND_AXP2101,
     BATT_BACKEND_M5PM1,
+    BATT_BACKEND_MAX17048,
 };
 static enum batt_backend s_backend = BATT_BACKEND_NONE;
 
@@ -109,6 +118,25 @@ static const uint8_t CW2017_BATINFO[CW2017_BATINFO_LEN] = {
 };
 #define CW2017_I2C_ADDR_DEFAULT 0x63
 static i2c_master_dev_handle_t   s_cw2017_dev = NULL;
+
+/* ---- MAX17048 backend state ----
+ * Analog Devices (Maxim) MAX17048 ModelGauge fuel gauge, fixed 7-bit
+ * address 0x36. Sold on add-on breakouts (Adafruit, SparkFun, ...)
+ * that sit between the cell and the board's battery connector; the
+ * chip is powered from the cell itself, so it only answers on I2C
+ * while a battery is attached. Every register is 16 bits, MSB first.
+ * No battery profile is needed: the default ModelGauge model suits a
+ * typical single-cell LiPo. */
+#define MAX17048_I2C_ADDR       0x36
+#define MAX17048_REG_VCELL      0x02    /* u16, 78.125 uV/LSB */
+#define MAX17048_REG_SOC        0x04    /* u16, 1/256 %/LSB (MSB = whole %) */
+#define MAX17048_REG_VERSION    0x08    /* 0x001x on MAX17048 / MAX17049 */
+#define MAX17048_REG_CRATE      0x16    /* s16, 0.208 %/hour/LSB, + = charging */
+/* CRATE above this (in LSBs, ~2 %/hour) counts as charging; the rate
+ * hovers around zero on a full cell or at rest, so a small margin
+ * keeps the "+" glyph from flickering. */
+#define MAX17048_CHARGE_MIN_LSB 10
+static i2c_master_dev_handle_t   s_max17048_dev = NULL;
 
 /* ---- AXP2101 backend state ----
  * X-Powers AXP2101 PMIC, used on the Waveshare ESP32-S3-ePaper-3.97
@@ -603,6 +631,69 @@ extern "C" int battery_init_cw2017(void *i2c_master_bus)
     cw2017_read_u8(CW2017_REG_SOC, &soc);
     ESP_LOGI(TAG, "CW2017 fuel gauge initialized at 0x%02X (initial %u%%)",
              CW2017_I2C_ADDR_DEFAULT, (unsigned)soc);
+    return 0;
+}
+
+/* ---- MAX17048 backend ---- */
+
+static int max17048_read_u16(uint8_t reg, uint16_t *out)
+{
+    if (!s_max17048_dev) return -1;
+    uint8_t wr[1] = { reg };
+    uint8_t rd[2] = { 0, 0 };
+    esp_err_t err = i2c_master_transmit_receive(s_max17048_dev, wr, 1, rd, 2,
+                                                100 /* ms */);
+    if (err != ESP_OK) return -1;
+    *out = (uint16_t)(((uint16_t)rd[0] << 8) | rd[1]);
+    return 0;
+}
+
+extern "C" int battery_init_max17048(void *i2c_master_bus)
+{
+    if (s_backend != BATT_BACKEND_NONE) return 0;
+
+    if (i2c_master_bus == NULL) {
+        ESP_LOGW(TAG, "MAX17048 init: NULL I2C bus handle");
+        return -1;
+    }
+
+    i2c_master_bus_handle_t bus = (i2c_master_bus_handle_t)i2c_master_bus;
+
+    /* An add-on part: not answering is the normal case on a board
+     * without one (or with no battery attached), so log it at INFO. */
+    if (i2c_master_probe(bus, MAX17048_I2C_ADDR, 100 /* ms */) != ESP_OK) {
+        ESP_LOGI(TAG, "No MAX17048 at 0x%02X", MAX17048_I2C_ADDR);
+        return -1;
+    }
+
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address  = MAX17048_I2C_ADDR;
+    dev_cfg.scl_speed_hz    = 400000;
+    esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &s_max17048_dev);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "MAX17048 bus_add_device failed: %s", esp_err_to_name(err));
+        s_max17048_dev = NULL;
+        return -1;
+    }
+
+    /* Something else could sit at 0x36; the version register tells a
+     * MAX17048 / MAX17049 (0x001x) apart from it. */
+    uint16_t ver = 0;
+    if (max17048_read_u16(MAX17048_REG_VERSION, &ver) != 0 ||
+        (ver & 0xFFF0) != 0x0010) {
+        ESP_LOGW(TAG, "Device at 0x%02X is not a MAX17048 (version 0x%04X)",
+                 MAX17048_I2C_ADDR, (unsigned)ver);
+        i2c_master_bus_rm_device(s_max17048_dev);
+        s_max17048_dev = NULL;
+        return -1;
+    }
+
+    s_backend = BATT_BACKEND_MAX17048;
+    ESP_LOGI(TAG, "MAX17048 fuel gauge initialized at 0x%02X "
+                  "(version 0x%04X, %d mV, %d%%)",
+             MAX17048_I2C_ADDR, (unsigned)ver, battery_read_mv(),
+             battery_read_percent());
     return 0;
 }
 
@@ -1245,6 +1336,12 @@ extern "C" int battery_read_mv(void)
         int mv = v[0] | ((v[1] & 0x0F) << 8);
         return (mv < M5PM1_VBAT_MIN_MV) ? 0 : mv;
     }
+    if (s_backend == BATT_BACKEND_MAX17048) {
+        /* 78.125 uV/LSB = 5/64 mV, rounded. */
+        uint16_t raw = 0;
+        if (max17048_read_u16(MAX17048_REG_VCELL, &raw) != 0) return 0;
+        return (int)(((uint32_t)raw * 5 + 32) / 64);
+    }
     if (s_backend != BATT_BACKEND_ADC) return 0;
 
     bool en = enable_divider();
@@ -1391,6 +1488,16 @@ extern "C" int battery_read_percent(void)
         int mv = battery_read_mv();
         return (mv > 0) ? mv_to_percent(mv) : -1;
     }
+    if (s_backend == BATT_BACKEND_MAX17048) {
+        /* ModelGauge state of charge: MSB is whole percent, LSB 1/256 %.
+         * A read failure means the battery (which powers the chip) was
+         * unplugged, so the status bar hides the value. The gauge can
+         * report slightly over 100 % on a full cell. */
+        uint16_t raw = 0;
+        if (max17048_read_u16(MAX17048_REG_SOC, &raw) != 0) return -1;
+        int pct = (int)((raw + 128) >> 8);
+        return (pct > 100) ? 100 : pct;
+    }
     if (s_backend != BATT_BACKEND_ADC) return -1;
 
     int mv = battery_read_mv();
@@ -1464,6 +1571,14 @@ extern "C" int battery_read_charging(void)
         if (m5pm1_read(M5PM1_REG_PWR_SRC, &src, 1) != 0) return -1;
         if (battery_read_mv() <= 0) return -1;
         return ((src & 0x07) == M5PM1_PWR_SRC_5VIN) ? 1 : 0;
+    }
+    if (s_backend == BATT_BACKEND_MAX17048) {
+        /* No charger on the bus: infer charging from the gauge's
+         * signed charge rate (CRATE), positive = state of charge
+         * rising. A full cell on USB reads 0, like the BQ27220. */
+        uint16_t raw = 0;
+        if (max17048_read_u16(MAX17048_REG_CRATE, &raw) != 0) return -1;
+        return ((int16_t)raw > MAX17048_CHARGE_MIN_LSB) ? 1 : 0;
     }
     /* ADC backend, CW2017 (no charger IC on its bus, no current
      * register) and "no backend" cannot tell. */

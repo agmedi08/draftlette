@@ -968,6 +968,21 @@ config DRAFTLING_HAS_BATTERY
     # M5Stack PaperMono: battery voltage read from the M5PM1
     # power-management chip (DRAFTLING_BATTERY_M5PM1 below).
     default y if DRAFTLING_MODEL_M5STACK_PAPERMONO
+    # Elecrow CrowPanel 5.0": optional MAX17048 add-on gauge
+    # (DRAFTLING_BATTERY_MAX17048 below). Without one the indicator
+    # stays hidden, since battery_read_percent() returns -1.
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
+    default n
+
+# Selects the MAX17048 fuel-gauge backend in components/battery/ for a
+# board whose gauge is an add-on breakout on the main I2C bus
+# (I2C_SDA_PIN / I2C_SCL_PIN). main.cpp then creates that bus once,
+# early in boot, and shares it between battery_init_max17048() and the
+# touchscreen. The gauge is probed at boot, so a board without one
+# behaves as before.
+config DRAFTLING_BATTERY_MAX17048
+    bool
+    default y if DRAFTLING_MODEL_ELECROW_CROWPANEL_50
     default n
 
 # Selects the M5Stack M5PM1 power-management backend in
