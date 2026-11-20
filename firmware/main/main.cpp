@@ -892,8 +892,10 @@ static void pre_sleep_crowpanel_579_deinit(void)
  * lines are PCA9557 outputs IO0 and IO1, not ESP32 GPIOs. Run
  * Elecrow's reset sequence (their crowpanel-esp32-5.0-3.0 example):
  * both low, 20 ms, RST high (INT still low selects address 0x5D),
- * 100 ms, then INT back to an input. The touch driver opens its own
- * bus afterwards, so this one is only kept for these writes. On
+ * 100 ms, then INT back to an input. Uses the shared I2C bus when
+ * main.cpp created one (it must: a second bus on the same pins would
+ * reset them when deleted, cutting off the devices on the shared
+ * one); otherwise a temporary bus kept only for these writes. On
  * earlier board versions nothing answers at the expander's address
  * and the touch controller is left as it is. */
 static esp_err_t crowpanel50_pca9557_write(i2c_master_dev_handle_t dev,
@@ -903,23 +905,25 @@ static esp_err_t crowpanel50_pca9557_write(i2c_master_dev_handle_t dev,
     return i2c_master_transmit(dev, buf, sizeof(buf), 50);
 }
 
-static void crowpanel50_touch_reset(void)
+static void crowpanel50_touch_reset(i2c_master_bus_handle_t shared_bus)
 {
-    i2c_master_bus_handle_t bus = NULL;
-    i2c_master_bus_config_t bus_cfg = {};
-    bus_cfg.i2c_port          = -1;
-    bus_cfg.sda_io_num        = (gpio_num_t)I2C_SDA_PIN;
-    bus_cfg.scl_io_num        = (gpio_num_t)I2C_SCL_PIN;
-    bus_cfg.clk_source        = I2C_CLK_SRC_DEFAULT;
-    bus_cfg.glitch_ignore_cnt = 7;
-    bus_cfg.flags.enable_internal_pullup = true;
-    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
-        ESP_LOGW(TAG, "CrowPanel 5.0: I2C bus init failed; touch not reset");
-        return;
+    i2c_master_bus_handle_t bus = shared_bus;
+    if (!bus) {
+        i2c_master_bus_config_t bus_cfg = {};
+        bus_cfg.i2c_port          = -1;
+        bus_cfg.sda_io_num        = (gpio_num_t)I2C_SDA_PIN;
+        bus_cfg.scl_io_num        = (gpio_num_t)I2C_SCL_PIN;
+        bus_cfg.clk_source        = I2C_CLK_SRC_DEFAULT;
+        bus_cfg.glitch_ignore_cnt = 7;
+        bus_cfg.flags.enable_internal_pullup = true;
+        if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
+            ESP_LOGW(TAG, "CrowPanel 5.0: I2C bus init failed; touch not reset");
+            return;
+        }
     }
     if (i2c_master_probe(bus, CROWPANEL50_PCA9557_ADDR, 50) != ESP_OK) {
         ESP_LOGI(TAG, "CrowPanel 5.0: no PCA9557 (board before V3.0)");
-        i2c_del_master_bus(bus);
+        if (bus != shared_bus) i2c_del_master_bus(bus);
         return;
     }
     i2c_device_config_t dev_cfg = {};
@@ -938,7 +942,7 @@ static void crowpanel50_touch_reset(void)
         ESP_LOGI(TAG, "CrowPanel 5.0: GT911 reset via PCA9557: %s", esp_err_to_name(err));
         i2c_master_bus_rm_device(dev);
     }
-    i2c_del_master_bus(bus);
+    if (bus != shared_bus) i2c_del_master_bus(bus);
 }
 #endif
 
@@ -2382,7 +2386,8 @@ extern "C" void app_main(void)
 #endif
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPDIY) || defined(CONFIG_DRAFTLING_DISPLAY_H752_EPD) || \
     defined(CONFIG_DRAFTLING_DISPLAY_XTEINK_EPD) || defined(CONFIG_DRAFTLING_HAS_CH422G) || \
-    defined(CONFIG_DRAFTLING_DISPLAY_WS_EPD397) || defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO)
+    defined(CONFIG_DRAFTLING_DISPLAY_WS_EPD397) || defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO) || \
+    defined(CONFIG_DRAFTLING_BATTERY_MAX17048)
     /* The LilyGO T5 E-Paper S3 Pro / Pro Lite shares its on-board
      * I2C bus between epdiy (TPS65185 EPD power IC + PCA9535 IO
      * expander), the GT911 capacitive touch controller and the
@@ -2403,7 +2408,9 @@ extern "C" void app_main(void)
      * below. This is the resolution for the legacy/driver-NG conflict
      * that previously forced touch off on the epdiy boards; see
      * components/display/idf_component.yml for why epdiy is pinned to
-     * a git commit. */
+     * a git commit. On the Elecrow CrowPanel 5.0" the bus carries the
+     * GT911, the PCA9557 that resets it, and the optional MAX17048
+     * add-on fuel gauge (battery_init_max17048()). */
     i2c_master_bus_handle_t shared_i2c_bus = NULL;
     {
         i2c_master_bus_config_t bus_cfg = {};
@@ -2871,6 +2878,14 @@ extern "C" void app_main(void)
      * up battery-voltage/percent/charging reporting on top of it. */
     if (battery_init_axp2101(shared_i2c_bus) != 0) {
         ESP_LOGW(TAG, "AXP2101 init failed; battery indicator disabled");
+    }
+#elif defined(CONFIG_DRAFTLING_BATTERY_MAX17048)
+    /* Elecrow CrowPanel 5.0": optional MAX17048 breakout on the I2C
+     * connector (shared bus created above). Without one, or without a
+     * battery to power it, nothing answers and the indicator stays
+     * hidden. */
+    if (battery_init_max17048(shared_i2c_bus) != 0) {
+        ESP_LOGI(TAG, "No MAX17048 fuel gauge; battery indicator hidden");
     }
 #elif defined(CONFIG_DRAFTLING_BATTERY_M5PM1)
     /* M5Stack PaperMono: already brought up before display_init()
@@ -3411,7 +3426,11 @@ extern "C" void app_main(void)
      * and the component creates its own bus from sda/scl as before. */
     ESP_LOGI(TAG, "Initializing touchscreen...");
 #if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
-    crowpanel50_touch_reset();
+#if defined(CONFIG_DRAFTLING_BATTERY_MAX17048)
+    crowpanel50_touch_reset(shared_i2c_bus);
+#else
+    crowpanel50_touch_reset(NULL);
+#endif
 #endif
     /* Note: on the Xteink X4 Pro the GT911 was fully power-cycled and
      * hardware-reset (with the datasheet address-select timing) far
@@ -3462,7 +3481,7 @@ extern "C" void app_main(void)
         tcfg.user_rotate_deg = 0;
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPDIY) || defined(CONFIG_DRAFTLING_DISPLAY_H752_EPD) || \
     defined(CONFIG_DRAFTLING_DISPLAY_XTEINK_EPD) || defined(CONFIG_DRAFTLING_HAS_CH422G) || \
-    defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO)
+    defined(CONFIG_DRAFTLING_DISPLAY_M5_PAPERMONO) || defined(CONFIG_DRAFTLING_BATTERY_MAX17048)
         tcfg.i2c_bus = (void *)shared_i2c_bus;
 #elif defined(CONFIG_DRAFTLING_DISPLAY_MIPI_DSI)
         /* The m5stack_tab5 BSP owns the I2C master bus (created

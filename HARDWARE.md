@@ -195,7 +195,17 @@ Things to know:
   press RESET to wake it.
 - USB-C goes through a USB-to-serial bridge, so "SD card via USB" and
   "Sync via browser" are not available.
-- There is no battery gauge, so the battery indicator is hidden.
+- The board has no battery gauge of its own, so the battery indicator
+  is hidden unless you add a MAX17048 fuel-gauge breakout (for example
+  Adafruit's): plug the battery into one of the gauge's battery
+  sockets and run a 2-pin JST-PH cable (+ to +) from the other socket
+  to the CrowPanel's BAT connector, then wire the gauge's `VIN`, `GND`,
+  `SDA` and `SCL` to the CrowPanel's I2C connector (`3V3`, `GND`,
+  `SDA`, `SCL`). Draftling looks for it at boot (I2C address 0x36);
+  `ALRT` stays unconnected. Tested on physical hardware with
+  Adafruit's MAX17048 breakout. Charging from a computer's USB port is
+  slow while the screen is on (about 10 % per hour on the tested
+  battery).
 - TN panel: colors and contrast shift when viewed off-angle.
 
 ## Waveshare ESP32-S3-Touch-LCD-7

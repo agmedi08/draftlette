@@ -188,6 +188,26 @@ int battery_init_axp2101(void *i2c_master_bus);
 int battery_init_m5pm1(void *i2c_master_bus);
 
 /*
+ * Initialize an Analog Devices (Maxim) MAX17048 fuel-gauge backend on
+ * an existing I2C master bus, at the fixed 7-bit address 0x36. Used
+ * on the Elecrow CrowPanel 5.0", where the gauge is an optional
+ * add-on breakout wired between the cell and the BAT connector. The
+ * chip runs off the cell, so it does not answer without a battery.
+ *
+ *   i2c_master_bus -- opaque pointer to an i2c_master_bus_handle_t.
+ *
+ * Percentage comes from the gauge's ModelGauge SOC register (0x04),
+ * voltage from VCELL (0x02). There is no charger on the bus, so
+ * battery_read_charging() reports 1 while the charge-rate register
+ * (CRATE, 0x16) shows the state of charge rising.
+ *
+ * Returns 0 on success, non-zero when no MAX17048 answers (the
+ * normal case without the add-on); the battery indicator then stays
+ * hidden.
+ */
+int battery_init_max17048(void *i2c_master_bus);
+
+/*
  * Set the M5Stack PaperMono front-light (M5PM1 GPIO3 / PWM0) to
  * percent (0..100; 0 turns the PWM channel off). Returns 0 on
  * success, non-zero on failure or before battery_init_m5pm1().

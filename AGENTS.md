@@ -300,6 +300,21 @@ Two backends:
   drives the PaperMono front-light:
   `battery_m5pm1_set_frontlight(percent)`, called by that board's
   display backend from `display_set_backlight()`.
+* **Analog Devices (Maxim) MAX17048 fuel gauge** over I2C
+  (`battery_init_max17048(bus)`): an optional add-on breakout on the
+  Elecrow CrowPanel 5.0", at 0x36 on the board's main I2C bus (the
+  I2C connector, shared with the GT911 and the PCA9557). The chip is
+  powered by the cell, so it answers only while a battery is attached;
+  init probes it and checks VERSION (0x08, 0x001x) and otherwise
+  returns non-zero, leaving the indicator hidden. Percentage is the
+  ModelGauge SOC register (0x04, MSB = whole percent, clamped to 100),
+  voltage VCELL (0x02, 78.125 uV/LSB). There is no charger on the bus:
+  `battery_read_charging()` reports 1 while the signed charge rate
+  CRATE (0x16, 0.208 %/h/LSB) is above ~2 %/h. Because the gauge's
+  device handle lives for the whole session, main.cpp creates the
+  shared I2C bus for `CONFIG_DRAFTLING_BATTERY_MAX17048` and passes it
+  to the touchscreen and to `crowpanel50_touch_reset()` too: a second
+  bus on the same pins would reset them when deleted.
 
 When no backend has been initialized, `battery_read_percent()`
 returns -1 and the editor UI hides the battery indicator.
@@ -315,6 +330,7 @@ Public API: `battery_init()`, `battery_init_bq27220()`,
 `battery_init_ina226()`, `battery_init_cw2017()`,
 `battery_init_axp2101()`, `battery_axp2101_enable_display_rail()`,
 `battery_init_m5pm1()`, `battery_m5pm1_set_frontlight()`,
+`battery_init_max17048()`,
 `battery_read_mv()`, `battery_read_percent()`, `battery_read_charging()`.
 
 ### components/ble_keyboard/
@@ -2069,7 +2085,9 @@ ESP32-S3-only (`depends on IDF_TARGET_ESP32S3`):
   PCLK, there is no wake / forget-keyboards button
   (`DRAFTLING_WAKEUP_GPIO` -1, RESET wakes). USB-C goes through a UART
   bridge, so no SD card via USB / Sync via browser. The BAT connector
-  (PH2.0-2P) has a charger but no voltage sense. Pins and timings from
+  (PH2.0-2P) has a charger but no voltage sense; an optional MAX17048
+  breakout on the I2C connector provides the battery level
+  (`DRAFTLING_BATTERY_MAX17048`, probed at boot). Pins and timings from
   Elecrow's wiki and CrowPanel-5.0-HMI-ESP32-Display-800x480 example;
   tested on physical hardware (V3.0). *Requires ESP32-S3.*
 - **DRAFTLING_MODEL_WAVESHARE_LCD_316** -- Waveshare ESP32-S3-LCD-3.16:
@@ -2302,12 +2320,13 @@ in C / C++ code:
 | DRAFTLING_DISPLAY_HAS_BACKLIGHT   | Adds the "Backlight: NN%" entry to F1 -> Settings, enables the Ctrl+B cycle shortcut, and calls `display_set_backlight()` at boot from NVS -- unless DRAFTLING_DISPLAY_BACKLIGHT_BINARY is also set (see below) | AXS15231B boards, Tab5, LilyGO T5 E-Paper S3 Pro / Pro Lite, RGB boards, Freenove FNK0104 family, Xteink X4 Pro, M5Stack PaperMono, NiceMCU-C5E-DEV_2.8IPS |
 | DRAFTLING_DISPLAY_BACKLIGHT_BINARY | Suppresses the entire backlight Settings entry / Ctrl+B feature (no PWM dimming is physically possible, so a brightness control would be misleading); the backlight is left at the display backend's own default (on) | Waveshare Touch-LCD-7 (any CH422G board) |
 | DRAFTLING_DISPLAY_HIDPI           | Renders the UI 1:1 with the larger Hack font (instead of upscaling the framebuffer); compiles the `hack_*` font sources and selects the Hack family in `editor_ui.cpp` | PaperS3, LilyGO T5 E-Paper S3 Pro / Pro Lite, Tab5, Sunton 8048S070 / 8048S043, Waveshare Touch-LCD-7, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono |
-| DRAFTLING_HAS_BATTERY             | Creates the battery-percentage status-bar label and its poll timer | RLCD-4.2, PaperS3, Touch-LCD-3.49, T5 E-Paper S3 Pro / Pro Lite, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono |
+| DRAFTLING_HAS_BATTERY             | Creates the battery-percentage status-bar label and its poll timer | RLCD-4.2, PaperS3, Touch-LCD-3.49, T5 E-Paper S3 Pro / Pro Lite, Freenove FNK0104 family, Waveshare LCD-3.16, Xteink X4 Pro / X4 Classic, Waveshare ESP32-S3-ePaper-3.97, Seeed reTerminal Sticky, M5Stack PaperMono, Elecrow CrowPanel 5.0" (MAX17048 add-on) |
 | DRAFTLING_BATTERY_BQ27220         | Selects the BQ27220 fuel-gauge backend (`battery_init_bq27220(bus)`) instead of the GPIO ADC backend. On the Seeed reTerminal Sticky the bus passed in is a second, dedicated one main.cpp creates just for the gauge, not `shared_i2c_bus` | T5 E-Paper S3 Pro / Pro Lite, Seeed reTerminal Sticky |
 | DRAFTLING_BATTERY_BQ27220_GAUGE_SOC | BQ27220 percentage comes from the gauge's StateOfCharge (0x2C) instead of the voltage LUT; only for gauges whose Data Memory is programmed for the pack | Seeed reTerminal Sticky |
 | DRAFTLING_BATTERY_CW2017          | Selects the CW2017 fuel-gauge backend (`battery_init_cw2017(shared_i2c_bus)`); no charger IC on the bus, so charging state always reads unknown | Xteink X4 Pro / X4 Classic |
 | DRAFTLING_BATTERY_AXP2101         | Selects the AXP2101 PMIC backend (`battery_init_axp2101(shared_i2c_bus)`); real integrated charger, so charging state is reported directly. Same chip's ALDO3 output also powers the e-paper panel -- see `battery_axp2101_enable_display_rail()`, called from the display backend's `display_set_shared_i2c_bus()` before `display_init()` | Waveshare ESP32-S3-ePaper-3.97 |
 | DRAFTLING_BATTERY_M5PM1           | Selects the M5PM1 backend (`battery_init_m5pm1(shared_i2c_bus)`, called early in boot since the chip gates the board's rails); voltage-only, "charging" = on USB. Its PWM0 drives the front-light (`battery_m5pm1_set_frontlight()`) | M5Stack PaperMono |
+| DRAFTLING_BATTERY_MAX17048        | Selects the MAX17048 add-on gauge backend (`battery_init_max17048(shared_i2c_bus)`, probed at boot; nothing changes without one) and makes main.cpp create the shared I2C bus and hand it to the touchscreen as well | Elecrow CrowPanel 5.0" |
 | DRAFTLING_HAS_KERMIT              | Builds `components/kermit/` and shows F1 -> "Sync via browser" (Kermit file server on the serial console); only boards whose USB port is the ESP32-S3's native USB -- not boards with a USB-to-UART bridge, whose DTR / RTS auto-reset lines reset the chip when a computer opens the port | Every `DRAFTLING_HAS_USB_MSC` board |
 | DRAFTLING_HAS_USB_HOST            | Enables the `usb_kbd` USB HID keyboard host (boot-time probe; BLE stays idle while a USB keyboard is present) | M5Stack Tab5, MicroJournal Rev 5 |
 | DRAFTLING_USB_HOST_BSP_MANAGED    | USB PHY, VBUS and the USB Host library task are owned by the board BSP (`bsp_usb_host_start()`); otherwise `usb_kbd_init()` installs the host library and its task itself (ESP32-S3 native USB-OTG) | M5Stack Tab5 |
