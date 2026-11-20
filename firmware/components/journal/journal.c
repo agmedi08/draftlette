@@ -227,8 +227,10 @@ static int load_page(journal_day_t *day, int year, int month,
         }
         journal_bullet_t *b = &day->bullets[day->count];
         parse_line(line, b);
-        if (b->depth && !journal_can_nest(day, day->count)) b->depth = 0;
         day->count++;
+        /* After the count bump: journal_can_nest() only looks at
+         * bullets already on the page. */
+        if (b->depth && !journal_can_nest(day, day->count - 1)) b->depth = 0;
     }
     if (ret == JOURNAL_OK && ferror(f)) ret = JOURNAL_ERR_IO;
     fclose(f);

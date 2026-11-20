@@ -6,6 +6,14 @@ in the git log.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sub-tasks stay sub-tasks**: a sub-task made with Right on Today, a
+  day page or the weekly page no longer turns back into a normal bullet
+  when the page is opened again. Pages changed after being reopened were
+  saved without the sub-task indents; make those bullets sub-tasks again
+  with Right.
+
 ## [0.0.2] - 2026-11-20
 
 ### Added
