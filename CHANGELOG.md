@@ -6,6 +6,8 @@ in the git log.
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-11-20
+
 ### Added
 
 - **Clock in the status bar**: the bottom bar of the Notes editor, the
