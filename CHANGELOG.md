@@ -6,6 +6,8 @@ in the git log.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-11-21
+
 ### Fixed
 
 - **Sub-tasks stay sub-tasks**: a sub-task made with Right on Today, a

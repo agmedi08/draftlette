@@ -8,7 +8,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # line, 0.0.N; each release is kept as a branch named
 # release/v0.0.N-padlette. Upstream Draftling's 1.0.x tags are not used
 # here. Bump this alongside every release.
-set(PROJECT_VER "0.0.2")
+set(PROJECT_VER "0.0.3")
 
 project(draftling)
 
