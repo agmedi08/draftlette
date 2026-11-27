@@ -37,6 +37,13 @@ in the git log.
 - **Dimmer backlight on the Elecrow CrowPanel 5.0"**: the backlight
   setting (F1 -> Settings, or `Ctrl+B`) now goes down to 5 % and 2 %,
   for writing in a dark room.
+- **Less battery drain while the Elecrow CrowPanel 5.0" sleeps**:
+  before going to sleep the device now puts the touch controller to
+  sleep, releases the SD card and keeps the screen's connections at
+  rest. Some parts of the board stay powered while it sleeps whatever
+  the software does (the screen's own electronics, the USB chip and the
+  power LED), so a sleeping CrowPanel still slowly drains its battery;
+  unplug the battery to store it.
 - **Long list items stay indented**: in Markdown files, when a numbered
   or bullet list item wraps onto more rows, those rows now line up with
   the item's text instead of starting under the number or bullet. This
