@@ -18,15 +18,36 @@
 #define TAGS_PREFIX    "Tags:"
 
 static char s_root[160] = "/sdcard";
+static char s_moved_root[160];
+
+/* Earlier firmware kept these files in diary/, which the Notes file
+ * browser lists. Move that folder to the hidden one, unless the
+ * hidden one is already there. */
+static void move_old_dir(const char *root)
+{
+    char from[PATH_MAX_LEN], to[PATH_MAX_LEN];
+    struct stat st;
+    snprintf(from, sizeof(from), "%s/diary", root);
+    snprintf(to, sizeof(to), "%s/" DIARY_DIR, root);
+    if (stat(from, &st) == 0 && S_ISDIR(st.st_mode) &&
+        stat(to, &st) != 0) {
+        rename(from, to);
+    }
+}
 
 void diary_set_root(const char *root)
 {
+    /* Once per root: this runs before every page is drawn. */
+    if (strcmp(root, s_moved_root) != 0) {
+        snprintf(s_moved_root, sizeof(s_moved_root), "%s", root);
+        move_old_dir(root);
+    }
     snprintf(s_root, sizeof(s_root), "%s", root);
 }
 
 int diary_path(char *out, size_t out_sz, int year, int month, int day)
 {
-    int n = snprintf(out, out_sz, "%s/diary/%04d/%02d/%04d-%02d-%02d.md",
+    int n = snprintf(out, out_sz, "%s/" DIARY_DIR "/%04d/%02d/%04d-%02d-%02d.md",
                      s_root, year, month, year, month, day);
     return n > 0 && (size_t)n < out_sz ? DIARY_OK : DIARY_ERR_ARG;
 }
@@ -35,7 +56,7 @@ int diary_path(char *out, size_t out_sz, int year, int month, int day)
  * file it opened. */
 static void meta_path(char *out, size_t out_sz, int year, int month, int day)
 {
-    snprintf(out, out_sz, "%s/diary/%04d/%02d/.%04d-%02d-%02d.md.meta",
+    snprintf(out, out_sz, "%s/" DIARY_DIR "/%04d/%02d/.%04d-%02d-%02d.md.meta",
              s_root, year, month, year, month, day);
 }
 
@@ -48,11 +69,11 @@ static bool file_exists(const char *path)
 static int make_dirs(int year, int month)
 {
     char path[PATH_MAX_LEN];
-    snprintf(path, sizeof(path), "%s/diary", s_root);
+    snprintf(path, sizeof(path), "%s/" DIARY_DIR, s_root);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return DIARY_ERR_IO;
-    snprintf(path, sizeof(path), "%s/diary/%04d", s_root, year);
+    snprintf(path, sizeof(path), "%s/" DIARY_DIR "/%04d", s_root, year);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return DIARY_ERR_IO;
-    snprintf(path, sizeof(path), "%s/diary/%04d/%02d", s_root, year, month);
+    snprintf(path, sizeof(path), "%s/" DIARY_DIR "/%04d/%02d", s_root, year, month);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return DIARY_ERR_IO;
     return DIARY_OK;
 }
@@ -456,11 +477,11 @@ static bool all_digits(const char *s, size_t n)
     return true;
 }
 
-/* The years under diary/, sorted. */
+/* The years under .diary/, sorted. */
 static int list_years(int *out, int max)
 {
     char path[PATH_MAX_LEN];
-    snprintf(path, sizeof(path), "%s/diary", s_root);
+    snprintf(path, sizeof(path), "%s/" DIARY_DIR, s_root);
     DIR *dir = opendir(path);
     if (!dir) return 0;
 
@@ -480,7 +501,7 @@ static int list_years(int *out, int max)
 static int list_days(int year, int month, int out[31])
 {
     char path[PATH_MAX_LEN];
-    snprintf(path, sizeof(path), "%s/diary/%04d/%02d", s_root, year, month);
+    snprintf(path, sizeof(path), "%s/" DIARY_DIR "/%04d/%02d", s_root, year, month);
     DIR *dir = opendir(path);
     if (!dir) return 0;
 

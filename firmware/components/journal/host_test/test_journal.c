@@ -39,7 +39,7 @@ int main(int argc, char **argv)
     /* An empty day leaves no file behind. */
     assert(journal_load(&a, 2026, 11, 6) == JOURNAL_OK && a.count == 0);
     assert(journal_save(&a) == JOURNAL_OK);
-    snprintf(path, sizeof(path), "%s/journal/2026/11/2026-11-06.md", argv[1]);
+    snprintf(path, sizeof(path), "%s/.journal/2026/11/2026-11-06.md", argv[1]);
     assert(!fopen(path, "r"));
 
     /* Every kind round-trips, with a pre-formatted header. */
@@ -48,7 +48,7 @@ int main(int argc, char **argv)
         "- [ ] open\n- [x] finished\n- [-] dropped\n"
         "- [>] moved on -> 2026-11-07\n- o dentist\n- ! headache\n"
         "- plain note\nsome hand-written line\n## heading\n";
-    snprintf(cmd, sizeof(cmd), "mkdir -p %s/journal/2026/11", argv[1]);
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/.journal/2026/11", argv[1]);
     assert(system(cmd) == 0);
     put_file(path, text);
     assert(journal_load(&a, 2026, 11, 6) == JOURNAL_OK);
@@ -83,7 +83,7 @@ int main(int argc, char **argv)
 
     /* A file too big to hold is refused, not truncated. */
     char big[256];
-    snprintf(big, sizeof(big), "%s/journal/2026/11/2026-11-07.md", argv[1]);
+    snprintf(big, sizeof(big), "%s/.journal/2026/11/2026-11-07.md", argv[1]);
     FILE *f = fopen(big, "w");
     assert(f);
     for (int i = 0; i < JOURNAL_MAX_BULLETS + 1; i++) fprintf(f, "- n%d\n", i);
@@ -120,7 +120,7 @@ int main(int argc, char **argv)
 
     /* Opening a day creates its file once and keeps what is there. */
     char made[256];
-    snprintf(made, sizeof(made), "%s/journal/2027/01/2027-01-04.md", argv[1]);
+    snprintf(made, sizeof(made), "%s/.journal/2027/01/2027-01-04.md", argv[1]);
     assert(journal_load(&b, 2027, 1, 4) == JOURNAL_OK && b.count == 0);
     assert(journal_create(&b) == JOURNAL_OK);
     assert(!strcmp(read_all(made), "# Mon 2027-01-04\n\n"));
@@ -131,7 +131,7 @@ int main(int argc, char **argv)
     /* A weekly page is its own file, named after its Monday, and any
      * date in the week loads it. */
     char wk[256];
-    snprintf(wk, sizeof(wk), "%s/journal/2026/11/2026-11-02-week.md", argv[1]);
+    snprintf(wk, sizeof(wk), "%s/.journal/2026/11/2026-11-02-week.md", argv[1]);
     assert(journal_load_week(&a, 2026, 11, 7) == JOURNAL_OK);
     assert(a.is_week && a.count == 0 && a.day == 2);
     assert(journal_save(&a) == JOURNAL_OK);
@@ -183,7 +183,7 @@ int main(int argc, char **argv)
     /* Sub-bullets: indented by spaces or a tab, written back with two
      * spaces. Too deep, or under a hand-written line, is not one. */
     char sub[256];
-    snprintf(sub, sizeof(sub), "%s/journal/2026/11/2026-11-10.md", argv[1]);
+    snprintf(sub, sizeof(sub), "%s/.journal/2026/11/2026-11-10.md", argv[1]);
     put_file(sub, "# Tue 2026-11-10\n\n"
                   "  - [ ] orphan\n"
                   "- [ ] parent\n"
@@ -252,6 +252,19 @@ int main(int argc, char **argv)
     assert(journal_load(&a, 2026, 11, 10) == JOURNAL_OK);
     assert(journal_migrate(&a, 0, 2026, 11, 13) == JOURNAL_ERR_FULL);
     assert(a.bullets[0].kind == JOURNAL_TASK && a.bullets[1].kind == JOURNAL_TASK);
+
+    /* A journal/ folder from earlier firmware moves to .journal/ the
+     * first time its root is set, and its pages load from there. */
+    char old_root[128];
+    snprintf(old_root, sizeof(old_root), "%s/old", argv[1]);
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/journal/2025/03", old_root);
+    assert(system(cmd) == 0);
+    snprintf(path, sizeof(path), "%s/journal/2025/03/2025-03-09.md", old_root);
+    put_file(path, "# Sun 2025-03-09\n\n- [ ] old task\n");
+    journal_set_root(old_root);
+    assert(!fopen(path, "r"));
+    assert(journal_load(&a, 2025, 3, 9) == JOURNAL_OK && a.count == 1);
+    assert(!strcmp(a.bullets[0].text, "old task"));
 
     puts("journal tests passed");
     return 0;

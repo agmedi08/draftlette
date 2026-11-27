@@ -1,6 +1,6 @@
 #pragma once
 
-/* journal: one Markdown file per day, <root>/journal/YYYY/MM/YYYY-MM-DD.md
+/* journal: one Markdown file per day, <root>/.journal/YYYY/MM/YYYY-MM-DD.md
  *
  *   # Fri 2026-11-06
  *
@@ -23,8 +23,10 @@
  *
  * A weekly page holds items for a week but no particular day. It has
  * the same bullets, is named after the week's Monday, and sits beside
- * that day's file: <root>/journal/YYYY/MM/YYYY-MM-DD-week.md, headed
- * "# 2026-11-02 to 2026-11-08". */
+ * that day's file: <root>/.journal/YYYY/MM/YYYY-MM-DD-week.md, headed
+ * "# 2026-11-02 to 2026-11-08".
+ *
+ * The folder starts with '.' so the Notes file browser leaves it out. */
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +34,7 @@ extern "C" {
 
 #include <stdbool.h>
 
+#define JOURNAL_DIR         ".journal"
 #define JOURNAL_TEXT_MAX    200
 #define JOURNAL_MAX_BULLETS 96
 
@@ -66,7 +69,9 @@ typedef struct {
     journal_bullet_t bullets[JOURNAL_MAX_BULLETS];
 } journal_day_t;
 
-/* Directory holding journal/, e.g. the SD card mount point. */
+/* Directory holding .journal/, e.g. the SD card mount point. The
+ * first call for a root renames a journal/ folder left there by
+ * earlier firmware to .journal/, when there is no .journal/ yet. */
 void journal_set_root(const char *root);
 
 /* A day with no file loads as empty. Returns JOURNAL_ERR_TOO_BIG rather

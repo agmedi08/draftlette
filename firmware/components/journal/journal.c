@@ -14,16 +14,37 @@
 #define HEADER_MAX_LEN 40
 
 static char s_root[160] = "/sdcard";
+static char s_moved_root[160];
+
+/* Earlier firmware kept these files in journal/, which the Notes file
+ * browser lists. Move that folder to the hidden one, unless the
+ * hidden one is already there. */
+static void move_old_dir(const char *root)
+{
+    char from[PATH_MAX_LEN], to[PATH_MAX_LEN];
+    struct stat st;
+    snprintf(from, sizeof(from), "%s/journal", root);
+    snprintf(to, sizeof(to), "%s/" JOURNAL_DIR, root);
+    if (stat(from, &st) == 0 && S_ISDIR(st.st_mode) &&
+        stat(to, &st) != 0) {
+        rename(from, to);
+    }
+}
 
 void journal_set_root(const char *root)
 {
+    /* Once per root: this runs before every page is drawn. */
+    if (strcmp(root, s_moved_root) != 0) {
+        snprintf(s_moved_root, sizeof(s_moved_root), "%s", root);
+        move_old_dir(root);
+    }
     snprintf(s_root, sizeof(s_root), "%s", root);
 }
 
 static void page_path(char *out, size_t out_sz, const journal_day_t *day)
 {
     int y = day->year, m = day->month;
-    snprintf(out, out_sz, "%s/journal/%04d/%02d/%04d-%02d-%02d%s.md",
+    snprintf(out, out_sz, "%s/" JOURNAL_DIR "/%04d/%02d/%04d-%02d-%02d%s.md",
              s_root, y, m, y, m, day->day, day->is_week ? "-week" : "");
 }
 
@@ -36,11 +57,11 @@ static bool file_exists(const char *path)
 static int make_dirs(int y, int m)
 {
     char path[PATH_MAX_LEN];
-    snprintf(path, sizeof(path), "%s/journal", s_root);
+    snprintf(path, sizeof(path), "%s/" JOURNAL_DIR, s_root);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return JOURNAL_ERR_IO;
-    snprintf(path, sizeof(path), "%s/journal/%04d", s_root, y);
+    snprintf(path, sizeof(path), "%s/" JOURNAL_DIR "/%04d", s_root, y);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return JOURNAL_ERR_IO;
-    snprintf(path, sizeof(path), "%s/journal/%04d/%02d", s_root, y, m);
+    snprintf(path, sizeof(path), "%s/" JOURNAL_DIR "/%04d/%02d", s_root, y, m);
     if (mkdir(path, 0775) != 0 && errno != EEXIST) return JOURNAL_ERR_IO;
     return JOURNAL_OK;
 }

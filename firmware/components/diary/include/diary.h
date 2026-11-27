@@ -1,6 +1,6 @@
 #pragma once
 
-/* diary: one prose entry per day, <root>/diary/YYYY/MM/YYYY-MM-DD.md
+/* diary: one prose entry per day, <root>/.diary/YYYY/MM/YYYY-MM-DD.md
  *
  *   # Sat 2026-11-21
  *   Tags: AB CD
@@ -17,7 +17,9 @@
  * when the tags change. An entry "has text" when that part holds more
  * than blanks. A day "has an entry" when its file has text or tags; a
  * file with neither is left over from writing nothing and is removed by
- * diary_remove_if_blank(). */
+ * diary_remove_if_blank().
+ *
+ * The folder starts with '.' so the Notes file browser leaves it out. */
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +28,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 
+#define DIARY_DIR       ".diary"
 #define DIARY_TAG_LEN   2
 #define DIARY_MAX_TAGS  8
 #define DIARY_BODY_MAX  (32 * 1024)     /* text loaded for reading */
@@ -52,7 +55,9 @@ typedef struct {
     bool truncated;         /* the text runs past DIARY_BODY_MAX */
 } diary_entry_t;
 
-/* Directory holding diary/, e.g. the SD card mount point. */
+/* Directory holding .diary/, e.g. the SD card mount point. The first
+ * call for a root renames a diary/ folder left there by earlier
+ * firmware to .diary/, when there is no .diary/ yet. */
 void diary_set_root(const char *root);
 
 /* The day's file path. Returns DIARY_ERR_ARG when it does not fit. */

@@ -19,10 +19,11 @@ in the git log.
   day you wrote on and each day's tags. On the calendar the arrow keys
   pick a day, `?` and `,` (or PgDn / PgUp) change month, Home goes to
   today, Enter opens the picked day and Esc goes back. Entries are
-  Markdown files on the SD card, `diary/YYYY/MM/YYYY-MM-DD.md`, with
-  the tags on a `Tags:` line under the date. A day you only look at, or
-  open and leave without writing anything, gets no file. Writing needs
-  Notes in a single pane (Ctrl+1).
+  Markdown files on the SD card, `.diary/YYYY/MM/YYYY-MM-DD.md`, with
+  the tags on a `Tags:` line under the date; the folder name starts
+  with a dot, so the Notes file browser (F5) does not list it. A day
+  you only look at, or open and leave without writing anything, gets
+  no file. Writing needs Notes in a single pane (Ctrl+1).
 - **Battery level on the Elecrow CrowPanel 5.0"**: with a MAX17048
   fuel-gauge breakout wired between the battery and the BAT connector
   and plugged into the board's I2C connector, the status bar shows the
@@ -34,6 +35,11 @@ in the git log.
 
 ### Changed
 
+- **Planner pages stay out of Notes**: the Today, day and weekly bullet
+  pages are now kept in a hidden `.journal` folder on the SD card, so
+  the Notes file browser (F5) no longer lists them. An existing
+  `journal` folder is renamed to `.journal` the first time a planner
+  page opens; nothing in it changes.
 - **Dimmer backlight on the Elecrow CrowPanel 5.0"**: the backlight
   setting (F1 -> Settings, or `Ctrl+B`) now goes down to 5 % and 2 %,
   for writing in a dark room.

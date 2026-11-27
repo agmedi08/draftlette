@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     /* A fresh file holds only its heading, and is blank. */
     assert(diary_create(2026, 11, 21) == DIARY_OK);
     diary_path(path, sizeof(path), 2026, 11, 21);
+    assert(strstr(path, "/.diary/2026/11/2026-11-21.md"));
     assert(strcmp(read_all(path), "# Sat 2026-11-21\n\n") == 0);
     assert(diary_read_info(2026, 11, 21, &info) == DIARY_OK);
     assert(info.exists && !info.has_text && info.tag_count == 0);
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
 
     /* Blank files are removed, with the editor's sidecar. */
     char meta[256];
-    snprintf(meta, sizeof(meta), "%s/diary/2026/11/.2026-11-21.md.meta", argv[1]);
+    snprintf(meta, sizeof(meta), "%s/.diary/2026/11/.2026-11-21.md.meta", argv[1]);
     put_file(meta, "cursor=0\n");
     assert(diary_remove_if_blank(2026, 11, 21));
     assert(!exists(path) && !exists(meta));
@@ -132,6 +133,28 @@ int main(int argc, char **argv)
     put_file(path, "Just text\n");
     assert(diary_toggle_tag(2026, 11, 4, "zz", &added) == DIARY_OK);
     assert(strcmp(read_all(path), "# Wed 2026-11-04\nTags: ZZ\n\nJust text\n") == 0);
+
+    /* A diary/ folder from earlier firmware moves to .diary/ the first
+     * time its root is set, and its entries are found there. */
+    char old_root[128], cmd[320];
+    snprintf(old_root, sizeof(old_root), "%s/old", argv[1]);
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/diary/2025/03", old_root);
+    assert(system(cmd) == 0);
+    snprintf(path, sizeof(path), "%s/diary/2025/03/2025-03-09.md", old_root);
+    put_file(path, "# Sun 2025-03-09\n\nOld entry\n");
+    diary_set_root(old_root);
+    assert(!exists(path));
+    snprintf(path, sizeof(path), "%s/diary", old_root);
+    assert(!exists(path));
+    assert(diary_read_info(2025, 3, 9, &info) == DIARY_OK && info.has_text);
+
+    /* An old folder stays put when the hidden one is already there. */
+    snprintf(cmd, sizeof(cmd), "mkdir -p %s/diary", old_root);
+    assert(system(cmd) == 0);
+    diary_set_root(argv[1]);
+    diary_set_root(old_root);
+    assert(exists(path));
+    assert(diary_read_info(2025, 3, 9, &info) == DIARY_OK && info.has_text);
 
     diary_entry_free(&e);
     puts("diary: all tests passed");
