@@ -202,6 +202,15 @@ static const int kDataGpios[16] = {
     45, 48, 47, 21, 14    /* R0-R4 */
 };
 
+/* The panel's 3.3 V supply (TFT-3V3) is switched by Q4 / Q6 from the
+ * ESP32's EN line (Elecrow's V3.0 schematic), so the panel stays
+ * powered through deep sleep, when the RGB peripheral stops and these
+ * pins would float into its inputs. display_deep_sleep_prepare()
+ * parks them low and holds them; display_init() releases the holds.
+ * CrowPanel only: on other RGB boards GPIO0 can be the EXT0 wake
+ * button, and holding it low would wake them at once. */
+#define RGB_PARK_PINS_FOR_SLEEP 1
+
 #elif defined(CONFIG_DRAFTLING_RGB_BOARD_S043)
 #define RGB_BL_GPIO         2
 /* ---- Sunton ESP32-8048S043C (4.3", ST7262) ---- */
@@ -481,12 +490,43 @@ static void st7701_send_init(void)
 
 /* ---------------- Public API ---------------- */
 
+#if defined(RGB_PARK_PINS_FOR_SLEEP)
+static const int kSyncGpios[] = {
+    RGB_HSYNC_GPIO, RGB_VSYNC_GPIO, RGB_DE_GPIO, RGB_PCLK_GPIO,
+};
+
+/* Drive every panel signal pin low and hold it (hold = true), or
+ * release the holds (hold = false). */
+static void park_panel_pins(bool hold)
+{
+    uint64_t mask = 0;
+    for (int pin : kDataGpios) mask |= 1ULL << pin;
+    for (int pin : kSyncGpios) mask |= 1ULL << pin;
+    for (int pin = 0; pin < 64; pin++) {
+        if (!(mask & (1ULL << pin))) continue;
+        if (!hold) {
+            gpio_hold_dis((gpio_num_t)pin);
+            continue;
+        }
+        gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)pin, 0);
+        gpio_hold_en((gpio_num_t)pin);
+    }
+}
+#endif
+
 extern "C" void display_init(int /*pin_a*/, int /*pin_b*/, int /*pin_c*/,
                              int /*pin_d*/, int /*pin_e*/, int /*pin_f*/,
                              int width, int height)
 {
     s_width  = width;
     s_height = height;
+
+#if defined(RGB_PARK_PINS_FOR_SLEEP)
+    /* Undo display_deep_sleep_prepare()'s holds (a RESET clears them
+     * anyway, but a deep-sleep wake does not). */
+    park_panel_pins(false);
+#endif
 
 #if defined(CONFIG_DRAFTLING_HAS_CH422G)
     /* Pulse the LCD reset line through the CH422G before touching the
@@ -758,6 +798,16 @@ extern "C" void display_deep_sleep_prepare(void)
     gpio_set_direction((gpio_num_t)s_bl_pin, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)s_bl_pin, 1);
     gpio_hold_en((gpio_num_t)s_bl_pin);
+    gpio_deep_sleep_hold_en();
+#elif defined(RGB_PARK_PINS_FOR_SLEEP)
+    /* Backlight off and held off, then the panel's signal pins low:
+     * see RGB_PARK_PINS_FOR_SLEEP. backlight_pwm_init() releases the
+     * backlight pin's hold on the next boot. */
+    ledc_stop(BL_LEDC_MODE, BL_LEDC_CHANNEL, 0);
+    gpio_set_direction((gpio_num_t)s_bl_pin, GPIO_MODE_OUTPUT);
+    gpio_set_level((gpio_num_t)s_bl_pin, 0);
+    gpio_hold_en((gpio_num_t)s_bl_pin);
+    park_panel_pins(true);
     gpio_deep_sleep_hold_en();
 #else
     ledc_set_duty(BL_LEDC_MODE, BL_LEDC_CHANNEL, 0);

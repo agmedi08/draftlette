@@ -903,6 +903,10 @@ static void pre_sleep_crowpanel_579_deinit(void)
  * one); otherwise a temporary bus kept only for these writes. On
  * earlier board versions nothing answers at the expander's address
  * and the touch controller is left as it is. */
+/* Set when the PCA9557 answered, i.e. this boot can hardware-reset the
+ * GT911 (see pre_sleep_crowpanel50_deinit()). */
+static bool s_crowpanel50_has_pca9557 = false;
+
 static esp_err_t crowpanel50_pca9557_write(i2c_master_dev_handle_t dev,
                                            uint8_t reg, uint8_t val)
 {
@@ -945,6 +949,7 @@ static void crowpanel50_touch_reset(i2c_master_bus_handle_t shared_bus)
         vTaskDelay(pdMS_TO_TICKS(100));
         if (err == ESP_OK) err = crowpanel50_pca9557_write(dev, 0x03, 0xFE);  /* INT input */
         ESP_LOGI(TAG, "CrowPanel 5.0: GT911 reset via PCA9557: %s", esp_err_to_name(err));
+        s_crowpanel50_has_pca9557 = (err == ESP_OK);
         i2c_master_bus_rm_device(dev);
     }
     if (bus != shared_bus) i2c_del_master_bus(bus);
@@ -970,6 +975,56 @@ static void crowpanel50_quiet_speaker(void)
     gpio_set_level((gpio_num_t)CROWPANEL50_I2S_BCLK_PIN, 0);
     gpio_set_level((gpio_num_t)CROWPANEL50_I2S_LRCLK_PIN, 0);
     gpio_set_level((gpio_num_t)CROWPANEL50_I2S_SDIN_PIN, 0);
+}
+
+/* Pads pre_sleep_crowpanel50_deinit() holds through deep sleep. The
+ * display backend holds and releases its own (backlight, panel). */
+static const int s_crowpanel50_held_pins[] = {
+    CROWPANEL50_I2S_BCLK_PIN, CROWPANEL50_I2S_LRCLK_PIN,
+    CROWPANEL50_I2S_SDIN_PIN, SD_SPI_CS_PIN,
+};
+
+/* Undo those holds at boot, before anything drives the pins. RESET,
+ * this board's only wake source, clears them anyway; a deep-sleep
+ * wake would not. */
+static void crowpanel50_release_held_pins(void)
+{
+    gpio_deep_sleep_hold_dis();
+    for (int pin : s_crowpanel50_held_pins) gpio_hold_dis((gpio_num_t)pin);
+}
+
+/* Deep sleep does not cut the power to anything on this board: the
+ * panel, the NS4168 amp, the CH340C, the GT911 and the SD card all
+ * stay on the 3.3 V rail. Put what can be told to sleep to sleep, and
+ * hold every pin into a powered chip at a fixed level so none floats
+ * (display_deep_sleep_prepare(), called by standby after this, does
+ * the backlight and panel pins and arms the deep-sleep holds). */
+static void pre_sleep_crowpanel50_deinit(void)
+{
+    ESP_LOGI(TAG, "Pre-sleep: Elecrow CrowPanel 5.0in peripheral teardown");
+
+    pre_sleep_autosave();
+
+#if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
+    /* GT911 sleep command (< 10 uA). It leaves sleep only on a reset
+     * or when the host drives INT high; INT is not an ESP32 pin here,
+     * so only boards whose boot code resets it (V3.0, through the
+     * PCA9557) may send it, or touch would stay dead. */
+    if (s_crowpanel50_has_pca9557) touchscreen_sleep();
+#endif
+
+    /* Unmount the card, then deselect it (CS high) so it idles. */
+    (void)sd_card_deinit();
+    gpio_config_t g = {};
+    g.intr_type    = GPIO_INTR_DISABLE;
+    g.mode         = GPIO_MODE_OUTPUT;
+    g.pin_bit_mask = 1ULL << SD_SPI_CS_PIN;
+    gpio_config(&g);
+    gpio_set_level((gpio_num_t)SD_SPI_CS_PIN, 1);
+
+    /* crowpanel50_quiet_speaker() already drives the amp inputs low;
+     * hold every pin in s_crowpanel50_held_pins where it is. */
+    for (int pin : s_crowpanel50_held_pins) gpio_hold_en((gpio_num_t)pin);
 }
 #endif
 
@@ -2654,6 +2709,7 @@ extern "C" void app_main(void)
     rlcd42_quiet_peripherals();
 #endif
 #if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
+    crowpanel50_release_held_pins();
     crowpanel50_quiet_speaker();
 #endif
 
@@ -3573,6 +3629,8 @@ extern "C" void app_main(void)
     standby_set_pre_sleep_cb(pre_sleep_papermono_deinit);
 #elif defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
     standby_set_pre_sleep_cb(pre_sleep_rlcd42_deinit);
+#elif defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
+    standby_set_pre_sleep_cb(pre_sleep_crowpanel50_deinit);
 #else
     standby_set_pre_sleep_cb(pre_sleep_autosave);
 #endif
