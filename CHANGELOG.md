@@ -8,6 +8,21 @@ in the git log.
 
 ### Added
 
+- **Diary**: F6 (or Diary in the F1 menu) opens a diary with one entry
+  per day. It starts on today's entry. Enter writes in the entry with
+  the Notes editor, and Esc saves it and goes back to reading it.
+  Left / Right jump to the previous / next day you wrote on, Shift+Left /
+  Right go one day back / forward even if nothing is written there yet,
+  and Up / Down scroll a long entry. T adds a two-letter tag (letters
+  or digits, for example `TR`); typing a tag the entry already has
+  removes it. C opens a calendar of the month: a check mark on every
+  day you wrote on and each day's tags. On the calendar the arrow keys
+  pick a day, `?` and `,` (or PgDn / PgUp) change month, Home goes to
+  today, Enter opens the picked day and Esc goes back. Entries are
+  Markdown files on the SD card, `diary/YYYY/MM/YYYY-MM-DD.md`, with
+  the tags on a `Tags:` line under the date. A day you only look at, or
+  open and leave without writing anything, gets no file. Writing needs
+  Notes in a single pane (Ctrl+1).
 - **Battery level on the Elecrow CrowPanel 5.0"**: with a MAX17048
   fuel-gauge breakout wired between the battery and the BAT connector
   and plugged into the board's I2C connector, the status bar shows the
@@ -26,6 +41,13 @@ in the git log.
   or bullet list item wraps onto more rows, those rows now line up with
   the item's text instead of starting under the number or bullet. This
   only changes how the item is shown, not the file.
+
+### Fixed
+
+- **Planner headers on high-resolution screens**: on boards with
+  the larger Hack font (Elecrow CrowPanel 5.0", PaperS3, Xteink X4 and
+  others) the line under the title of Today, Week, Month and Diary no
+  longer cuts through the title, and the page starts below it.
 
 ## [0.0.3] - 2026-11-21
 

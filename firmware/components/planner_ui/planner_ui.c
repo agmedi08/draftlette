@@ -7,13 +7,12 @@
 
 #include "journal.h"
 #include "kb_layout.h"
+#include "planner_internal.h"
 #include "sd_card.h"
 #include "status_bar.h"
 
-#define MIN_VALID_YEAR 2025
-#define BODY_TOP       30
-#define HEADER_RULE_Y  (BODY_TOP - 5)   /* under the 18 px title */
 #define ROW_MAX        20
+#define CHROME_MAX     2       /* the planner screen and the diary's */
 
 /* The Week grid: Mon-Thu down the left column, Fri-Sun and the weekly
  * page down the right. */
@@ -22,7 +21,6 @@
 #define GRID_WEEKLY    7
 #define GRID_ROW_MAX   6
 
-#define HINT_VIEWS  "F1:Menu  F2:Today  F3:Week  F4:Month  F5:Notes"
 #define HINT_LIST   "Knob:move  Enter:edit  Spc:done  Bksp:close"
 #define HINT_SUB    "  Right:sub"
 #define HINT_UNSUB  "  Left:unsub"
@@ -52,17 +50,14 @@ typedef enum {
 } close_item_t;
 
 static lv_obj_t *s_scr;
-static lv_obj_t *s_lbl_title;
+static planner_chrome_t s_chrome;
 static lv_obj_t *s_lbl_body;
-static lv_obj_t *s_lbl_hint;
-/* The lines under the title and above the status bar, and the clock and
- * battery at the right end of the status bar, as on the Notes screens. */
-static lv_obj_t *s_header_rule;
-static lv_obj_t *s_status_rule;
-static lv_obj_t *s_lbl_clock;
-static lv_obj_t *s_lbl_batt;
+/* The clock and battery text every chrome shows, and the chromes. */
 static char s_clock_text[STATUS_BAR_CLOCK_LEN] = "--:--";
 static char s_batt_text[16] = "";
+static planner_chrome_t *s_chromes[CHROME_MAX];
+static int s_chrome_count;
+static bool s_diary_today;          /* next Diary render: today, reading */
 static lv_obj_t *s_rows[ROW_MAX];
 static int s_visible_rows;
 static planner_ui_style_t s_style;
@@ -119,22 +114,89 @@ typedef struct {
 
 static int s_focus;                 /* index into s_panes */
 
-static lv_obj_t *create_rule(void)
+static lv_obj_t *create_rule(lv_obj_t *scr)
 {
-    lv_obj_t *rule = lv_obj_create(s_scr);
+    lv_obj_t *rule = lv_obj_create(scr);
     lv_obj_remove_style_all(rule);
     lv_obj_set_scrollable(rule, false);
     lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
     return rule;
 }
 
-static lv_obj_t *create_slot(const char *text)
+static lv_obj_t *create_slot(lv_obj_t *scr, const char *text)
 {
-    lv_obj_t *lbl = lv_label_create(s_scr);
+    lv_obj_t *lbl = lv_label_create(scr);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(lbl, text);
     return lbl;
+}
+
+void planner_chrome_build(lv_obj_t *scr, planner_chrome_t *c)
+{
+    c->title = lv_label_create(scr);
+    lv_obj_set_pos(c->title, 6, PLANNER_TITLE_Y);
+
+    /* Sized and placed in the status bar by planner_chrome_style(). */
+    c->hint = lv_label_create(scr);
+    lv_label_set_long_mode(c->hint, LV_LABEL_LONG_CLIP);
+
+    c->header_rule = create_rule(scr);
+    c->status_rule = create_rule(scr);
+    c->clock = create_slot(scr, s_clock_text);
+    c->batt = create_slot(scr, s_batt_text);
+    if (s_chrome_count < CHROME_MAX) s_chromes[s_chrome_count++] = c;
+}
+
+int32_t planner_header_rule_y(const planner_ui_style_t *style)
+{
+    return PLANNER_TITLE_Y + lv_font_get_line_height(style->title_font) + 4;
+}
+
+int32_t planner_body_top(const planner_ui_style_t *style)
+{
+    return planner_header_rule_y(style) + 5;
+}
+
+int32_t planner_chrome_style(planner_chrome_t *c, const planner_ui_style_t *style)
+{
+    lv_obj_set_style_text_font(c->title, style->title_font, 0);
+    lv_obj_set_style_text_font(c->hint, style->hint_font, 0);
+    lv_obj_set_style_text_color(c->title, style->fg, 0);
+    lv_obj_set_style_text_color(c->hint, style->fg, 0);
+
+    int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
+    int32_t h = lv_display_get_vertical_resolution(lv_display_get_default());
+
+    /* The status bar: a line along its top, the hint at the left, the
+     * clock and battery at the right. Same layout as the Notes screens
+     * (status_bar_layout()), but without the WiFi icon. */
+    int32_t bar_y = h - style->status_h;
+    status_bar_layout_t bar;
+    status_bar_layout((int)w,
+                      (int)lv_font_get_glyph_width(style->hint_font, '0', 0),
+                      0, style->has_battery, &bar);
+
+    lv_obj_set_style_bg_color(c->header_rule, style->fg, 0);
+    lv_obj_set_pos(c->header_rule, 0, planner_header_rule_y(style));
+    lv_obj_set_size(c->header_rule, w, 1);
+    lv_obj_set_style_bg_color(c->status_rule, style->fg, 0);
+    lv_obj_set_pos(c->status_rule, 0, bar_y);
+    lv_obj_set_size(c->status_rule, w, 1);
+
+    lv_obj_set_pos(c->hint, STATUS_BAR_MARGIN, bar_y + 2);
+    lv_obj_set_width(c->hint, bar.text_w);
+
+    lv_obj_t *slots[2] = { c->clock, c->batt };
+    int32_t slot_x[2] = { bar.clock_x, bar.batt_x };
+    for (int i = 0; i < 2; i++) {
+        lv_obj_set_style_text_font(slots[i], style->hint_font, 0);
+        lv_obj_set_style_text_color(slots[i], style->fg, 0);
+        lv_obj_set_pos(slots[i], slot_x[i], bar_y + 2);
+        lv_obj_set_width(slots[i], bar.slot_w);
+    }
+    lv_obj_set_hidden(c->batt, !style->has_battery);
+    return bar_y;
 }
 
 static void build_screen(void)
@@ -144,11 +206,7 @@ static void build_screen(void)
     s_scr = lv_obj_create(NULL);
     lv_obj_remove_flag(s_scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_lbl_title = lv_label_create(s_scr);
-    lv_obj_set_pos(s_lbl_title, 6, 4);
-
     s_lbl_body = lv_label_create(s_scr);
-    lv_obj_set_pos(s_lbl_body, 6, BODY_TOP);
     lv_obj_set_width(s_lbl_body, w - 12);
     lv_label_set_long_mode(s_lbl_body, LV_LABEL_LONG_WRAP);
 
@@ -177,68 +235,30 @@ static void build_screen(void)
         }
     }
 
-    /* Sized and placed in the status bar by apply_style(). */
-    s_lbl_hint = lv_label_create(s_scr);
-    lv_label_set_long_mode(s_lbl_hint, LV_LABEL_LONG_CLIP);
-
-    s_header_rule = create_rule();
-    s_status_rule = create_rule();
-    s_lbl_clock = create_slot(s_clock_text);
-    s_lbl_batt = create_slot(s_batt_text);
+    planner_chrome_build(s_scr, &s_chrome);
 }
 
 static void apply_style(const planner_ui_style_t *style)
 {
     s_style = *style;
     lv_obj_set_style_bg_color(s_scr, style->bg, 0);
-    lv_obj_set_style_text_font(s_lbl_title, style->title_font, 0);
     lv_obj_set_style_text_font(s_lbl_body, style->body_font, 0);
-    lv_obj_set_style_text_font(s_lbl_hint, style->hint_font, 0);
-    lv_obj_set_style_text_color(s_lbl_title, style->fg, 0);
     lv_obj_set_style_text_color(s_lbl_body, style->fg, 0);
-    lv_obj_set_style_text_color(s_lbl_hint, style->fg, 0);
 
     int32_t w = lv_display_get_horizontal_resolution(lv_display_get_default());
-    int32_t h = lv_display_get_vertical_resolution(lv_display_get_default());
-
-    /* The status bar: a line along its top, the hint at the left, the
-     * clock and battery at the right. Same layout as the Notes screens
-     * (status_bar_layout()), but without the WiFi icon. */
-    int32_t bar_y = h - style->status_h;
-    status_bar_layout_t bar;
-    status_bar_layout((int)w,
-                      (int)lv_font_get_glyph_width(style->hint_font, '0', 0),
-                      0, style->has_battery, &bar);
-
-    lv_obj_set_style_bg_color(s_header_rule, style->fg, 0);
-    lv_obj_set_pos(s_header_rule, 0, HEADER_RULE_Y);
-    lv_obj_set_size(s_header_rule, w, 1);
-    lv_obj_set_style_bg_color(s_status_rule, style->fg, 0);
-    lv_obj_set_pos(s_status_rule, 0, bar_y);
-    lv_obj_set_size(s_status_rule, w, 1);
-
-    lv_obj_set_pos(s_lbl_hint, STATUS_BAR_MARGIN, bar_y + 2);
-    lv_obj_set_width(s_lbl_hint, bar.text_w);
-
-    lv_obj_t *slots[2] = { s_lbl_clock, s_lbl_batt };
-    int32_t slot_x[2] = { bar.clock_x, bar.batt_x };
-    for (int i = 0; i < 2; i++) {
-        lv_obj_set_style_text_font(slots[i], style->hint_font, 0);
-        lv_obj_set_style_text_color(slots[i], style->fg, 0);
-        lv_obj_set_pos(slots[i], slot_x[i], bar_y + 2);
-        lv_obj_set_width(slots[i], bar.slot_w);
-    }
-    lv_obj_set_hidden(s_lbl_batt, !style->has_battery);
+    int32_t bar_y = planner_chrome_style(&s_chrome, style);
+    int32_t body_top = planner_body_top(style);
+    lv_obj_set_pos(s_lbl_body, 6, body_top);
 
     int32_t row_h = lv_font_get_line_height(style->body_font) + 3;
-    int32_t room = bar_y - 1 - BODY_TOP;
+    int32_t room = bar_y - 1 - body_top;
     s_visible_rows = (int)(room / row_h);
     if (s_visible_rows > ROW_MAX) s_visible_rows = ROW_MAX;
     if (s_visible_rows < 1) s_visible_rows = 1;
 
     for (int i = 0; i < ROW_MAX; i++) {
         lv_obj_set_style_text_font(s_rows[i], style->body_font, 0);
-        lv_obj_set_pos(s_rows[i], 4, BODY_TOP + i * row_h);
+        lv_obj_set_pos(s_rows[i], 4, body_top + i * row_h);
         lv_obj_set_size(s_rows[i], w - 8, row_h);
     }
 
@@ -251,7 +271,7 @@ static void apply_style(const planner_ui_style_t *style)
     if (s_box_rows > GRID_ROW_MAX) s_box_rows = GRID_ROW_MAX;
     if (s_box_rows < 1) s_box_rows = 1;
 
-    lv_obj_set_pos(s_grid, 4, BODY_TOP - 2);
+    lv_obj_set_pos(s_grid, 4, body_top - 2);
     lv_obj_set_size(s_grid, w - 8, box_h * GRID_PER_COL);
     for (int i = 0; i < GRID_BOXES; i++) {
         lv_obj_set_pos(s_box[i], (i / GRID_PER_COL) * (box_w + 4),
@@ -295,7 +315,7 @@ static void show_body(const char *text, const char *hint)
     hide_rows_from(0);
     lv_obj_remove_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_lbl_body, text);
-    lv_label_set_text(s_lbl_hint, hint);
+    lv_label_set_text(s_chrome.hint, hint);
 }
 
 static void date_to_tm(struct tm *t, int y, int m, int d)
@@ -526,7 +546,7 @@ static void render_page(void)
     char title[64];
     format_page_title(title, 48);
     if (kb_layout_caps()) strncat(title, "  CAPS", sizeof(title) - strlen(title) - 1);
-    lv_label_set_text(s_lbl_title, title);
+    lv_label_set_text(s_chrome.title, title);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
 
     if (!s_panes[s_focus].available()) s_focus = 0;
@@ -535,7 +555,7 @@ static void render_page(void)
         if (s_panes[i].available()) s_panes[i].render(i == s_focus);
         else s_panes[i].hide();
     }
-    lv_label_set_text(s_lbl_hint, s_msg ? s_msg : pane_hint());
+    lv_label_set_text(s_chrome.hint, s_msg ? s_msg : pane_hint());
 }
 
 static void save_day(void)
@@ -994,7 +1014,7 @@ static void tasks_commit(void)
  * allocated, or what to show instead. */
 static const char *check_ready(const struct tm *now)
 {
-    if (now->tm_year + 1900 < MIN_VALID_YEAR) {
+    if (now->tm_year + 1900 < PLANNER_MIN_VALID_YEAR) {
         return "The clock is not set.\n\nF1 > Settings > Date and time";
     }
     if (!sd_card_is_ready()) {
@@ -1044,7 +1064,7 @@ static void show_page(const struct tm *now, bool create_file)
     const char *problem = load_page(now, s_open_year, s_open_month, s_open_day,
                                     s_view == PLANNER_VIEW_WEEKLY);
     if (problem) {
-        show_body(problem, HINT_VIEWS);
+        show_body(problem, PLANNER_HINT_VIEWS);
         return;
     }
     if (create_file && journal_create(s_day) != JOURNAL_OK) {
@@ -1119,11 +1139,11 @@ static void fill_box(int idx, const char *title, int load_result)
  * the current week with today selected. */
 static void show_grid(const struct tm *now, bool keep_week)
 {
-    lv_label_set_text(s_lbl_title, "Week");
+    lv_label_set_text(s_chrome.title, "Week");
 
     const char *problem = check_ready(now);
     if (problem) {
-        show_body(problem, HINT_VIEWS);
+        show_body(problem, PLANNER_HINT_VIEWS);
         return;
     }
 
@@ -1166,12 +1186,12 @@ static void show_grid(const struct tm *now, bool keep_week)
     strftime(a, sizeof(a), "%m-%d", &first);
     strftime(b, sizeof(b), "%m-%d", &last);
     snprintf(header, sizeof(header), "Week  %s - %s", a, b);
-    lv_label_set_text(s_lbl_title, header);
+    lv_label_set_text(s_chrome.title, header);
 
     hide_rows_from(0);
     lv_obj_add_flag(s_lbl_body, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_grid, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_lbl_hint, HINT_GRID);
+    lv_label_set_text(s_chrome.hint, HINT_GRID);
 }
 
 static void open_box(int idx)
@@ -1271,6 +1291,10 @@ void planner_ui_handle_key(const kb_event_t *ev)
 {
     if (!s_active) return;
 
+    if (s_view == PLANNER_VIEW_DIARY) {
+        diary_view_key(ev);
+        return;
+    }
     if (s_view == PLANNER_VIEW_WEEK) {
         /* No boxes up: the clock or the card stopped it. */
         if (!lv_obj_has_flag(s_grid, LV_OBJ_FLAG_HIDDEN)) key_grid(ev);
@@ -1304,6 +1328,7 @@ void planner_ui_handle_key(const kb_event_t *ev)
 void planner_ui_commit_pending(void)
 {
     for (int i = 0; i < s_pane_count; i++) s_panes[i].commit();
+    diary_view_commit();
 }
 
 /* ---- Month placeholder ---- */
@@ -1317,6 +1342,15 @@ static void fill_month(const struct tm *now, char *out, size_t out_sz)
 
 lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style)
 {
+    if (view == PLANNER_VIEW_DIARY) {
+        planner_ui_commit_pending();
+        bool today = s_diary_today;
+        s_diary_today = false;
+        s_view = view;
+        s_active = true;
+        return diary_view_render(style, today);
+    }
+
     if (!s_scr) build_screen();
     apply_style(style);
     planner_ui_commit_pending();
@@ -1340,7 +1374,7 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
         s_open_year = now.tm_year + 1900;
         s_open_month = now.tm_mon + 1;
         s_open_day = now.tm_mday;
-        lv_label_set_text(s_lbl_title, "Today");
+        lv_label_set_text(s_chrome.title, "Today");
         show_page(&now, false);
         break;
     case PLANNER_VIEW_DAY:
@@ -1349,41 +1383,46 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
         break;
     default: {
         char body[192];
-        lv_label_set_text(s_lbl_title, "Month");
-        if (now.tm_year + 1900 < MIN_VALID_YEAR) {
+        lv_label_set_text(s_chrome.title, "Month");
+        if (now.tm_year + 1900 < PLANNER_MIN_VALID_YEAR) {
             snprintf(body, sizeof(body),
                      "The clock is not set.\n\nF1 > Settings > Date and time");
         } else {
             fill_month(&now, body, sizeof(body));
         }
-        show_body(body, HINT_VIEWS);
+        show_body(body, PLANNER_HINT_VIEWS);
         break;
     }
     }
     return s_scr;
 }
 
-/* Keep text as the latest value for buf, and show it on lbl (once the
- * screen exists) only if it changed. */
-static void set_slot(lv_obj_t *lbl, char *buf, size_t len, const char *text)
+/* Keep text as the latest value for buf, and show it on every chrome
+ * built so far, only if it changed. clock: the clock slot, not the
+ * battery one. */
+static void set_slot(bool clock, char *buf, size_t len, const char *text)
 {
     if (!text) text = "";
     if (strcmp(buf, text) == 0) return;
     snprintf(buf, len, "%s", text);
-    if (lbl) lv_label_set_text(lbl, buf);
+    for (int i = 0; i < s_chrome_count; i++) {
+        lv_label_set_text(clock ? s_chromes[i]->clock : s_chromes[i]->batt, buf);
+    }
 }
 
 void planner_ui_set_clock(const char *text)
 {
-    set_slot(s_lbl_clock, s_clock_text, sizeof(s_clock_text), text);
+    set_slot(true, s_clock_text, sizeof(s_clock_text), text);
 }
 
 void planner_ui_set_battery(const char *text)
 {
-    set_slot(s_lbl_batt, s_batt_text, sizeof(s_batt_text), text);
+    set_slot(false, s_batt_text, sizeof(s_batt_text), text);
 }
 
 void planner_ui_go_to_this_week(void) { s_week_reset = true; }
+void planner_ui_diary_go_to_today(void) { s_diary_today = true; }
+void planner_ui_set_diary_writer(planner_diary_write_fn fn) { diary_view_set_writer(fn); }
 bool planner_ui_is_active(void) { return s_active; }
 planner_view_t planner_ui_current(void) { return s_view; }
 void planner_ui_deactivate(void) { s_active = false; }

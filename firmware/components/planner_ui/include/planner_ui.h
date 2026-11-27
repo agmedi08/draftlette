@@ -1,7 +1,7 @@
 #pragma once
 
-/* planner_ui: the Today, Week and Month screens, plus the day and weekly
- * pages opened from the Week grid.
+/* planner_ui: the Today, Week, Month and Diary screens, plus the day and
+ * weekly pages opened from the Week grid.
  *
  * This component only draws them. The caller loads the returned screen
  * and routes keys, so it stays in charge of what is on the display. */
@@ -21,7 +21,13 @@ typedef enum {
     PLANNER_VIEW_MONTH,
     PLANNER_VIEW_DAY,       /* reached from the Week grid or by paging */
     PLANNER_VIEW_WEEKLY,    /* reached only from the Week grid */
+    PLANNER_VIEW_DIARY,     /* one prose entry a day, and its calendar */
 } planner_view_t;
+
+/* Writing a diary entry happens in the Notes editor. The diary calls
+ * this with the entry's file, which exists by then. Returns NULL when
+ * the editor has taken the display, or a message to show instead. */
+typedef const char *(*planner_diary_write_fn)(const char *path);
 
 typedef struct {
     const lv_font_t *title_font;
@@ -42,6 +48,13 @@ lv_obj_t *planner_ui_render(planner_view_t view, const planner_ui_style_t *style
  * instead of the week last shown. For the user asking for Week, not for
  * redrawing it after the menu. */
 void planner_ui_go_to_this_week(void);
+
+/* The next Diary render shows today's entry in reading mode, instead of
+ * the day and mode last shown. For the user asking for the Diary, not
+ * for coming back to it from writing or the menu. */
+void planner_ui_diary_go_to_today(void);
+
+void planner_ui_set_diary_writer(planner_diary_write_fn fn);
 
 /* True while a planner view owns the display, including while the menu
  * or help is open on top of it. */

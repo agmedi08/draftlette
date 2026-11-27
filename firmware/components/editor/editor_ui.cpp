@@ -844,8 +844,8 @@ static int       s_menu_sel     = 0;
 static int       s_menu_sel_prev = -1;
 static bool      s_menu_open    = false;
 
-/* F1 menu item indices. Fixed 0-8 for every board; "SD card via USB"
- * (9) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC and
+/* F1 menu item indices. Fixed 0-13 for every board; "SD card via USB"
+ * (14) only exists on boards with CONFIG_DRAFTLING_HAS_USB_MSC and
  * "Sync via browser" (next) only on boards with
  * CONFIG_DRAFTLING_HAS_KERMIT, so "Format SD card" / "Hardware
  * information" / "Help" / "Sleep now" / "Close menu" shift down on
@@ -857,20 +857,21 @@ static bool      s_menu_open    = false;
 #define MENU_IDX_WEEK            1
 #define MENU_IDX_MONTH           2
 #define MENU_IDX_NOTES           3
-#define MENU_IDX_SETTINGS        4
-#define MENU_IDX_BLE_STATUS      5
-#define MENU_IDX_BLE_SCAN        6
-#define MENU_IDX_WIFI_CONNECT    7
-#define MENU_IDX_WIFI_NEW        8
-#define MENU_IDX_WIFI_DISCONNECT 9
-#define MENU_IDX_GIT_SYNC        10
-#define MENU_IDX_DRAFTBOX        11
-#define MENU_IDX_KB_LAYOUT       12
+#define MENU_IDX_DIARY           4
+#define MENU_IDX_SETTINGS        5
+#define MENU_IDX_BLE_STATUS      6
+#define MENU_IDX_BLE_SCAN        7
+#define MENU_IDX_WIFI_CONNECT    8
+#define MENU_IDX_WIFI_NEW        9
+#define MENU_IDX_WIFI_DISCONNECT 10
+#define MENU_IDX_GIT_SYNC        11
+#define MENU_IDX_DRAFTBOX        12
+#define MENU_IDX_KB_LAYOUT       13
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-#define MENU_IDX_USB_MSC         13
-#define _MENU_NEXT_AFTER_USB_MSC 14
+#define MENU_IDX_USB_MSC         14
+#define _MENU_NEXT_AFTER_USB_MSC 15
 #else
-#define _MENU_NEXT_AFTER_USB_MSC 13
+#define _MENU_NEXT_AFTER_USB_MSC 14
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 #define MENU_IDX_KERMIT          _MENU_NEXT_AFTER_USB_MSC
@@ -1598,6 +1599,12 @@ static split_mode_t s_split_mode = SPLIT_NONE;
  * EDITING mode while the browser is on screen, leaving keystrokes
  * routed to the (hidden) editor and the browser apparently frozen. */
 static bool s_editor_screen_active = false;
+
+/* True while pane 0 holds a diary entry being written, s_diary_doc; see
+ * "Writing a diary entry" further down. */
+static bool          s_diary_writing = false;
+static editor_doc_t *s_diary_doc     = NULL;
+static bool diary_finish_writing(bool show_diary, bool force);
 
 /* Which pane a file-browser "open" / "new" action should load into.
  * Set by editor_ui_show_file_browser(): in single-pane mode this is
@@ -4268,6 +4275,11 @@ static void refresh_file_list(const char *select_name = NULL)
 
 extern "C" void editor_ui_show_file_browser(void)
 {
+    /* Also reached by SD via USB and the Kermit server taking the card:
+     * save a diary entry and put pane 0's own document back first. The
+     * card is going away, so a failed save cannot wait. */
+    diary_finish_writing(false, true);
+
     if (s_pane_count > 1) {
         /* Split: overlay a compact file selector on just the focused
          * pane, keeping the other pane's document on screen. The editor
@@ -4625,6 +4637,7 @@ static const menu_hotkey_t s_menu_hotkeys[] = {
     { MENU_IDX_WEEK,            'e', 1  },  /* "Week (F3)" */
     { MENU_IDX_MONTH,           'm', 0  },  /* "Month (F4)" */
     { MENU_IDX_NOTES,           'o', 1  },  /* "Notes (F5)" */
+    { MENU_IDX_DIARY,           'a', 2  },  /* "Diary (F6)" */
     { MENU_IDX_SETTINGS,        's', 0  },  /* "Settings..." */
     { MENU_IDX_BLE_SCAN,        'l', 1  },  /* "BLE: Start scan" */
     { MENU_IDX_WIFI_CONNECT,    'w', 0  },  /* "WiFi: ..." */
@@ -4728,6 +4741,7 @@ static void refresh_menu_items(void)
     lv_list_add_btn(s_menu_list, NULL, "Week (F3)");
     lv_list_add_btn(s_menu_list, NULL, "Month (F4)");
     lv_list_add_btn(s_menu_list, NULL, "Notes (F5)");
+    lv_list_add_btn(s_menu_list, NULL, "Diary (F6)");
 
     /* Settings */
     lv_list_add_btn(s_menu_list, NULL, "Settings...");
@@ -4922,6 +4936,7 @@ static void commit_usb_msc_pending_mode(void)
          * then force the file browser -- close_menu() routes there
          * whenever s_editor_screen_active is false, once the user
          * eventually leaves the F1 menu too. */
+        diary_finish_writing(false, true);
         if (editor_is_modified() && editor_get_file_path()) {
             editor_save_file();
         }
@@ -4949,6 +4964,8 @@ static void commit_usb_msc_pending_mode(void)
  * in memory, so nothing is saved or closed by switching. */
 static void show_planner_view(planner_view_t view)
 {
+    /* Leaving a diary entry saves it; a failed save stays in it. */
+    if (!diary_finish_writing(false, false)) return;
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     const bool has_batt = true;
 #else
@@ -4970,6 +4987,7 @@ static void show_planner_view(planner_view_t view)
  * it closes the document. */
 static void show_notes_view(void)
 {
+    if (!diary_finish_writing(false, false)) return;
     if (s_editor_screen_active)
         editor_ui_show_editor();
     else
@@ -4981,8 +4999,132 @@ static void close_menu(void)
     s_menu_open = false;
     if (planner_ui_is_active())
         show_planner_view(planner_ui_current());
+    else if (s_diary_writing)
+        editor_ui_show_editor();    /* back to the entry, still writing */
     else
         show_notes_view();
+}
+
+/* ---- Writing a diary entry ----
+ * The Diary view (planner_ui) writes its entries here, in the Notes
+ * editor. The entry takes over pane 0 for the time being; Esc, or
+ * switching views, saves it and gives pane 0 back its document. That
+ * document stays open meanwhile when the pool has room for both, and
+ * is otherwise saved, closed and opened again afterwards. Only in a
+ * single pane: a split holds two documents already. */
+static editor_doc_t *s_diary_prev_doc  = NULL;   /* pane 0's, still open */
+static char          s_diary_prev_path[256];     /* reopen when it was closed */
+static size_t        s_diary_prev_cursor;
+static int           s_diary_prev_scroll;
+static int           s_diary_prev_anchor;
+
+/* Give pane 0 back the document it had before the entry. */
+static void diary_restore_prev_doc(void)
+{
+    editor_doc_t *d = s_diary_prev_doc;
+    bool had_view = d != NULL;
+    if (!d) d = editor_doc_acquire(s_diary_prev_path[0] ? s_diary_prev_path : NULL);
+    if (!d) d = editor_doc_acquire(NULL);
+    if (!d) editor_init();      /* never leave the engine without a document */
+    else    editor_set_active(d);
+    s_panes[0].doc = editor_get_active();
+    if (had_view) {
+        editor_set_cursor(s_diary_prev_cursor);
+        editor_set_scroll_line(s_diary_prev_scroll);
+        editor_set_sel_anchor(s_diary_prev_anchor);
+    }
+    s_panes[0].has_saved_view = false;
+    pane_bind(0);
+    s_diary_prev_doc = NULL;
+    s_diary_prev_path[0] = '\0';
+}
+
+/* The planner_diary_write_fn: open path in pane 0 for writing. */
+static const char *diary_write_entry(const char *path)
+{
+    if (const char *busy = sd_handed_off_msg()) return busy;
+    if (s_diary_writing) return "Already writing an entry.";
+    if (s_pane_count > 1) return "Notes is split: Ctrl+1 there first, then write.";
+
+    pane_bind(0);
+    editor_doc_t *prev = s_panes[0].doc;
+    s_diary_prev_path[0] = '\0';
+    if (prev) {
+        s_diary_prev_cursor = editor_get_cursor();
+        s_diary_prev_scroll = editor_get_scroll_line();
+        s_diary_prev_anchor = editor_get_sel_anchor();
+    }
+
+    editor_doc_t *d = editor_doc_acquire(path);
+    if (!d && prev) {
+        /* No free slot: close pane 0's document, saved first. */
+        if (editor_doc_is_modified(prev)) {
+            if (!editor_doc_get_path(prev)) {
+                editor_set_active(prev);
+                return "Notes has an unsaved new document. Save it first.";
+            }
+            if (editor_doc_save(prev) != ESP_OK) {
+                editor_set_active(prev);
+                return "Could not save the Notes document.";
+            }
+        }
+        const char *p = editor_doc_get_path(prev);
+        snprintf(s_diary_prev_path, sizeof(s_diary_prev_path), "%s", p ? p : "");
+        s_panes[0].doc = NULL;
+        editor_doc_release(prev);
+        prev = NULL;
+        d = editor_doc_acquire(path);
+        if (!d) {
+            diary_restore_prev_doc();
+            return "Could not open the entry.";
+        }
+    } else if (!d) {
+        if (prev) editor_set_active(prev);
+        return "Could not open the entry.";
+    }
+
+    s_diary_prev_doc = prev;
+    s_diary_doc = d;
+    s_diary_writing = true;
+    s_panes[0].doc = d;
+    s_panes[0].has_saved_view = false;
+    editor_set_active(d);
+    pane_bind(0);
+    /* A diary is written at its end. */
+    editor_clear_selection();
+    editor_move_doc_end();
+    pane_capture_view(&s_panes[0]);
+    invalidate_render_cache();
+#if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
+    display_clear(0xFF);    /* see browser_activate_item() */
+#endif
+    ensure_cursor_visible();
+    editor_ui_show_editor();
+    editor_ui_set_status("Diary entry: Esc saves it and goes back");
+    return NULL;
+}
+
+/* Save the entry and give pane 0 back its document. show_diary: then
+ * show the Diary on that entry. False when the save failed, which keeps
+ * the entry open so nothing typed is lost -- unless force, which goes on
+ * without it. True when not writing. */
+static bool diary_finish_writing(bool show_diary, bool force)
+{
+    if (!s_diary_writing) return true;
+
+    editor_doc_t *d = s_diary_doc;
+    if (editor_doc_is_modified(d) && editor_doc_save(d) != ESP_OK) {
+        editor_ui_set_status("Could not save the entry. Check the SD card.");
+        if (!force) return false;
+    }
+    s_diary_writing = false;
+    s_diary_doc = NULL;
+    if (s_panes[0].doc == d) s_panes[0].doc = NULL;
+    editor_doc_release(d);
+    diary_restore_prev_doc();
+    invalidate_render_cache();
+    if (show_diary) show_planner_view(PLANNER_VIEW_DIARY);
+    return true;
 }
 
 /* ---- Settings screen ---- */
@@ -6600,6 +6742,9 @@ static void kermit_start(void)
         editor_ui_set_status("Sync via browser: wait for Git sync to finish");
         return;
     }
+    /* The documents are closed below; first give a diary entry's pane
+     * back its own document. */
+    if (!diary_finish_writing(false, false)) return;
     bool untitled = false;
     editor_doc_foreach(kermit_untitled_cb, &untitled);
     if (untitled) {
@@ -6921,6 +7066,11 @@ static void menu_activate_item(int idx)
     case MENU_IDX_NOTES:
         s_menu_open = false;
         show_notes_view();
+        break;
+    case MENU_IDX_DIARY:
+        s_menu_open = false;
+        planner_ui_diary_go_to_today();
+        show_planner_view(PLANNER_VIEW_DIARY);
         break;
     case MENU_IDX_SETTINGS:
         show_settings();
@@ -7266,7 +7416,7 @@ static void help_heading(std::string &out, const char *title)
 static void help_common_rows(std::string &out, int cols, int kc)
 {
     help_row(out, cols, kc, "F1, Ctrl+M", "Menu");
-    help_row(out, cols, kc, "F2 to F5", "Views: Today, Week, Month, Notes");
+    help_row(out, cols, kc, "F2 to F6", "Views: Today, Week, Month, Notes, Diary");
     help_row(out, cols, kc, "F10", "This help");
     help_row(out, cols, kc, "Ctrl+1", "Single pane");
     help_row(out, cols, kc, "Ctrl+2", "Split into two equal panes");
@@ -9422,6 +9572,15 @@ static void handle_editor_key(const kb_event_t *ev)
          * to -- see kb_layout.h. */
         char ch = kb_layout_shortcut_char(ev->keycode);
 
+        /* A diary entry owns pane 0 until Esc: no splitting, and no
+         * other document in its place. */
+        if (s_diary_writing &&
+            (ev->keycode == 0x1E || ev->keycode == 0x1F || ev->keycode == 0x20 ||
+             ev->keycode == KB_KEY_TAB || ch == 'n' || ch == 'o')) {
+            editor_ui_set_status("Writing a diary entry: Esc first");
+            return;
+        }
+
         /* Ctrl+1 / Ctrl+2 / Ctrl+3 control the split layout. HID
          * keycodes: 1 = 0x1E, 2 = 0x1F, 3 = 0x20. Handled by keycode
          * (not layout translation) so they work in any layout. */
@@ -9756,6 +9915,11 @@ static void handle_editor_key(const kb_event_t *ev)
             editor_ui_set_status("Buffer full -- increase editor size in menuconfig");
         break;
     case KB_KEY_ESCAPE:
+        if (s_diary_writing) {
+            /* A diary entry: save it and go back to reading it. */
+            diary_finish_writing(true, false);
+            return;
+        }
         if (editor_is_modified()) {
             /* Ask whether to save, discard, or keep editing. */
             show_exit_prompt();
@@ -10357,12 +10521,12 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
 }
 
 /* Process a single key event (must be called with LVGL lock held). */
-/* F2-F5 switch views from any screen. Returns true when the key was
+/* F2-F6 switch views from any screen. Returns true when the key was
  * one of them, used or not. They do nothing during a prompt or inside a
  * sub-picker, so a half-answered question is never dropped. */
 static bool handle_view_key(const kb_event_t *ev)
 {
-    if (ev->keycode < KB_KEY_F2 || ev->keycode > KB_KEY_F5) return false;
+    if (ev->keycode < KB_KEY_F2 || ev->keycode > KB_KEY_F6) return false;
 
     if (lv_scr_act() == s_scr_ble_prompt) return true;
     if (s_msg_open || s_save_open || s_newfmt_open || s_del_open || s_pw_open ||
@@ -10387,8 +10551,13 @@ static bool handle_view_key(const kb_event_t *ev)
 #endif
     if (s_settings_open && settings_sub) return true;
 
+    /* Any view key ends a diary entry being written, F5 included: Notes
+     * then shows its own document again. */
+    bool was_writing = s_diary_writing;
+    if (!diary_finish_writing(false, false)) return true;
+
     planner_ui_commit_pending();
-    bool on_notes = !planner_ui_is_active() && !s_menu_open &&
+    bool on_notes = !was_writing && !planner_ui_is_active() && !s_menu_open &&
                     !s_settings_open && !s_help_open;
     s_menu_open = false;
     s_settings_open = false;
@@ -10401,6 +10570,10 @@ static bool handle_view_key(const kb_event_t *ev)
         show_planner_view(PLANNER_VIEW_WEEK);
         break;
     case KB_KEY_F4: show_planner_view(PLANNER_VIEW_MONTH); break;
+    case KB_KEY_F6:
+        planner_ui_diary_go_to_today();
+        show_planner_view(PLANNER_VIEW_DIARY);
+        break;
     default:
         if (!on_notes) show_notes_view();
         break;
@@ -12506,6 +12679,9 @@ extern "C" void editor_ui_init(void)
      * owns it from the start (split mode acquires a second document
      * into pane 1 on demand). */
     s_panes[0].doc = editor_get_active();
+
+    /* The Diary view writes its entries in this editor. */
+    planner_ui_set_diary_writer(diary_write_entry);
 
     /* Key-event drain timer -- runs every 20 ms (50 Hz) to process
      * queued keyboard events in a batch. This decouples BLE input

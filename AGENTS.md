@@ -163,6 +163,10 @@ components/                 Reusable IDF components
   battery/                  Battery voltage monitor (ADC)
   ble_keyboard/             BLE HID keyboard host (Bluedroid)
   display/                  RLCD SPI display driver and LVGL port
+  diary/                    Diary entries: one Markdown file per day
+                            under diary/YYYY/MM/, with a Tags: line
+                            (plain C, host-tested); read by planner_ui's
+                            diary view, written in the Notes editor
   editor/                   Gap-buffer text editor, Markdown / Fountain
                             parsers, Markdown / Fountain / plain-text
                             format hooks, LVGL UI
