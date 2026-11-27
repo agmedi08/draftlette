@@ -17,3 +17,6 @@ CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 
 # Enable the on-board GT911 touchscreen as a secondary input device.
 CONFIG_DRAFTLING_TOUCHSCREEN=y
+
+# Show journal / planner / diary dates and the clock in US Central time.
+CONFIG_DRAFTLING_TIMEZONE="CST6CDT,M3.2.0,M11.1.0"
