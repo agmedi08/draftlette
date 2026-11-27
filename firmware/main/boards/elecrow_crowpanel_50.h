@@ -74,3 +74,17 @@
 
 /* No wake button: GPIO0 is the panel PCLK (see above). */
 #define WAKEUP_GPIO_NUM -1
+
+/* Speaker connector (SPK, J5, PH2.0-2P): driven by an NS4168 I2S
+ * class-D amplifier (U11 in Elecrow's V3.0 Eagle schematic). BCLK,
+ * LRCLK and SDATA reach GPIO42 / 18 / 17 through 0 ohm links (R19,
+ * R12, R4). Its CTRL pin is pulled up to 3V3 through 100k (R22), with
+ * no ESP32 or PCA9557 pin on it, so the amp is always powered and
+ * enabled and cannot be shut down from firmware. Draftling plays no
+ * sound. Left floating, the inputs picked up the RGB panel's ~35 Hz
+ * frame refresh and the amp hummed through a connected speaker, so
+ * main.cpp drives all three low at boot
+ * (crowpanel50_quiet_speaker()). */
+#define CROWPANEL50_I2S_BCLK_PIN  42
+#define CROWPANEL50_I2S_LRCLK_PIN 18
+#define CROWPANEL50_I2S_SDIN_PIN  17

@@ -48,6 +48,10 @@ in the git log.
   the larger Hack font (Elecrow CrowPanel 5.0", PaperS3, Xteink X4 and
   others) the line under the title of Today, Week, Month and Diary no
   longer cuts through the title, and the page starts below it.
+- **No more hum from a speaker on the Elecrow CrowPanel 5.0"**: a
+  speaker plugged into the board's SPK connector no longer plays a low
+  hum while the device is on. Draftling plays no sound, and the
+  speaker amplifier's unused inputs are now held quiet.
 
 ## [0.0.3] - 2026-11-21
 

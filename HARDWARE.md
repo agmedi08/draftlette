@@ -207,6 +207,10 @@ Things to know:
   slow while the screen is on (about 10 % per hour on the tested
   battery).
 - TN panel: colors and contrast shift when viewed off-angle.
+- Draftling plays no sound. The speaker amplifier (NS4168) is always
+  on in hardware, so a speaker on the SPK connector would hum with the
+  display refresh if its I2S inputs (GPIO 17, 18, 42) were left
+  floating; Draftling holds them low.
 
 ## Waveshare ESP32-S3-Touch-LCD-7
 
