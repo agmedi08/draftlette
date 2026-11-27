@@ -951,6 +951,28 @@ static void crowpanel50_touch_reset(i2c_master_bus_handle_t shared_bus)
 }
 #endif
 
+#if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
+/* Elecrow CrowPanel 5.0": the NS4168 speaker amplifier is always on
+ * (its CTRL pin is pulled up in hardware, see the board header), and
+ * its unused I2S inputs, left floating, pick up the RGB panel's frame
+ * refresh, which it plays as a low hum. Hold them low instead: with no
+ * bit clock the amp has nothing to play. Nothing else on this board
+ * uses these pins. */
+static void crowpanel50_quiet_speaker(void)
+{
+    gpio_config_t g = {};
+    g.intr_type    = GPIO_INTR_DISABLE;
+    g.mode         = GPIO_MODE_OUTPUT;
+    g.pin_bit_mask = (1ULL << CROWPANEL50_I2S_BCLK_PIN) |
+                     (1ULL << CROWPANEL50_I2S_LRCLK_PIN) |
+                     (1ULL << CROWPANEL50_I2S_SDIN_PIN);
+    gpio_config(&g);
+    gpio_set_level((gpio_num_t)CROWPANEL50_I2S_BCLK_PIN, 0);
+    gpio_set_level((gpio_num_t)CROWPANEL50_I2S_LRCLK_PIN, 0);
+    gpio_set_level((gpio_num_t)CROWPANEL50_I2S_SDIN_PIN, 0);
+}
+#endif
+
 #if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
 /* Waveshare ESP32-S3-RLCD-4.2: everything on the board is on the
  * always-on 3.3 V rail, so peripherals Draftling does not use keep
@@ -2630,6 +2652,9 @@ extern "C" void app_main(void)
 #if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
     rlcd42_release_held_pins();
     rlcd42_quiet_peripherals();
+#endif
+#if defined(CONFIG_DRAFTLING_MODEL_ELECROW_CROWPANEL_50)
+    crowpanel50_quiet_speaker();
 #endif
 
     /* Wall clock: local time zone, restore from the battery-backed RTC
