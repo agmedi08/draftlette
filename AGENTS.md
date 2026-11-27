@@ -176,6 +176,8 @@ components/                 Reusable IDF components
   power/                    TCA9554-latched battery rail + PWR-button driver
   sd_card/                  SD card (SDMMC 1-bit) file operations
   standby/                  Deep-sleep / standby inactivity timer
+  status_bar/               Status bar clock text and clock / battery
+                            slot layout (plain C, host-tested)
   tab5_kbd/                 M5Stack Tab5 attachable keyboard (I2C + INT)
   wifi_manager/             WiFi STA connection manager
   usb_kbd/                  USB HID keyboard host (boot protocol)
@@ -1069,6 +1071,21 @@ opens the save-as prompt so the user can name the file.
 
 The title bar shows `L %d/%d` (current line / total lines) on every
 build; on non-EPD targets the column counter is appended as well.
+
+The right end of the bottom status bar of the editor, the file
+browser and the planner views holds, from the right, the battery
+percentage (boards with a battery monitor), a 24-hour clock (`14:05`,
+or `--:--` before the clock is set) and, on the editor and file
+browser only, the Wi-Fi icon. `components/status_bar/` computes the
+clock text and the positions (`status_bar_layout()`, two 5-character
+slots measured in the bar font, so they scale on high-density
+boards) and has a host test in `host_test/`. One 5 s LVGL timer
+(`status_timer_cb()`) refreshes both and rewrites a label only when
+its text changed; on the H752 pull-model board the clock rides the
+same redraw points as the battery. editor_ui owns the readings and
+passes them to the planner with `planner_ui_set_clock()` /
+`planner_ui_set_battery()`; planner_ui draws its own lines and
+labels.
 
 The bottom status bar of both the editor and the file browser
 displays a small Wi-Fi icon (`components/editor/wifi_icon.c`) in the

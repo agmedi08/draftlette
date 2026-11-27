@@ -152,7 +152,8 @@ load the firmware quickly without having to compile it.
 
 | Shortcut | Action |
 |----------|--------|
-| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: S Settings, L BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, B Sync via browser, F Format SD card, I Hardware information, H Help |
+| F1 | Open main menu (BLE, WiFi, Git, Layout, Settings...). Inside the menu, the letter drawn bold picks its item: T Today, E Week, M Month, O Notes, S Settings, L BLE scan, W WiFi connect, N new WiFi connection, D WiFi disconnect, G Git sync, K keyboard layout, U SD card via USB, B Sync via browser, F Format SD card, I Hardware information, H Help |
+| F2 / F3 / F4 / F5 | Switch to Today / Week / Month / Notes, from any screen. Your open file and cursor are kept. Ignored while a prompt is open |
 | F10 | Help: the shortcuts of the current screen and, in the editor, the formatting syntax of the document (Markdown or Fountain). Up/Down, PgUp/PgDn (or Ctrl+Up/Down), Home/End scroll; Esc or Enter closes it |
 | Arrow keys | Move cursor |
 | Home / End | Start / end of line |
@@ -192,7 +193,7 @@ In the file browser:
 |----------|--------|
 | Up / Down, Enter | Select and open a file |
 | N or Ctrl+N | New file: pick Markdown (`.md`), Fountain screenplay (`.fountain`) or plain text (`.txt`) with Up/Down + Enter, or press M / F / T |
-| F2 or Alt+R | Rename the selected file. The name must end in `.md`, `.fountain` or `.txt`; the saved cursor position (the `.meta` file) moves with it, and changing the extension changes the format |
+| R or Alt+R | Rename the selected file. The name must end in `.md`, `.fountain` or `.txt`; the saved cursor position (the `.meta` file) moves with it, and changing the extension changes the format |
 | Del or Alt+D | Delete the selected file, after a confirmation. Without Git sync the deletion cannot be undone. With Git sync configured, it is only allowed when the file is safely on the Git server: its current content must already be committed and pushed (see [Git sync](docs/git-sync.md)), so a deleted file can always be recovered from the repository history. The next sync commits the deletion |
 | Alt+L | Set or remove a password on the selected file. A file with a password asks for it every time it is opened or deleted, and shows "(locked)" in the file list. This only stops someone opening the file on the device: the file is not encrypted and can still be read from the SD card on a computer |
 | Alt+I | File information for the selected file (same page as in the editor) |

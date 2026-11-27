@@ -8,10 +8,128 @@ in the git log.
 
 ### Added
 
-- **Folders in the file browser**: `Alt+N` makes a new folder, Enter
+- **Battery level on the Elecrow CrowPanel 5.0"**: with a MAX17048
+  fuel-gauge breakout wired between the battery and the BAT connector
+  and plugged into the board's I2C connector, the status bar shows the
+  battery percentage and a "+" while it charges. Without the gauge the
+  battery indicator stays hidden, as before. Like the other
+  battery-powered boards, the CrowPanel 5.0" now also goes to sleep
+  when no keyboard has connected 3 minutes after start-up (press RESET
+  to wake it).
+
+### Changed
+
+- **Dimmer backlight on the Elecrow CrowPanel 5.0"**: the backlight
+  setting (F1 -> Settings, or `Ctrl+B`) now goes down to 5 % and 2 %,
+  for writing in a dark room.
+- **Long list items stay indented**: in Markdown files, when a numbered
+  or bullet list item wraps onto more rows, those rows now line up with
+  the item's text instead of starting under the number or bullet. This
+  only changes how the item is shown, not the file.
+
+## [0.0.3] - 2026-11-21
+
+### Fixed
+
+- **Sub-tasks stay sub-tasks**: a sub-task made with Right on Today, a
+  day page or the weekly page no longer turns back into a normal bullet
+  when the page is opened again. Pages changed after being reopened were
+  saved without the sub-task indents; make those bullets sub-tasks again
+  with Right.
+
+## [0.0.2] - 2026-11-20
+
+### Added
+
+- **Clock in the status bar**: the bottom bar of the Notes editor, the
+  file browser and the Today, Week and Month views shows the time
+  (24-hour, for example `14:05`) just left of the battery level. It
+  shows `--:--` until the clock has been set.
+- **Battery level and lines in the planner**: the Today, Week and Month
+  views, and the pages opened from them, now show the battery level
+  too, and have the same lines under the title and above the bottom
+  bar as the Notes editor.
+- **Sub-tasks**: on Today, a day page and the weekly page, Right makes
+  the selected bullet a sub-task of the one above it (shown indented),
+  and Left moves it back out. This works while typing too, and Down from
+  the last sub-task starts another one. Migrating a task takes its open
+  sub-tasks along, and deleting it asks to delete them as well. The
+  Week grid lists only top-level bullets, to keep the boxes readable.
+  On the SD card, sub-tasks are indented Markdown list items
+  (`  - [ ] ...`).
+
+### Changed
+
+- **No more "+ New" row**: on Today, a day page or the weekly page,
+  Down on the last bullet starts a new bullet straight away, as it did
+  before 0.0.1; Down again before typing anything drops that empty
+  bullet and wraps round to the first one. Up from the first bullet
+  wraps round to the last one.
+  An empty page says "No bullets yet."; Enter or Down starts the first
+  bullet.
+
+## [0.0.1] - 2026-11-13
+
+### Changed
+
+- **Version numbers**: this branch now has its own version line,
+  starting at 0.0.1, so the F1 menu shows 0.0.1 instead of 1.0.17.
+  Later releases count up from here.
+
+### Added
+
+- **Caps Lock**: the Caps Lock key now works. It flips Shift for letters
+  only, and `CAPS` shows in the Notes status bar and the Today title.
+- **Clock keeps the date through power-off**: on the Waveshare
+  ESP32-S3-RLCD-4.2 the device now reads its battery-backed clock chip
+  at startup, so the date and time are right even after the power was
+  fully off. Whenever the time is fetched from the internet, the clock
+  chip is updated too.
+- **Internet time on every WiFi connect**: the clock is now set from the
+  internet (SNTP) each time WiFi connects, not only during a Git sync.
+- **Set date and time**: F1 -> Settings -> "Date and time" sets the
+  clock by hand, for when there is no WiFi. Up/Down pick the year,
+  month, day, hour or minute, Left/Right change it, and Enter saves.
+  "Sync time now" fetches the time over the saved WiFi network
+  (connecting and disconnecting again if WiFi was off), and a status
+  line shows whether the clock chip is working and when the time was
+  last fetched.
+- **Views**: F2, F3, F4 and F5 switch to Today, Week, Month and Notes
+  from any screen, and the F1 menu lists them too. Your open file,
+  cursor and unsaved text are kept while you are away from Notes.
+  Month is a placeholder for now.
+- **Week view**: F3 now shows the current week as eight boxes, one for
+  each day plus "This week". Each box lists that day's tasks, events
+  and `!` bullets, one line each, with `...` on long lines and
+  `+N more` when they do not all fit. The knob moves between the boxes
+  and Enter opens one, creating its file if there is none yet. Esc goes
+  back to the week. `?` and `,` show the next and previous week, and
+  F3 always comes back to this one.
+- **Next and previous day**: on Today or a day page, `?` and `,` go to
+  the next and previous day, and on a weekly page to the next and
+  previous week. A page you only look at gets no file; adding a bullet
+  makes one, so you can plan ahead.
+- **Weekly page**: the "This week" box opens a bullet page for items
+  with no particular day. It works like a day, is headed with the
+  week's dates, and is saved as
+  `/journal/YYYY/MM/YYYY-MM-DD-week.md`, named after the Monday.
+  Migrating an item moves it to a chosen day, or with "Migrate to a
+  week..." to another week's page.
+- **Today bullet log**: a planner page for each day, with no file to
+  create or name. Each day is saved as Markdown in
+  `/journal/YYYY/MM/YYYY-MM-DD.md` as soon as you change it. Up/Down
+  move between bullets and wrap round past a "+ New" row at the end;
+  Enter on it adds a bullet, and Down while typing the last one starts
+  the next. Enter edits, Space marks a task done, Tab while typing
+  changes the type (task, event, note, tracker), Backspace closes out a
+  bullet (cancel, or migrate it to another day), and Del deletes it.
+- **Local time zone**: a new build option, `DRAFTLING_TIMEZONE`, sets
+  the time zone for dates shown on the device (UTC unless the board
+  preset changes it). Git commits still use UTC.
+- **Folders in the file browser**: `D` makes a new folder, Enter
   opens it, and the ".." row or Backspace goes back up. New files and
-  "Save as" go into the folder you are in. Move a file with `Ctrl+X`,
-  open the folder it should go to, then `Ctrl+V` (Esc cancels). `F2`
+  "Save as" go into the folder you are in. Move a file with `T`, open
+  the folder it should go to, then `T` again (Esc cancels). `R`
   renames a folder and `Del` deletes it once it is empty. Git sync
   still only syncs the files at the top level of the card.
 
@@ -27,30 +145,15 @@ in the git log.
   with an ESP32-S3, a MicroSD slot and a battery connector. Wake the
   device from sleep with RESET (the BOOT button drives the screen).
   Tested on a Hardware Version 3.0 board. See HARDWARE.md.
-- **Battery level on the Elecrow CrowPanel 5.0"**: with a MAX17048
-  fuel-gauge breakout wired between the battery and the BAT connector
-  and plugged into the board's I2C connector, the status bar shows the
-  battery percentage and a "+" while it charges. Without the gauge the
-  battery indicator stays hidden, as before. Like the other
-  battery-powered boards, the CrowPanel 5.0" now also goes to sleep
-  when no keyboard has connected 3 minutes after start-up (press RESET
-  to wake it).
 
 ### Changed
 
-- **Dimmer backlight on the Elecrow CrowPanel 5.0"**: the backlight
-  setting (F1 -> Settings, or `Ctrl+B`) now goes down to 5 % and 2 %,
-  for writing in a dark room.
+- **Menus and the file browser wrap around**: in the F1 menu, its Settings
+  list and the file browser, Up on the first item jumps to the last one and
+  Down on the last item jumps back to the first.
+- **Rename a file with R**: in the file browser, rename moved from F2
+  to R, because F2 now opens Today. Alt+R still works.
 
-- **Long list items stay indented**: in Markdown files, when a numbered
-  or bullet list item wraps onto more rows, those rows now line up with
-  the item's text instead of starting under the number or bullet. This
-  only changes how the item is shown, not the file.
-
-- **Menus and the file browser wrap around**: in the F1 menu, its
-  Settings list and the file browser, pressing Up on the first item
-  jumps to the last one, and Down on the last item jumps back to the
-  first.
 - **One MicroJournal Rev 5 firmware for 5.0 and 5.1**: the
   `microjournal_rev5_0` and `microjournal_rev5_1` build presets are
   replaced by a single `microjournal_rev5` preset. At boot the firmware

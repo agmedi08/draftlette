@@ -41,6 +41,14 @@ esp_err_t wifi_manager_disconnect(void);
 wifi_state_t wifi_manager_get_state(void);
 bool wifi_manager_is_connected(void);
 void wifi_manager_set_callback(wifi_state_callback_t callback);
+
+/* Register an extra state listener (for background services such as
+ * time_sync), independent of the single UI callback above. Listeners
+ * run on the WiFi event task, so they must return quickly -- hand any
+ * slow work (network I/O) to a task of their own. Adding the same
+ * callback twice is a no-op. Returns ESP_ERR_NO_MEM when all slots
+ * are taken. */
+esp_err_t wifi_manager_add_listener(wifi_state_callback_t callback);
 const char *wifi_manager_get_ip(void);
 const char *wifi_manager_get_ssid(void);
 

@@ -24,6 +24,10 @@ static const char *TAG = "WiFiMgr";
 static EventGroupHandle_t s_event_group = NULL;
 static wifi_state_t       s_state = WIFI_STATE_IDLE;
 static wifi_state_callback_t s_callback = NULL;
+/* Extra state listeners for background services (time sync, ...),
+ * on top of the single UI callback above. */
+#define WIFI_MAX_LISTENERS 4
+static wifi_state_callback_t s_listeners[WIFI_MAX_LISTENERS] = {};
 static int s_retry_count = 0;
 static char s_ip_str[20] = "";
 static char s_ssid[33]   = "";
@@ -71,6 +75,9 @@ static void set_state(wifi_state_t st)
 {
     s_state = st;
     if (s_callback) s_callback(st);
+    for (int i = 0; i < WIFI_MAX_LISTENERS; i++) {
+        if (s_listeners[i]) s_listeners[i](st);
+    }
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t base,
@@ -583,6 +590,21 @@ extern "C" wifi_state_t wifi_manager_get_state(void) { return s_state; }
 extern "C" bool wifi_manager_last_failure_was_auth(void) { return s_auth_failed; }
 extern "C" bool wifi_manager_is_connected(void) { return s_state == WIFI_STATE_CONNECTED; }
 extern "C" void wifi_manager_set_callback(wifi_state_callback_t cb) { s_callback = cb; }
+
+extern "C" esp_err_t wifi_manager_add_listener(wifi_state_callback_t cb)
+{
+    if (!cb) return ESP_ERR_INVALID_ARG;
+    for (int i = 0; i < WIFI_MAX_LISTENERS; i++) {
+        if (s_listeners[i] == cb) return ESP_OK;
+    }
+    for (int i = 0; i < WIFI_MAX_LISTENERS; i++) {
+        if (!s_listeners[i]) {
+            s_listeners[i] = cb;
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_NO_MEM;
+}
 extern "C" const char *wifi_manager_get_ip(void) { return s_ip_str; }
 extern "C" const char *wifi_manager_get_ssid(void) { return s_ssid; }
 extern "C" bool wifi_manager_has_global_ipv6(void) { return s_ipv6_global; }

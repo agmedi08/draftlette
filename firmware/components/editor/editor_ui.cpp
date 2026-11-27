@@ -49,6 +49,9 @@
 #include "display_orientation.h"
 #include "display_flip.h"
 #include "standby.h"
+#include "time_sync.h"
+#include "planner_ui.h"
+#include "status_bar.h"
 #include "greybeard.h"
 #include "battery.h"
 #include "wifi_icon.h"
@@ -850,20 +853,24 @@ static bool      s_menu_open    = false;
  * Use the MENU_IDX_* constants instead of bare integers everywhere
  * downstream so the two layouts stay in lock-step (mirrors the
  * SETTINGS_IDX_* convention used by the Settings submenu below). */
-#define MENU_IDX_SETTINGS        0
-#define MENU_IDX_BLE_STATUS      1
-#define MENU_IDX_BLE_SCAN        2
-#define MENU_IDX_WIFI_CONNECT    3
-#define MENU_IDX_WIFI_NEW        4
-#define MENU_IDX_WIFI_DISCONNECT 5
-#define MENU_IDX_GIT_SYNC        6
-#define MENU_IDX_DRAFTBOX        7
-#define MENU_IDX_KB_LAYOUT       8
+#define MENU_IDX_TODAY           0
+#define MENU_IDX_WEEK            1
+#define MENU_IDX_MONTH           2
+#define MENU_IDX_NOTES           3
+#define MENU_IDX_SETTINGS        4
+#define MENU_IDX_BLE_STATUS      5
+#define MENU_IDX_BLE_SCAN        6
+#define MENU_IDX_WIFI_CONNECT    7
+#define MENU_IDX_WIFI_NEW        8
+#define MENU_IDX_WIFI_DISCONNECT 9
+#define MENU_IDX_GIT_SYNC        10
+#define MENU_IDX_DRAFTBOX        11
+#define MENU_IDX_KB_LAYOUT       12
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-#define MENU_IDX_USB_MSC         9
-#define _MENU_NEXT_AFTER_USB_MSC 10
+#define MENU_IDX_USB_MSC         13
+#define _MENU_NEXT_AFTER_USB_MSC 14
 #else
-#define _MENU_NEXT_AFTER_USB_MSC 9
+#define _MENU_NEXT_AFTER_USB_MSC 13
 #endif
 #if defined(CONFIG_DRAFTLING_HAS_KERMIT)
 #define MENU_IDX_KERMIT          _MENU_NEXT_AFTER_USB_MSC
@@ -1021,6 +1028,14 @@ static bool s_layouts_picker_open      = false;
 static int  s_layouts_picker_sel       = 0;
 static int  s_layouts_picker_sel_prev  = -1;
 
+/* Date-and-time picker sub-list (Settings -> Date and time). Edits a
+ * local-time copy; only "Save" applies it to the system clock and the
+ * battery-backed RTC. */
+static bool      s_datetime_picker_open     = false;
+static int       s_datetime_picker_sel      = 0;
+static int       s_datetime_picker_sel_prev = -1;
+static struct tm s_datetime_edit;
+
 /* Passkey overlay objects */
 static lv_obj_t *s_passkey_panel = NULL;
 static lv_obj_t *s_passkey_label = NULL;
@@ -1033,14 +1048,14 @@ static lv_obj_t *s_save_cur      = NULL;   /* blinking cursor in name field */
 static bool      s_save_open     = false;
 static char      s_save_buf[128] = "";     /* editable filename (no directory) */
 static int       s_save_pos      = 0;      /* cursor position in s_save_buf (byte) */
-/* The same overlay renames the file browser's selected file (F2 or Alt+R):
+/* The same overlay renames the file browser's selected file (R or Alt+R):
  * s_rename_src then holds the full path of the file being renamed and
  * the panel is moved onto whichever screen is showing the browser. */
 static bool      s_save_is_rename = false;
 static char      s_rename_src[512] = "";
 /* Rename of a folder rather than a file (no document extension needed). */
 static bool      s_rename_is_dir  = false;
-/* Alt+N in the file browser: the overlay asks for a new folder's name. */
+/* D in the file browser: the overlay asks for a new folder's name. */
 static bool      s_save_is_mkdir  = false;
 /* Folder a "Save as" writes into: the document's own folder, or the
  * file browser's current folder for an untitled document. */
@@ -1298,13 +1313,28 @@ static lv_obj_t  *s_lbl_ble_dev_batt = NULL; /* BLE prompt screen */
  * colour LCD; the epdiy e-paper boards are unaffected per testing). */
 #if defined(CONFIG_DRAFTLING_MODEL_LILYGO_T5_EPD_S3_PRO_H752)
 #define DRAFTLING_BATT_PULL_MODE 1
-#else
-static lv_timer_t *s_batt_timer     = NULL;
-#define BATT_POLL_MS 5000  /* refresh battery every 5 s (so charging
-                              * state / plug-in events show up quickly
-                              * on backends that expose it, INA226 on
-                              * the M5Stack Tab5 in particular) */
 #endif
+#endif
+
+/* ---- Status bar clock ----
+ * The 24-hour time ("14:05", or "--:--" before the clock is set) left
+ * of the battery in the status bar of the editor and the file browser,
+ * and in the planner's (planner_ui_set_clock()). status_bar_layout()
+ * places it. Like the battery label it is only rewritten when its text
+ * changes, so it costs one small redraw a minute. */
+static lv_obj_t *s_lbl_clock    = NULL;  /* editor screen */
+static lv_obj_t *s_lbl_br_clock = NULL;  /* file browser screen */
+
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+/* One poll timer for the clock and, on boards with a battery monitor,
+ * the battery. The pull-model board (H752, above) has none: both ride
+ * its redraw points via sync_battery_labels(). */
+static lv_timer_t *s_status_timer   = NULL;
+#define STATUS_POLL_MS 5000  /* refresh every 5 s (so the clock is at
+                              * most 5 s late, and charging state /
+                              * plug-in events show up quickly on
+                              * backends that expose it, INA226 on
+                              * the M5Stack Tab5 in particular) */
 #endif
 
 /* ---- WiFi connectivity icon ----
@@ -1936,6 +1966,33 @@ static void cursor_blink_cb(lv_timer_t *timer)
 }
 #endif
 
+/* The string the clock labels currently show. */
+static char s_shown_clock[STATUS_BAR_CLOCK_LEN] = "";
+
+/* Show the current time on every clock label, if it changed. */
+static void sync_clock_labels(void)
+{
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    char clk[STATUS_BAR_CLOCK_LEN];
+    status_bar_clock_text(clk, sizeof(clk), &lt);
+    if (strcmp(s_shown_clock, clk) == 0) return;
+    if (s_lbl_clock)    lv_label_set_text(s_lbl_clock, clk);
+    if (s_lbl_br_clock) lv_label_set_text(s_lbl_br_clock, clk);
+    planner_ui_set_clock(clk);
+    strncpy(s_shown_clock, clk, sizeof(s_shown_clock) - 1);
+    s_shown_clock[sizeof(s_shown_clock) - 1] = '\0';
+}
+
+/* Paint the current time on every clock label, including ones created
+ * (empty) since the last update -- see build_screens(). */
+static void clock_labels_repaint(void)
+{
+    s_shown_clock[0] = '\0';
+    sync_clock_labels();
+}
+
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
 /* Build a battery level string for the status bar. */
 static void format_batt_str(char *buf, size_t len)
@@ -1977,14 +2034,18 @@ static void update_battery_cache(void)
     }
 }
 
+/* With no poll timer, the status bar clock is brought up to date at
+ * the same redraw points. */
 static void sync_battery_labels(void)
 {
+    sync_clock_labels();
     update_battery_cache();
     if (!s_batt_pending) return;
     s_batt_pending = false;
     if (s_lbl_dev_batt)    lv_label_set_text(s_lbl_dev_batt, s_cached_batt);
     if (s_lbl_br_dev_batt) lv_label_set_text(s_lbl_br_dev_batt, s_cached_batt);
     if (s_lbl_ble_dev_batt) lv_label_set_text(s_lbl_ble_dev_batt, s_cached_batt);
+    planner_ui_set_battery(s_cached_batt);
 }
 
 /* Paint the current value on every battery label, including ones
@@ -1998,9 +2059,9 @@ static void battery_labels_repaint(void)
 /* The string the battery labels currently show. */
 static char s_shown_batt[20] = "";
 
-static void batt_timer_cb(lv_timer_t *timer)
+/* The battery part of status_timer_cb(). */
+static void update_battery_labels(void)
 {
-    (void)timer;
     char batt[20];
     format_batt_str(batt, sizeof(batt));
     /* lv_label_set_text() dirties a label even when the new text is
@@ -2019,6 +2080,7 @@ static void batt_timer_cb(lv_timer_t *timer)
         if (s_lbl_dev_batt)    lv_label_set_text(s_lbl_dev_batt, batt);
         if (s_lbl_br_dev_batt) lv_label_set_text(s_lbl_br_dev_batt, batt);
         if (s_lbl_ble_dev_batt) lv_label_set_text(s_lbl_ble_dev_batt, batt);
+        planner_ui_set_battery(batt);
         strncpy(s_shown_batt, batt, sizeof(s_shown_batt) - 1);
         s_shown_batt[sizeof(s_shown_batt) - 1] = '\0';
     }
@@ -2032,7 +2094,7 @@ static void batt_timer_cb(lv_timer_t *timer)
 static void battery_labels_repaint(void)
 {
     s_shown_batt[0] = '\0';
-    batt_timer_cb(NULL);
+    update_battery_labels();
 }
 /* No-op on the timer-driven boards: the call sites below are shared,
  * but only the H752 pull model needs an explicit sync. */
@@ -2043,6 +2105,17 @@ static inline void sync_battery_labels(void) {}
  * call sites compile to nothing. */
 static inline void sync_battery_labels(void) {}
 static inline void battery_labels_repaint(void) {}
+#endif
+
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+static void status_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    update_battery_labels();
+#endif
+    sync_clock_labels();
+}
 #endif
 
 /* Update the WiFi connectivity icons in both status bars: shown when
@@ -3993,7 +4066,13 @@ static void browser_status_hint(char *buf, size_t buf_size)
         return;
     }
 #endif
-    snprintf(buf, buf_size, "F1:Menu  N:New  Alt+N:Folder  F2:Rename");
+    if (s_move_src[0]) {
+        const char *slash = strrchr(s_move_src, '/');
+        snprintf(buf, buf_size, "Moving %.24s  T:Drop here  Esc:Cancel",
+                 slash ? slash + 1 : s_move_src);
+        return;
+    }
+    snprintf(buf, buf_size, "F1:Menu  N:New  D:Folder  R:Rename  T:Move");
 }
 
 /* Full path of the folder the file browser shows (no trailing slash). */
@@ -4203,6 +4282,7 @@ extern "C" void editor_ui_show_file_browser(void)
          * and swallows keystrokes, so make the editor screen active and
          * paint both panes before overlaying the selector. */
         s_editor_screen_active = true;
+        planner_ui_deactivate();
         if (lv_scr_act() != s_scr) {
             lv_scr_load(s_scr);
             editor_ui_refresh();
@@ -4215,6 +4295,7 @@ extern "C" void editor_ui_show_file_browser(void)
      * refresh gating switch over immediately, regardless of the focused
      * pane's per-document editor mode (see s_editor_screen_active). */
     s_editor_screen_active = false;
+    planner_ui_deactivate();
 
     /* Single-pane: opening a file replaces the current document, so
      * close it now (historical behavior; the buffer is reloaded
@@ -4257,6 +4338,7 @@ extern "C" void editor_ui_show_file_browser(void)
 extern "C" void editor_ui_show_editor(void)
 {
     s_editor_screen_active = true;
+    planner_ui_deactivate();
     editor_set_mode(EDITOR_MODE_EDITING);
     sync_battery_labels();
     lv_scr_load(s_scr);
@@ -4277,27 +4359,29 @@ extern "C" void editor_ui_show_editor(void)
     editor_ui_refresh();
 }
 
-/* Available pixel width for the editor's bottom status label.
- * Reserves room on the right for the battery percentage (when the
- * board has a battery) and the small WiFi icon, so the status text
- * never overlaps them and -- importantly -- never wraps to a second
- * line (which would extend past SCR_H and cause LVGL to draw a
- * screen scrollbar). The numbers mirror the layout in build_screens()
- * for s_lbl_dev_batt and s_img_wifi. */
+/* Where the WiFi icon, the clock and the battery percentage (when the
+ * board has a battery) go at the right end of the editor and browser
+ * status bars, and how much width that leaves for the status text. */
+static void bar_layout(status_bar_layout_t *out)
+{
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    const bool has_batt = true;
+#else
+    const bool has_batt = false;
+#endif
+    status_bar_layout(SCR_W, char_width_for_font(FONT_11), WIFI_ICON_W,
+                      has_batt, out);
+}
+
+/* Available pixel width for the editor's bottom status label, so the
+ * status text never overlaps the indicators on the right and --
+ * importantly -- never wraps to a second line (which would extend past
+ * SCR_H and cause LVGL to draw a screen scrollbar). */
 static int status_avail_width(void)
 {
-    int right_reserved;
-#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
-    /* Battery occupies SCR_W-80..SCR_W-2; WiFi icon sits at SCR_W-95.
-     * Leave a 2 px gap to the wifi icon. */
-    right_reserved = 95 + 2;
-#else
-    /* No battery; only the wifi icon at SCR_W-15. */
-    right_reserved = 15 + 2;
-#endif
-    int avail = SCR_W - 2 /* left margin */ - right_reserved;
-    if (avail < 0) avail = 0;
-    return avail;
+    status_bar_layout_t bar;
+    bar_layout(&bar);
+    return bar.text_w;
 }
 
 /* Hide the editor's status label when its current text is wider than
@@ -4322,6 +4406,12 @@ static void update_status_visibility(void)
  * so the auto-clear timer and the initial label setup agree. */
 #define EDITOR_DEFAULT_STATUS \
     "F1:Menu Ctrl+S:Save Ctrl+L:Layout Ctrl+G:Git Esc:Files"
+#define EDITOR_CAPS_STATUS "CAPS  F1:Menu Ctrl+S:Save Esc:Files"
+
+static const char *editor_status_text(void)
+{
+    return kb_layout_caps() ? EDITOR_CAPS_STATUS : EDITOR_DEFAULT_STATUS;
+}
 
 /* Restore the status bar of both screens to its standard, no-message
  * state (the same text the screens show when they are first entered).
@@ -4332,7 +4422,7 @@ static void update_status_visibility(void)
 static void restore_default_status(void)
 {
     if (s_lbl_status) {
-        lv_label_set_text(s_lbl_status, EDITOR_DEFAULT_STATUS);
+        lv_label_set_text(s_lbl_status, editor_status_text());
     }
     update_status_visibility();
     if (s_lbl_br_status) {
@@ -4531,6 +4621,10 @@ struct menu_hotkey_t {
 };
 
 static const menu_hotkey_t s_menu_hotkeys[] = {
+    { MENU_IDX_TODAY,           't', 0  },  /* "Today (F2)" */
+    { MENU_IDX_WEEK,            'e', 1  },  /* "Week (F3)" */
+    { MENU_IDX_MONTH,           'm', 0  },  /* "Month (F4)" */
+    { MENU_IDX_NOTES,           'o', 1  },  /* "Notes (F5)" */
     { MENU_IDX_SETTINGS,        's', 0  },  /* "Settings..." */
     { MENU_IDX_BLE_SCAN,        'l', 1  },  /* "BLE: Start scan" */
     { MENU_IDX_WIFI_CONNECT,    'w', 0  },  /* "WiFi: ..." */
@@ -4629,20 +4723,26 @@ static void refresh_menu_items(void)
 
     char buf[80];
 
-    /* 0: Settings */
+    /* Views */
+    lv_list_add_btn(s_menu_list, NULL, "Today (F2)");
+    lv_list_add_btn(s_menu_list, NULL, "Week (F3)");
+    lv_list_add_btn(s_menu_list, NULL, "Month (F4)");
+    lv_list_add_btn(s_menu_list, NULL, "Notes (F5)");
+
+    /* Settings */
     lv_list_add_btn(s_menu_list, NULL, "Settings...");
 
-    /* 1: BLE status */
+    /* BLE status */
     snprintf(buf, sizeof(buf), "BLE: %s",
              ble_keyboard_is_connected()
                  ? ble_keyboard_get_device_name()
                  : "not connected");
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 2: BLE scan */
+    /* BLE scan */
     lv_list_add_btn(s_menu_list, NULL, "BLE: Start scan");
 
-    /* 3: WiFi status / connect to the configured (wifi.cfg / NVS) SSID */
+    /* WiFi status / connect to the configured (wifi.cfg / NVS) SSID */
     if (wifi_manager_is_connected()) {
         snprintf(buf, sizeof(buf), "WiFi: %s (%s)",
                  wifi_manager_get_ssid(), wifi_manager_get_ip());
@@ -4656,27 +4756,27 @@ static void refresh_menu_items(void)
     }
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 4: WiFi scan / pick a new network */
+    /* WiFi scan / pick a new network */
     lv_list_add_btn(s_menu_list, NULL, "WiFi: New connection...");
 
-    /* 5: WiFi disconnect */
+    /* WiFi disconnect */
     lv_list_add_btn(s_menu_list, NULL, "WiFi: Disconnect");
 
-    /* 6: Git sync */
+    /* Git sync */
     snprintf(buf, sizeof(buf), "Git Sync%s",
              git_sync_is_configured() ? "" : " (not configured)");
     lv_list_add_btn(s_menu_list, NULL, buf);
 
-    /* 7: Draftbox one-time password -> git.cfg */
+    /* Draftbox one-time password -> git.cfg */
     lv_list_add_btn(s_menu_list, NULL, "Connect a Draftbox repository...");
 
-    /* 8: Keyboard layout */
+    /* Keyboard layout */
     snprintf(buf, sizeof(buf), "Keyboard: %s  (Enter to cycle)",
              kb_layout_name(kb_layout_get()));
     lv_list_add_btn(s_menu_list, NULL, buf);
 
 #if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
-    /* 9: SD card via USB. Shows the staged choice (s_usbmsc_pending_mode),
+    /* SD card via USB. Shows the staged choice (s_usbmsc_pending_mode),
      * not necessarily what usb_msc is doing right now -- see the
      * picker opened from menu_activate_item() and applied by
      * commit_usb_msc_pending_mode(). See usbmsc_item_disabled() for
@@ -4842,13 +4942,47 @@ static void commit_usb_msc_pending_mode(void)
 }
 #endif
 
-static void close_menu(void)
+/* ---- Views ----
+ * Today, Week and Month live in planner_ui; Notes is the editor / file
+ * browser. While a planner view is up, s_editor_screen_active still
+ * records which Notes screen to come back to. The open document stays
+ * in memory, so nothing is saved or closed by switching. */
+static void show_planner_view(planner_view_t view)
 {
-    s_menu_open = false;
+#if defined(CONFIG_DRAFTLING_HAS_BATTERY)
+    const bool has_batt = true;
+#else
+    const bool has_batt = false;
+#endif
+    const planner_ui_style_t style = {
+        FONT_18, FONT_14, FONT_11, theme_fg(), theme_bg(), STATUS_H, has_batt
+    };
+    lv_obj_t *scr = planner_ui_render(view, &style);
+#if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
+    /* Same missing-repaint bug as show_menu() -- see its comment. */
+    display_clear(0xFF);
+    lv_obj_invalidate(scr);
+#endif
+    lv_scr_load(scr);
+}
+
+/* Not editor_ui_show_file_browser() directly when a document is open:
+ * it closes the document. */
+static void show_notes_view(void)
+{
     if (s_editor_screen_active)
         editor_ui_show_editor();
     else
         editor_ui_show_file_browser();
+}
+
+static void close_menu(void)
+{
+    s_menu_open = false;
+    if (planner_ui_is_active())
+        show_planner_view(planner_ui_current());
+    else
+        show_notes_view();
 }
 
 /* ---- Settings screen ---- */
@@ -4920,9 +5054,10 @@ static int find_timeout_option(uint32_t sec)
 #define SETTINGS_IDX_MARGIN_TOP    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 2)
 #define SETTINGS_IDX_MARGIN_BOTTOM (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 3)
 /* "Sleep now" used to live here; it now lives in the F1 menu. */
-#define SETTINGS_IDX_RESET    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 4)
-#define SETTINGS_IDX_BACK     (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 5)
-#define SETTINGS_ITEM_COUNT   (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 6)
+#define SETTINGS_IDX_DATETIME (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 4)
+#define SETTINGS_IDX_RESET    (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 5)
+#define SETTINGS_IDX_BACK     (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 6)
+#define SETTINGS_ITEM_COUNT   (_SETTINGS_NEXT_AFTER_UPSIDE_DOWN + 7)
 
 static void refresh_settings_items(void)
 {
@@ -5034,6 +5169,16 @@ static void refresh_settings_items(void)
     snprintf(buf, sizeof(buf), "Margin bottom: %dpx (restart to apply)", s_margin_bottom);
     lv_list_add_btn(s_settings_list, NULL, buf);
 
+    /* Date and time (local time zone) */
+    {
+        time_t now = time(NULL);
+        struct tm lt;
+        localtime_r(&now, &lt);
+        snprintf(buf, sizeof(buf), "Date and time: %04d-%02d-%02d %02d:%02d (Enter to set)",
+                 lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+        lv_list_add_btn(s_settings_list, NULL, buf);
+    }
+
     /* Factory reset */
     if (s_factory_reset_confirm) {
         lv_list_add_btn(s_settings_list, NULL,
@@ -5142,6 +5287,204 @@ static void close_layouts_picker(void)
     refresh_settings_items();
 }
 
+/* ---- Date-and-time picker ----
+ * Same reused-list pattern as the layouts picker: Up/Down pick a row,
+ * Left/Right change the highlighted field, Enter on "Save" applies.
+ * Rows: Year, Month, Day, Hour, Minute, Save, Sync time now, Cancel,
+ * then a status line (clock chip, last internet sync) that cannot be
+ * selected. */
+#define DT_ROW_YEAR   0
+#define DT_ROW_MONTH  1
+#define DT_ROW_DAY    2
+#define DT_ROW_HOUR   3
+#define DT_ROW_MINUTE 4
+#define DT_ROW_SAVE   5
+#define DT_ROW_SYNC   6
+#define DT_ROW_CANCEL 7
+#define DT_ROW_COUNT  8   /* selectable rows; the status line follows */
+
+/* Result of the last "Sync time now", shown in the status line. */
+static char s_datetime_sync_msg[48];
+static volatile bool s_datetime_sync_running = false;
+
+static int datetime_days_in_month(int year, int mon0)
+{
+    static const int days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    bool leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    return days[mon0] + ((mon0 == 1 && leap) ? 1 : 0);
+}
+
+static void refresh_datetime_picker_items(void)
+{
+    lv_obj_clean(s_settings_list);
+    char buf[48];
+    const struct tm *t = &s_datetime_edit;
+    snprintf(buf, sizeof(buf), "Year: %04d", t->tm_year + 1900);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Month: %02d", t->tm_mon + 1);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Day: %02d", t->tm_mday);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Hour: %02d", t->tm_hour);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    snprintf(buf, sizeof(buf), "Minute: %02d", t->tm_min);
+    lv_list_add_btn(s_settings_list, NULL, buf);
+    lv_list_add_btn(s_settings_list, NULL, "  Save (Enter)");
+    lv_list_add_btn(s_settings_list, NULL, "  Sync time now (WiFi)");
+    lv_list_add_btn(s_settings_list, NULL, "  Cancel (Esc)");
+
+    const char *chip = "none";
+    switch (time_sync_rtc_status()) {
+    case TIME_SYNC_RTC_OK:          chip = "OK"; break;
+    case TIME_SYNC_RTC_TIME_LOST:   chip = "time was lost"; break;
+    case TIME_SYNC_RTC_NO_RESPONSE: chip = "not responding"; break;
+    default: break;
+    }
+    char status[128];
+    if (s_datetime_sync_msg[0]) {
+        snprintf(status, sizeof(status), "Clock chip: %s. %s", chip,
+                 s_datetime_sync_msg);
+    } else {
+        time_t last = time_sync_last_sntp();
+        if (last) {
+            struct tm lt;
+            localtime_r(&last, &lt);
+            snprintf(status, sizeof(status),
+                     "Clock chip: %s. Internet sync: %02d-%02d %02d:%02d",
+                     chip, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+        } else {
+            snprintf(status, sizeof(status),
+                     "Clock chip: %s. No internet sync since boot", chip);
+        }
+    }
+    lv_list_add_btn(s_settings_list, NULL, status);
+    apply_list_selection_styles(s_settings_list, s_datetime_picker_sel);
+    s_datetime_picker_sel_prev = s_datetime_picker_sel;
+
+    sync_battery_labels();
+}
+
+static void update_datetime_picker_highlight(void)
+{
+    update_list_highlight(s_settings_list, s_datetime_picker_sel,
+                          s_datetime_picker_sel_prev);
+    s_datetime_picker_sel_prev = s_datetime_picker_sel;
+}
+
+static void load_datetime_edit_from_clock(void)
+{
+    time_t now = time(NULL);
+    localtime_r(&now, &s_datetime_edit);
+    if (s_datetime_edit.tm_year + 1900 < 2025) {
+        /* Clock never set: start from a sensible date, not 1970. */
+        s_datetime_edit = {};
+        s_datetime_edit.tm_year = 2026 - 1900;
+        s_datetime_edit.tm_mday = 1;
+    }
+    s_datetime_edit.tm_sec = 0;
+}
+
+static void open_datetime_picker(void)
+{
+    load_datetime_edit_from_clock();
+    if (!s_datetime_sync_running) s_datetime_sync_msg[0] = '\0';
+    s_datetime_picker_sel = 0;
+    s_datetime_picker_open = true;
+    refresh_datetime_picker_items();
+}
+
+static void close_datetime_picker(void)
+{
+    s_datetime_picker_open = false;
+    refresh_settings_items();
+}
+
+/* Step the highlighted field by dir (+1 / -1), wrapping within range. */
+static void datetime_adjust(int dir)
+{
+    struct tm *t = &s_datetime_edit;
+    switch (s_datetime_picker_sel) {
+    case DT_ROW_YEAR:
+        t->tm_year += dir;
+        if (t->tm_year < 2025 - 1900) t->tm_year = 2099 - 1900;
+        if (t->tm_year > 2099 - 1900) t->tm_year = 2025 - 1900;
+        break;
+    case DT_ROW_MONTH:
+        t->tm_mon = (t->tm_mon + dir + 12) % 12;
+        break;
+    case DT_ROW_DAY: {
+        int n = datetime_days_in_month(t->tm_year + 1900, t->tm_mon);
+        t->tm_mday = ((t->tm_mday - 1 + dir + n) % n) + 1;
+        break;
+    }
+    case DT_ROW_HOUR:
+        t->tm_hour = (t->tm_hour + dir + 24) % 24;
+        break;
+    case DT_ROW_MINUTE:
+        t->tm_min = (t->tm_min + dir + 60) % 60;
+        break;
+    default:
+        return;
+    }
+    /* Changing month/year can leave the day past the month's end. */
+    int n = datetime_days_in_month(t->tm_year + 1900, t->tm_mon);
+    if (t->tm_mday > n) t->tm_mday = n;
+    refresh_datetime_picker_items();
+}
+
+static void save_datetime_picker(void)
+{
+    struct tm t = s_datetime_edit;
+    t.tm_isdst = -1;   /* let mktime decide from the TZ rules */
+    time_t utc = mktime(&t);
+    esp_err_t err = time_sync_set(utc);
+    ESP_LOGI(TAG, "Date and time set from Settings: %s", esp_err_to_name(err));
+    close_datetime_picker();
+}
+
+/* "Sync time now": connecting to WiFi blocks for up to ~30 s, so it
+ * runs on its own task, like wifi_connect_task(). */
+static void datetime_sync_task(void *arg)
+{
+    (void)arg;
+    esp_err_t err = time_sync_with_saved_wifi(10000);
+    if (draftling_lvgl_port_lock(2000)) {
+        if (err == ESP_OK) {
+            s_datetime_sync_msg[0] = '\0';   /* status shows the sync time */
+        } else if (err == ESP_ERR_NOT_FOUND) {
+            snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                     "Sync failed: no saved WiFi");
+        } else {
+            snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                     "Sync failed: %s", esp_err_to_name(err));
+        }
+        s_datetime_sync_running = false;
+        if (s_datetime_picker_open) {
+            load_datetime_edit_from_clock();
+            refresh_datetime_picker_items();
+        }
+        draftling_lvgl_port_unlock();
+    } else {
+        s_datetime_sync_running = false;
+    }
+    vTaskDelete(NULL);
+}
+
+static void start_datetime_sync(void)
+{
+    if (s_datetime_sync_running) return;
+    s_datetime_sync_running = true;
+    snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+             "Syncing over WiFi...");
+    if (xTaskCreatePinnedToCore(datetime_sync_task, "time_sync_ui",
+                                4 * 1024, NULL, 3, NULL, 0) != pdPASS) {
+        s_datetime_sync_running = false;
+        snprintf(s_datetime_sync_msg, sizeof(s_datetime_sync_msg),
+                 "Sync failed: no memory");
+    }
+    refresh_datetime_picker_items();
+}
+
 /* ---- Restart-to-apply prompt ----
  * Renders into the same s_settings_list widget while
  * s_restart_confirm_open is true -- same reused-list pattern as the
@@ -5196,6 +5539,7 @@ static void show_settings(void)
     s_theme_picker_open = false;
 #endif
     s_layouts_picker_open = false;
+    s_datetime_picker_open = false;
     refresh_settings_items();
     sync_battery_labels();
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
@@ -5213,6 +5557,7 @@ static void close_settings(void)
     s_theme_picker_open = false;
 #endif
     s_layouts_picker_open = false;
+    s_datetime_picker_open = false;
     show_menu();
 }
 
@@ -5389,6 +5734,8 @@ static void settings_activate_item(int idx)
     } else if (idx == SETTINGS_IDX_MAXFILE) {
         /* Read-only display of the dynamically-sized editor buffer.
          * Enter is a no-op; the value is fixed at editor_init() time. */
+    } else if (idx == SETTINGS_IDX_DATETIME) {
+        open_datetime_picker();
     } else if (idx == SETTINGS_IDX_LAYOUTS) {
         /* Open the active-layouts checklist sub-list. Each row toggles
          * immediately on Enter (applied + persisted on the spot); Esc
@@ -5424,6 +5771,41 @@ static void settings_activate_item(int idx)
 
 static void handle_settings_key(const kb_event_t *ev)
 {
+    if (s_datetime_picker_open) {
+        switch (ev->keycode) {
+        case KB_KEY_UP:
+            if (s_datetime_picker_sel > 0) s_datetime_picker_sel--;
+            update_datetime_picker_highlight();
+            break;
+        case KB_KEY_DOWN:
+            if (s_datetime_picker_sel < DT_ROW_COUNT - 1) s_datetime_picker_sel++;
+            update_datetime_picker_highlight();
+            break;
+        case KB_KEY_LEFT:
+            datetime_adjust(-1);
+            break;
+        case KB_KEY_RIGHT:
+            datetime_adjust(1);
+            break;
+        case KB_KEY_ENTER:
+            if (s_datetime_picker_sel == DT_ROW_CANCEL) {
+                close_datetime_picker();
+            } else if (s_datetime_picker_sel == DT_ROW_SYNC) {
+                start_datetime_sync();
+            } else {
+                /* Enter on any field also saves: fewer key presses. */
+                save_datetime_picker();
+            }
+            break;
+        case KB_KEY_ESCAPE:
+            close_datetime_picker();
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
     if (s_restart_confirm_open) {
         switch (ev->keycode) {
         case KB_KEY_UP:
@@ -5548,7 +5930,8 @@ static void handle_settings_key(const kb_event_t *ev)
     }
 
     switch (ev->keycode) {
-    case KB_KEY_UP:     /* wraps from the first row to the last */
+    case KB_KEY_UP:
+        /* Wraps from the first row to the last. */
         s_settings_sel = (s_settings_sel > 0) ? s_settings_sel - 1
                                               : SETTINGS_ITEM_COUNT - 1;
         if (s_factory_reset_confirm) {
@@ -5560,7 +5943,8 @@ static void handle_settings_key(const kb_event_t *ev)
             update_settings_highlight();
         }
         break;
-    case KB_KEY_DOWN:   /* wraps from the last row to the first */
+    case KB_KEY_DOWN:
+        /* Wraps from the last row to the first. */
         s_settings_sel = (s_settings_sel < SETTINGS_ITEM_COUNT - 1)
                          ? s_settings_sel + 1 : 0;
         if (s_factory_reset_confirm) {
@@ -6521,6 +6905,23 @@ static void open_fmt_picker(void)
 static void menu_activate_item(int idx)
 {
     switch (idx) {
+    case MENU_IDX_TODAY:
+        s_menu_open = false;
+        show_planner_view(PLANNER_VIEW_TODAY);
+        break;
+    case MENU_IDX_WEEK:
+        s_menu_open = false;
+        planner_ui_go_to_this_week();
+        show_planner_view(PLANNER_VIEW_WEEK);
+        break;
+    case MENU_IDX_MONTH:
+        s_menu_open = false;
+        show_planner_view(PLANNER_VIEW_MONTH);
+        break;
+    case MENU_IDX_NOTES:
+        s_menu_open = false;
+        show_notes_view();
+        break;
     case MENU_IDX_SETTINGS:
         show_settings();
         break;
@@ -6650,6 +7051,8 @@ static void menu_activate_item(int idx)
          * the dialog is drawn on the editor screen it lives on. With no
          * unsaved changes (or if the menu was opened from the file
          * browser) go straight to deep sleep. */
+        if (s_editor_screen_active && editor_is_modified())
+            planner_ui_deactivate();
         close_menu();
         if (s_editor_screen_active && editor_is_modified()) {
             show_sleep_prompt();
@@ -6771,11 +7174,13 @@ static void handle_menu_key(const kb_event_t *ev)
 #endif
 
     switch (ev->keycode) {
-    case KB_KEY_UP:     /* wraps from the first row to the last */
+    case KB_KEY_UP:
+        /* Wraps from the first row to the last. */
         s_menu_sel = (s_menu_sel > 0) ? s_menu_sel - 1 : MENU_ITEM_COUNT - 1;
         update_menu_highlight();
         break;
-    case KB_KEY_DOWN:   /* wraps from the last row to the first */
+    case KB_KEY_DOWN:
+        /* Wraps from the last row to the first. */
         s_menu_sel = (s_menu_sel < MENU_ITEM_COUNT - 1) ? s_menu_sel + 1 : 0;
         update_menu_highlight();
         break;
@@ -6861,6 +7266,7 @@ static void help_heading(std::string &out, const char *title)
 static void help_common_rows(std::string &out, int cols, int kc)
 {
     help_row(out, cols, kc, "F1, Ctrl+M", "Menu");
+    help_row(out, cols, kc, "F2 to F5", "Views: Today, Week, Month, Notes");
     help_row(out, cols, kc, "F10", "This help");
     help_row(out, cols, kc, "Ctrl+1", "Single pane");
     help_row(out, cols, kc, "Ctrl+2", "Split into two equal panes");
@@ -6917,9 +7323,9 @@ static void build_help_text(std::string &out, help_origin_t origin, int cols)
             help_row(out, cols, kc, "Esc", "Back to the editor");
         help_row(out, cols, kc, "Backspace", "Up one folder (same as the \"..\" row)");
         help_row(out, cols, kc, "N, Ctrl+N", "New file: Markdown, Fountain or plain text");
-        help_row(out, cols, kc, "Alt+N", "New folder");
-        help_row(out, cols, kc, "Ctrl+X, Ctrl+V", "Move a file: Ctrl+X on it, open a folder, Ctrl+V (Esc cancels)");
-        help_row(out, cols, kc, "F2, Alt+R", "Rename the file or folder");
+        help_row(out, cols, kc, "D", "New folder");
+        help_row(out, cols, kc, "T", "Move a file: T on it, open a folder, T again (Esc cancels)");
+        help_row(out, cols, kc, "R, Alt+R", "Rename the file or folder");
         help_row(out, cols, kc, "Del, Alt+D", "Delete the file or empty folder (with Git sync: files only once pushed)");
         help_row(out, cols, kc, "Alt+L", "Set or remove a password for opening the file");
         help_row(out, cols, kc, "Alt+I", "File information: words, size, Git status");
@@ -7350,6 +7756,10 @@ static void show_browser_fileinfo(void)
 static void close_help(void)
 {
     s_help_open = false;
+    if (planner_ui_is_active()) {
+        show_planner_view(planner_ui_current());
+        return;
+    }
     switch (s_help_origin) {
     case HELP_FROM_EDITOR:
         editor_ui_show_editor();
@@ -7510,7 +7920,7 @@ static void show_browser_name_prompt(const char *hdr, const char *initial)
     refresh_save_prompt();
 }
 
-/* F2 / Alt+R in the file browser: ask for a new name for the selected
+/* R / Alt+R in the file browser: ask for a new name for the selected
  * file or folder. */
 static void show_rename_prompt(void)
 {
@@ -7530,7 +7940,7 @@ static void show_rename_prompt(void)
                                              : "Rename to (Enter/Esc):", name);
 }
 
-/* Alt+N in the file browser: ask for the name of a new folder. */
+/* D in the file browser: ask for the name of a new folder. */
 static void show_mkdir_prompt(void)
 {
     if (!s_save_panel || !s_browser_list) return;
@@ -9460,7 +9870,7 @@ static void show_inpane_browser(void)
     /* The editor screen stays active (the other pane keeps rendering);
      * keystrokes are rerouted by the s_inpane_browser_open check in
      * process_key_event. */
-    editor_ui_set_status("Open into pane: Enter  N:new  F2:rename  Esc:cancel");
+    editor_ui_set_status("Open into pane: Enter  N:new  R:rename  Esc:cancel");
 }
 
 /* Dismiss the in-pane file selector and restore the full-screen list
@@ -9514,6 +9924,10 @@ static void browser_activate_item(int row)
     if (idx < 0 || idx >= s_browser_count) return;
     if (s_browser_entries[idx].is_dir) {
         browser_enter_dir(s_browser_entries[idx].name);
+        return;
+    }
+    if (s_move_src[0]) {
+        editor_ui_set_status("Moving a file: T drops it here, Esc cancels");
         return;
     }
 
@@ -9612,7 +10026,7 @@ static void browser_cut_file(void)
         return;
     }
     char msg[96];
-    snprintf(msg, sizeof(msg), "Moving %.40s: open a folder, then Ctrl+V",
+    snprintf(msg, sizeof(msg), "Moving %.40s  T:Drop here  Esc:Cancel",
              s_browser_entries[idx].name);
     editor_ui_set_status(msg);
 }
@@ -9620,10 +10034,6 @@ static void browser_cut_file(void)
 /* Ctrl+V in the file browser: move the Ctrl+X file into this folder. */
 static void browser_paste_file(void)
 {
-    if (!s_move_src[0]) {
-        editor_ui_set_status("Nothing to move -- Ctrl+X on a file first");
-        return;
-    }
     const char *slash = strrchr(s_move_src, '/');
     const char *name = slash ? slash + 1 : s_move_src;
     char dest[320];
@@ -9741,15 +10151,6 @@ static void handle_browser_key(const kb_event_t *ev)
             show_menu();
             return;
         }
-        if (ck == 'x') {
-            /* Ctrl+X / Ctrl+V: move a file into another folder. */
-            browser_cut_file();
-            return;
-        }
-        if (ck == 'v') {
-            browser_paste_file();
-            return;
-        }
         if (ck == 'w') {
             if (!wifi_manager_is_connected()) {
                 editor_ui_set_status("WiFi: connecting...");
@@ -9808,20 +10209,25 @@ static void handle_browser_key(const kb_event_t *ev)
                                                  : NEWDOC_BROWSER);
         return;
     }
-    if (ch == 'n' && alt && !ctrl) {
-        /* Alt+N: new folder inside the one shown. */
-        show_mkdir_prompt();
-        return;
-    }
     if (ev->keycode == KB_KEY_BACKSPACE && !ctrl && !alt) {
         /* Backspace: up one folder (same as the ".." row). */
         browser_go_up();
         return;
     }
     if (ev->keycode == KB_KEY_ESCAPE && s_move_src[0]) {
-        /* Esc forgets a pending Ctrl+X move. */
+        /* Esc forgets a pending move. */
         s_move_src[0] = '\0';
         editor_ui_set_status("Move cancelled");
+        return;
+    }
+    if (ch == 'd' && !alt && !ctrl) {
+        show_mkdir_prompt();
+        return;
+    }
+    if (ch == 't' && !alt && !ctrl) {
+        /* T on a file picks it up; T again drops it in the folder shown. */
+        if (s_move_src[0]) browser_paste_file();
+        else browser_cut_file();
         return;
     }
     if ((ev->keycode == KB_KEY_DELETE && !ctrl && !alt) || (ch == 'd' && alt && !ctrl)) {
@@ -9840,8 +10246,8 @@ static void handle_browser_key(const kb_event_t *ev)
         show_browser_fileinfo();
         return;
     }
-    if (ev->keycode == KB_KEY_F2 || (ch == 'r' && alt && !ctrl)) {
-        /* F2 / Alt+R: rename the selected file (and its metadata
+    if (ch == 'r' && !ctrl) {
+        /* R / Alt+R: rename the selected file (and its metadata
          * sidecar). */
         show_rename_prompt();
         return;
@@ -9851,7 +10257,8 @@ static void handle_browser_key(const kb_event_t *ev)
     if (child_count == 0) return;
 
     switch (ev->keycode) {
-    case KB_KEY_UP:     /* wraps from the first item to the last */
+    case KB_KEY_UP:
+        /* Wraps from the first item to the last. */
         s_browser_sel = (s_browser_sel > 0) ? s_browser_sel - 1
                                             : (int)child_count - 1;
         /* Selecting a different file is one of the two conditions
@@ -9861,7 +10268,8 @@ static void handle_browser_key(const kb_event_t *ev)
          * text we just restored is not overwritten 3 seconds later. */
         cancel_status_clear_and_restore();
         break;
-    case KB_KEY_DOWN:   /* wraps from the last item to the first */
+    case KB_KEY_DOWN:
+        /* Wraps from the last item to the first. */
         s_browser_sel = (s_browser_sel < (int)child_count - 1)
                         ? s_browser_sel + 1 : 0;
         cancel_status_clear_and_restore();
@@ -9949,6 +10357,67 @@ static void handle_inpane_browser_key(const kb_event_t *ev)
 }
 
 /* Process a single key event (must be called with LVGL lock held). */
+/* F2-F5 switch views from any screen. Returns true when the key was
+ * one of them, used or not. They do nothing during a prompt or inside a
+ * sub-picker, so a half-answered question is never dropped. */
+static bool handle_view_key(const kb_event_t *ev)
+{
+    if (ev->keycode < KB_KEY_F2 || ev->keycode > KB_KEY_F5) return false;
+
+    if (lv_scr_act() == s_scr_ble_prompt) return true;
+    if (s_msg_open || s_save_open || s_newfmt_open || s_del_open || s_pw_open ||
+        s_exit_open || s_search_open || s_wifi_pw_open || s_dbx_open) {
+        return true;
+    }
+    bool menu_sub = s_wifi_scan_picker_open || s_fmt_step != FMT_STEP_NONE;
+#if defined(CONFIG_DRAFTLING_HAS_USB_MSC)
+    menu_sub = menu_sub || s_usbmsc_picker_open;
+#endif
+#if defined(CONFIG_DRAFTLING_HAS_KERMIT)
+    menu_sub = menu_sub || s_kermit_picker_open;
+#endif
+    if (s_menu_open && menu_sub) return true;
+
+    /* s_restart_needed: leaving Settings must go through its prompt. */
+    bool settings_sub = s_restart_needed || s_restart_confirm_open ||
+                        s_factory_reset_confirm || s_layouts_picker_open ||
+                        s_datetime_picker_open;
+#if defined(CONFIG_DRAFTLING_DISPLAY_COLOR)
+    settings_sub = settings_sub || s_theme_picker_open;
+#endif
+    if (s_settings_open && settings_sub) return true;
+
+    planner_ui_commit_pending();
+    bool on_notes = !planner_ui_is_active() && !s_menu_open &&
+                    !s_settings_open && !s_help_open;
+    s_menu_open = false;
+    s_settings_open = false;
+    s_help_open = false;
+
+    switch (ev->keycode) {
+    case KB_KEY_F2: show_planner_view(PLANNER_VIEW_TODAY); break;
+    case KB_KEY_F3:
+        planner_ui_go_to_this_week();
+        show_planner_view(PLANNER_VIEW_WEEK);
+        break;
+    case KB_KEY_F4: show_planner_view(PLANNER_VIEW_MONTH); break;
+    default:
+        if (!on_notes) show_notes_view();
+        break;
+    }
+    return true;
+}
+
+static void handle_planner_key(const kb_event_t *ev)
+{
+    if (ev->keycode == KB_KEY_F1) {
+        planner_ui_commit_pending();
+        show_menu();
+    } else {
+        planner_ui_handle_key(ev);
+    }
+}
+
 static void process_key_event(const kb_event_t *ev)
 {
     /* Normalize Keypad Enter to regular Enter so all handlers
@@ -9975,6 +10444,8 @@ static void process_key_event(const kb_event_t *ev)
     }
 
     const kb_event_t *e = &norm;
+
+    if (handle_view_key(e)) return;
 
     if (s_msg_open) {
         /* Modal over whatever screen it was raised on. */
@@ -10005,6 +10476,8 @@ static void process_key_event(const kb_event_t *ev)
         handle_help_key(e);
     } else if (s_menu_open) {
         handle_menu_key(e);
+    } else if (planner_ui_is_active()) {
+        handle_planner_key(e);
     } else if (s_inpane_browser_open) {
         /* Split-mode in-pane file selector overlays the editor screen
          * (s_editor_screen_active stays true), so it must be checked
@@ -10085,6 +10558,13 @@ static void key_drain_cb(lv_timer_t *timer)
 
     int drained = 0;
     while (xQueueReceive(s_key_queue, &ev, 0) == pdTRUE) {
+        /* Here rather than in process_key_event() so that holding the key
+         * doesn't flip it on every repeat. The event still goes on, so the
+         * current screen redraws. */
+        if (ev.keycode == KB_KEY_CAPS_LOCK) {
+            editor_ui_set_status(kb_layout_toggle_caps() ? "Caps on"
+                                                         : "Caps off");
+        }
         process_key_event(&ev);
         drained++;
     }
@@ -10244,6 +10724,8 @@ static void apply_pending_sleep_request(void)
         }
         return;
     }
+    /* The prompt is drawn on the editor screen. */
+    if (planner_ui_is_active()) show_notes_view();
     show_sleep_prompt();
 }
 
@@ -10356,7 +10838,9 @@ static void apply_pending_connect_state(void)
              * does not inherit a sticky press that would absorb
              * the first tap. */
             lv_indev_reset(NULL, NULL);
-            if (s_editor_screen_active) {
+            if (planner_ui_is_active()) {
+                show_planner_view(planner_ui_current());
+            } else if (s_editor_screen_active) {
                 /* Restore the editor -- file contents are still in
                  * the gap buffer; no need to close/reopen. */
                 lv_scr_load(s_scr);
@@ -10969,8 +11453,13 @@ static void build_screens(void)
     lv_obj_set_width(s_lbl_status, status_avail_width());
     lv_obj_set_style_text_font(s_lbl_status, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_status, theme_fg(), 0);
-    lv_label_set_text(s_lbl_status, EDITOR_DEFAULT_STATUS);
+    lv_label_set_text(s_lbl_status, editor_status_text());
     update_status_visibility();
+
+    /* Right end of the status bar, from the right: battery, clock,
+     * WiFi icon (positions from bar_layout()). */
+    status_bar_layout_t bar;
+    bar_layout(&bar);
 
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     /* Device battery label (right-aligned in editor status bar) */
@@ -10978,23 +11467,29 @@ static void build_screens(void)
     lv_obj_set_style_text_font(s_lbl_dev_batt, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_dev_batt, theme_fg(), 0);
     lv_obj_set_style_text_align(s_lbl_dev_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(s_lbl_dev_batt, SCR_W - 80, SCR_H - STATUS_H + 2);
-    lv_obj_set_width(s_lbl_dev_batt, 78);
+    lv_obj_set_pos(s_lbl_dev_batt, bar.batt_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_dev_batt, bar.slot_w);
     lv_label_set_text(s_lbl_dev_batt, "");
-#define WIFI_ICON_RIGHT_OFFSET 95   /* leave room for battery on its left */
-#else
-#define WIFI_ICON_RIGHT_OFFSET 15
 #endif
 
-    /* WiFi connectivity icon (right corner of editor status bar).
-     * Source image and vertical centering (which varies with icon
+    /* Clock (left of the battery). Painted by clock_labels_repaint()
+     * at the end of build_screens(). */
+    s_lbl_clock = lv_label_create(s_scr);
+    lv_obj_set_style_text_font(s_lbl_clock, FONT_11, 0);
+    lv_obj_set_style_text_color(s_lbl_clock, theme_fg(), 0);
+    lv_obj_set_style_text_align(s_lbl_clock, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s_lbl_clock, bar.clock_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_clock, bar.slot_w);
+    lv_label_set_text(s_lbl_clock, "");
+
+    /* WiFi connectivity icon (left of the clock in the editor status
+     * bar). Source image and vertical centering (which varies with icon
      * height) are picked by update_wifi_icons(), called once both
      * status bars exist; only the fixed horizontal position is set
      * here. */
     s_img_wifi = lv_image_create(s_scr);
-    lv_obj_set_x(s_img_wifi, SCR_W - WIFI_ICON_RIGHT_OFFSET);
+    lv_obj_set_x(s_img_wifi, bar.icon_x);
     lv_obj_add_flag(s_img_wifi, LV_OBJ_FLAG_HIDDEN);
-#undef WIFI_ICON_RIGHT_OFFSET
 
     /* Cursor blink timer.
      *
@@ -11073,7 +11568,7 @@ static void build_screens(void)
     lv_obj_set_width(s_lbl_br_status, SCR_W - 4);
     lv_obj_set_style_text_font(s_lbl_br_status, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_br_status, theme_fg(), 0);
-    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  F2:Rename");
+    lv_label_set_text(s_lbl_br_status, "F1:Menu  N:New  D:Folder  R:Rename  T:Move");
 
 #if defined(CONFIG_DRAFTLING_HAS_BATTERY)
     /* Device battery label (right-aligned in browser status bar) */
@@ -11081,29 +11576,34 @@ static void build_screens(void)
     lv_obj_set_style_text_font(s_lbl_br_dev_batt, FONT_11, 0);
     lv_obj_set_style_text_color(s_lbl_br_dev_batt, theme_fg(), 0);
     lv_obj_set_style_text_align(s_lbl_br_dev_batt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_pos(s_lbl_br_dev_batt, SCR_W - 80, SCR_H - STATUS_H + 2);
-    lv_obj_set_width(s_lbl_br_dev_batt, 78);
+    lv_obj_set_pos(s_lbl_br_dev_batt, bar.batt_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_br_dev_batt, bar.slot_w);
     lv_label_set_text(s_lbl_br_dev_batt, "");
+#endif
+
+    /* Clock (left of the battery in the browser status bar). */
+    s_lbl_br_clock = lv_label_create(s_scr_browser);
+    lv_obj_set_style_text_font(s_lbl_br_clock, FONT_11, 0);
+    lv_obj_set_style_text_color(s_lbl_br_clock, theme_fg(), 0);
+    lv_obj_set_style_text_align(s_lbl_br_clock, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s_lbl_br_clock, bar.clock_x, SCR_H - STATUS_H + 2);
+    lv_obj_set_width(s_lbl_br_clock, bar.slot_w);
+    lv_label_set_text(s_lbl_br_clock, "");
 
 #if !defined(DRAFTLING_BATT_PULL_MODE)
-    /* Battery poll timer. The first reading is painted at the end of
-     * build_screens(), once every battery label exists. The H752 has
-     * no periodic timer (see the declarations above); its updates
+    /* Clock and battery poll timer. The first readings are painted at
+     * the end of build_screens(), once every label exists. The H752
+     * has no periodic timer (see the declarations above); its updates
      * ride redraw points. */
-    s_batt_timer = lv_timer_create(batt_timer_cb, BATT_POLL_MS, NULL);
-#endif
-#define WIFI_ICON_RIGHT_OFFSET 95
-#else
-#define WIFI_ICON_RIGHT_OFFSET 15
+    s_status_timer = lv_timer_create(status_timer_cb, STATUS_POLL_MS, NULL);
 #endif
 
-    /* WiFi connectivity icon (right corner of browser status bar).
-     * See the matching editor-screen icon above: update_wifi_icons()
+    /* WiFi connectivity icon (left of the clock in the browser status
+     * bar). See the matching editor-screen icon above: update_wifi_icons()
      * picks the source image and vertical position. */
     s_img_br_wifi = lv_image_create(s_scr_browser);
-    lv_obj_set_x(s_img_br_wifi, SCR_W - WIFI_ICON_RIGHT_OFFSET);
+    lv_obj_set_x(s_img_br_wifi, bar.icon_x);
     lv_obj_add_flag(s_img_br_wifi, LV_OBJ_FLAG_HIDDEN);
-#undef WIFI_ICON_RIGHT_OFFSET
 
     /* Reflect any pre-existing WiFi state (in case the manager
      * fired its callback before the UI was ready). */
@@ -11799,9 +12299,11 @@ static void build_screens(void)
     wifi_manager_set_callback(wifi_state_cb);
     git_sync_set_callback(git_sync_cb);
 
-    /* Every battery label exists now: show the current level on all of
-     * them, including the BLE prompt screen loaded below. */
+    /* Every battery and clock label exists now: show the current level
+     * and time on all of them, including the BLE prompt screen loaded
+     * below. */
     battery_labels_repaint();
+    clock_labels_repaint();
 
     /* Start on BLE prompt screen (transitions to file browser on connect) */
     lv_scr_load(s_scr_ble_prompt);
@@ -11819,8 +12321,8 @@ static void teardown_screens(void)
 #if !defined(CONFIG_DRAFTLING_DISPLAY_EPD)
     if (s_blink_timer)     { lv_timer_delete(s_blink_timer);     s_blink_timer     = NULL; }
 #endif
-#if defined(DRAFTLING_HAS_BATT_INDICATOR) && !defined(DRAFTLING_BATT_PULL_MODE)
-    if (s_batt_timer)      { lv_timer_delete(s_batt_timer);      s_batt_timer      = NULL; }
+#if !defined(DRAFTLING_BATT_PULL_MODE)
+    if (s_status_timer)    { lv_timer_delete(s_status_timer);    s_status_timer    = NULL; }
 #endif
     if (s_repeat_timer)    { lv_timer_delete(s_repeat_timer);    s_repeat_timer    = NULL; }
     if (s_status_clear_timer) {
@@ -11845,6 +12347,7 @@ static void teardown_screens(void)
      * pool) are cleared for every pane. */
     s_lbl_title = s_lbl_status = NULL;
     s_img_wifi = s_img_br_wifi = NULL;
+    s_lbl_clock = s_lbl_br_clock = NULL;
     s_pane_divider = NULL;
     {
         pane_t *save_rp = s_rp;

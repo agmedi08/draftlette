@@ -33,6 +33,7 @@ typedef enum {
     KB_KEY_END       = 0x4D,
     KB_KEY_PAGEUP    = 0x4B,
     KB_KEY_PAGEDOWN  = 0x4E,
+    KB_KEY_CAPS_LOCK = 0x39,
     KB_KEY_F1        = 0x3A,
     KB_KEY_F2        = 0x3B,
     KB_KEY_F3        = 0x3C,

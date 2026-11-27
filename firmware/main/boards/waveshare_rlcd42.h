@@ -47,3 +47,9 @@
 #define RLCD42_ES8311_ADDR    0x18 /* speaker codec */
 #define RLCD42_ES7210_ADDR    0x40 /* microphone ADC */
 #define RLCD42_PCF85063_ADDR  0x51 /* RTC */
+
+/* Battery-backed PCF85063 RTC on the shared I2C bus: main.cpp hands
+ * these to components/rtc_clock so the date survives power-off. */
+#define RTC_PCF85063_I2C_ADDR RLCD42_PCF85063_ADDR
+#define RTC_I2C_SDA_PIN       I2C_SDA_PIN
+#define RTC_I2C_SCL_PIN       I2C_SCL_PIN

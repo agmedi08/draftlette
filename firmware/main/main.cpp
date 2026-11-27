@@ -1,5 +1,7 @@
 #include <cstdio>
 #include <cinttypes>
+#include <cstdlib>
+#include <ctime>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
@@ -46,6 +48,8 @@
 #include "wifi_manager.h"
 #include "git_sync.h"
 #include "standby.h"
+#include "time_sync.h"
+#include "planner_ui.h"
 #include "battery.h"
 #include "touchscreen.h"
 #include "power.h"
@@ -217,6 +221,7 @@ static void pre_sleep_autosave(void)
      * active one. Each callback saves the body if modified and always
      * writes the cursor/scroll sidecar so reopening resumes in place. */
     editor_doc_foreach(pre_sleep_save_doc_cb, NULL);
+    planner_ui_commit_pending();
 #if defined(CONFIG_DRAFTLING_DISPLAY_EPD)
     /* E-paper retains its image without power. Wipe the panel to a
      * clean white frame so the user does not see the editor frozen on
@@ -2625,6 +2630,15 @@ extern "C" void app_main(void)
 #if defined(CONFIG_DRAFTLING_MODEL_WAVESHARE_RLCD42)
     rlcd42_release_held_pins();
     rlcd42_quiet_peripherals();
+#endif
+
+    /* Wall clock: local time zone, restore from the battery-backed RTC
+     * (if the board has one), and SNTP on every WiFi connect. */
+#if defined(RTC_PCF85063_I2C_ADDR)
+    time_sync_init(CONFIG_DRAFTLING_TIMEZONE, RTC_I2C_SDA_PIN,
+                   RTC_I2C_SCL_PIN, RTC_PCF85063_I2C_ADDR);
+#else
+    time_sync_init(CONFIG_DRAFTLING_TIMEZONE, -1, -1, 0);
 #endif
 #if defined(CONFIG_DRAFTLING_DISPLAY_RLCD)
     display_init(RLCD_MOSI_PIN, RLCD_SCK_PIN, RLCD_DC_PIN,
