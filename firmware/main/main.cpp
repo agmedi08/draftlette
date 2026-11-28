@@ -1003,6 +1003,19 @@ static void pre_sleep_crowpanel50_deinit(void)
 {
     ESP_LOGI(TAG, "Pre-sleep: Elecrow CrowPanel 5.0in peripheral teardown");
 
+    /* Take the LVGL lock and keep it: deep sleep follows and never
+     * returns. Ctrl+P and the F1 "Sleep now" item call standby from the
+     * LVGL task, which holds the lock already (it is recursive), but the
+     * inactivity and no-keyboard timers call it from the esp_timer task
+     * while the LVGL task keeps running -- polling the GT911 over I2C
+     * and redrawing the panel during the teardown below. A speaker on
+     * the board then hummed through the whole sleep after an automatic
+     * sleep (never after Ctrl+P). Holding the lock stops the LVGL task
+     * first, so both paths shut the board down the same way. */
+    if (!draftling_lvgl_port_lock(5000)) {
+        ESP_LOGW(TAG, "Pre-sleep: LVGL lock not acquired in 5 s, proceeding anyway");
+    }
+
     pre_sleep_autosave();
 
 #if defined(CONFIG_DRAFTLING_TOUCHSCREEN)
